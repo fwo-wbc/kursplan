@@ -1,0 +1,39 @@
+{
+  "name": "S54a Trainer- und Termintabellen anlegen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "54a00000-0000-4000-8000-000000005401",
+      "name": "S54a Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Einmaliger Verwaltungsschritt fuer die edoobox-Trainerzuordnung.\n-- Mehrere Trainer je Datumszeile und je Gesamtangebot sind ausdruecklich erlaubt.\n\nCREATE TABLE IF NOT EXISTS edoobox_raw.trainer_admin (\n    admin_id       text PRIMARY KEY,\n    shortcut       text,\n    permission     text,\n    is_active      boolean,\n    first_seen_at  timestamptz NOT NULL DEFAULT now(),\n    last_synced_at timestamptz NOT NULL DEFAULT now(),\n    is_deleted     boolean NOT NULL DEFAULT false\n);\n\nCOMMENT ON TABLE edoobox_raw.trainer_admin IS\n    'Datenschutzarme Referenz auf edoobox /admin/list; keine Namen oder Kontaktdaten.';\n\nCREATE TABLE IF NOT EXISTS edoobox_raw.offer_date (\n    date_id        text PRIMARY KEY,\n    offer_id       text NOT NULL,\n    date_start     timestamptz,\n    date_end       timestamptz,\n    place_ref      text,\n    room_ref       text,\n    first_seen_at  timestamptz NOT NULL DEFAULT now(),\n    last_synced_at timestamptz NOT NULL DEFAULT now(),\n    is_deleted     boolean NOT NULL DEFAULT false\n);\n\nCREATE INDEX IF NOT EXISTS offer_date_offer_idx\n    ON edoobox_raw.offer_date (offer_id);\nCREATE INDEX IF NOT EXISTS offer_date_start_idx\n    ON edoobox_raw.offer_date (date_start);\n\nCOMMENT ON TABLE edoobox_raw.offer_date IS\n    'Spiegelung von edoobox /date/list; mehrere Datums- oder Modulzeilen je Angebot sind erlaubt.';\n\nCREATE TABLE IF NOT EXISTS edoobox_raw.date_leader (\n    date_id        text NOT NULL REFERENCES edoobox_raw.offer_date(date_id) ON DELETE CASCADE,\n    admin_id       text NOT NULL,\n    last_synced_at timestamptz NOT NULL DEFAULT now(),\n    PRIMARY KEY (date_id, admin_id)\n);\n\nCREATE INDEX IF NOT EXISTS date_leader_admin_idx\n    ON edoobox_raw.date_leader (admin_id);\n\nCOMMENT ON TABLE edoobox_raw.date_leader IS\n    'n:m-Zuordnung zwischen Datumszeilen und Trainern; historische Admin-IDs bleiben erhalten.';\n\nCREATE OR REPLACE VIEW kursplan.v_angebot_trainer AS\nSELECT\n    o.offer_id,\n    count(DISTINCT dl.admin_id)::integer AS trainer_anzahl,\n    array_agg(DISTINCT dl.admin_id ORDER BY dl.admin_id)\n        FILTER (WHERE dl.admin_id IS NOT NULL) AS admin_ids,\n    count(DISTINCT dl.admin_id) FILTER (WHERE a.admin_id IS NULL)::integer\n        AS historische_trainer_anzahl,\n    CASE\n        WHEN count(DISTINCT dl.admin_id) = 0 THEN 'offen'\n        WHEN count(DISTINCT dl.admin_id) = 1 THEN 'eindeutig'\n        ELSE 'mehrfach'\n    END::text AS zuordnungsstatus\nFROM edoobox_raw.offer o\nLEFT JOIN edoobox_raw.offer_date d\n  ON d.offer_id = o.offer_id\n AND d.is_deleted = false\nLEFT JOIN edoobox_raw.date_leader dl\n  ON dl.date_id = d.date_id\nLEFT JOIN edoobox_raw.trainer_admin a\n  ON a.admin_id = dl.admin_id\n AND a.is_deleted = false\nWHERE o.is_deleted = false\nGROUP BY o.offer_id;\n\nGRANT SELECT, INSERT, UPDATE, DELETE ON\n    edoobox_raw.trainer_admin,\n    edoobox_raw.offer_date,\n    edoobox_raw.date_leader\nTO n8n_writer;\n\nGRANT SELECT ON kursplan.v_angebot_trainer TO n8n_writer;\n\nSELECT\n    'S54a' AS schritt,\n    to_regclass('edoobox_raw.trainer_admin')::text AS trainer_admin,\n    to_regclass('edoobox_raw.offer_date')::text AS offer_date,\n    to_regclass('edoobox_raw.date_leader')::text AS date_leader,\n    to_regclass('kursplan.v_angebot_trainer')::text AS angebot_trainer_sicht;"
+      },
+      "id": "54a00000-0000-4000-8000-000000005402",
+      "name": "S54a Tabellen und Sicht anlegen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [560, 300]
+    }
+  ],
+  "connections": {
+    "S54a Manuell starten": {
+      "main": [[{"node": "S54a Tabellen und Sicht anlegen", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "54a00000-0000-4000-8000-000000005499",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

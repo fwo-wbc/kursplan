@@ -1,0 +1,154 @@
+{
+  "name": "S12 Detailabruf an fuenf Buchungen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "c8d7b5e9-8095-4ba2-8d88-9be7f2e48001",
+      "name": "S12 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT booking_id\nFROM edoobox_raw.booking\nWHERE is_deleted = false\nORDER BY booking_time DESC NULLS LAST\nLIMIT 5;",
+        "options": {}
+      },
+      "id": "c8d7b5e9-8095-4ba2-8d88-9be7f2e48002",
+      "name": "S12 Buchungen auswaehlen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c8d7b5e9-8095-4ba2-8d88-9be7f2e48003",
+      "name": "S12 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Holt die Buchungsdetails zu fuenf Buchungen und formt daraus\n// Preiskategoriezeilen und Zahlungsvorgaenge.\n// Personenbezogene Angaben wie Name, Anschrift, E-Mail und IP-Adresse\n// werden bewusst nicht uebernommen.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst kennungen = $('S12 Buchungen auswaehlen')\n  .all()\n  .map((z) => z.json.booking_id)\n  .filter(Boolean);\n\nif (kennungen.length === 0) {\n  throw new Error('Keine Buchungskennungen erhalten.');\n}\n\nfunction zahl(wert) {\n  if (wert === null || wert === undefined || wert === '') return null;\n  const n = Number(String(wert).replace(',', '.'));\n  return Number.isFinite(n) ? n : null;\n}\n\nconst saetze = [];\nconst bericht = [];\nlet abrufe = 0;\n\nfor (const kennung of kennungen) {\n  const antwort = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://app1.edoobox.com/v2/booking/${encodeURIComponent(kennung)}/data`,\n    headers,\n    json: true,\n    returnFullResponse: true,\n    timeout: 60000,\n  });\n  abrufe += 1;\n\n  const roh = antwort.body?.data;\n  const b = Array.isArray(roh) ? roh[0] : roh && typeof roh === 'object' ? roh : {};\n\n  bericht.push({\n    buchung: kennung,\n    status: antwort.statusCode,\n    huellenfelder: Object.keys(antwort.body ?? {}).join(', '),\n    detailfelder: Object.keys(b).join(', '),\n    preiskategorien: b.pricecategory ? Object.keys(b.pricecategory).length : 0,\n    zahlungen: Array.isArray(b.transactions) ? b.transactions.length : 0,\n  });\n\n  const waehrung =\n    (Array.isArray(b.transactions) && b.transactions[0]?.currency) || b.promotion?.currency || 'EUR';\n\n  const positionen = Object.entries(b.pricecategory ?? {}).map(([kategorieId, k]) => ({\n    pricecategory_id: String(k?.id ?? kategorieId),\n    pricecategory_name: String(k?.name ?? 'ohne Bezeichnung'),\n    amount_net: zahl(k?.amount) ?? 0,\n    currency: String(waehrung).slice(0, 3).toUpperCase(),\n    quantity: Number.isFinite(Number(k?.count)) ? Number(k.count) : 1,\n    is_default: k?.default === true,\n  }));\n\n  const vorgaenge = (Array.isArray(b.transactions) ? b.transactions : [])\n    .filter((t) => t && t.id)\n    .map((t) => ({\n      transaction_id: String(t.id),\n      transaction_number: t.number ? String(t.number) : null,\n      amount: zahl(t.amount),\n      currency: String(t.currency ?? waehrung)\n        .slice(0, 3)\n        .toUpperCase(),\n      transaction_time: t.time ?? t.date ?? null,\n    }));\n\n  saetze.push({\n    booking_id: String(kennung),\n    is_b2b: b.invoice_address?.b2b === true,\n    is_multi_offer: b.multi_offer === true,\n    positionen,\n    vorgaenge,\n  });\n}\n\nreturn [\n  {\n    json: {\n      schritt: 'S12',\n      abrufe,\n      buchungen: saetze.length,\n      positionen_gesamt: saetze.reduce((s, x) => s + x.positionen.length, 0),\n      vorgaenge_gesamt: saetze.reduce((s, x) => s + x.vorgaenge.length, 0),\n      bericht,\n      datenJson: JSON.stringify(saetze),\n    },\n  },\n];\n"
+      },
+      "id": "c8d7b5e9-8095-4ba2-8d88-9be7f2e48004",
+      "name": "S12 Details holen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=WITH eingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoJson${{ $json.datenJson }}$edoJson$::jsonb)\n         AS t(\n            booking_id      text,\n            is_b2b          boolean,\n            is_multi_offer  boolean,\n            positionen      jsonb,\n            vorgaenge       jsonb\n         )\n),\nkopf AS (\n    UPDATE edoobox_raw.booking b\n    SET is_b2b         = e.is_b2b,\n        is_multi_offer = e.is_multi_offer,\n        last_synced_at = now()\n    FROM eingang e\n    WHERE b.booking_id = e.booking_id\n    RETURNING b.booking_id\n),\npositionen AS (\n    SELECT\n        e.booking_id,\n        p.pricecategory_id,\n        p.pricecategory_name,\n        p.amount_net,\n        p.currency,\n        p.quantity,\n        p.is_default\n    FROM eingang e\n    CROSS JOIN LATERAL jsonb_to_recordset(e.positionen)\n         AS p(\n            pricecategory_id   text,\n            pricecategory_name text,\n            amount_net         numeric(12,2),\n            currency           char(3),\n            quantity           integer,\n            is_default         boolean\n         )\n),\npositionen_geschrieben AS (\n    INSERT INTO edoobox_raw.booking_position AS bp (\n        booking_id, pricecategory_id, pricecategory_name,\n        amount_net, currency, quantity, is_default, last_synced_at\n    )\n    SELECT\n        booking_id, pricecategory_id, pricecategory_name,\n        amount_net, currency, quantity, is_default, now()\n    FROM positionen\n    ON CONFLICT (booking_id, pricecategory_id) DO UPDATE\n    SET pricecategory_name = EXCLUDED.pricecategory_name,\n        amount_net         = EXCLUDED.amount_net,\n        currency           = EXCLUDED.currency,\n        quantity           = EXCLUDED.quantity,\n        is_default         = EXCLUDED.is_default,\n        last_synced_at     = now()\n    RETURNING bp.position_id\n),\nvorgaenge AS (\n    SELECT\n        e.booking_id,\n        v.transaction_id,\n        v.transaction_number,\n        v.amount,\n        v.currency,\n        v.transaction_time\n    FROM eingang e\n    CROSS JOIN LATERAL jsonb_to_recordset(e.vorgaenge)\n         AS v(\n            transaction_id     text,\n            transaction_number text,\n            amount             numeric(12,2),\n            currency           char(3),\n            transaction_time   timestamptz\n         )\n),\nvorgaenge_geschrieben AS (\n    INSERT INTO edoobox_raw.booking_transaction AS bt (\n        transaction_id, booking_id, transaction_number,\n        amount, currency, transaction_time, last_synced_at\n    )\n    SELECT\n        transaction_id, booking_id, transaction_number,\n        amount, currency, transaction_time, now()\n    FROM vorgaenge\n    ON CONFLICT (transaction_id) DO UPDATE\n    SET booking_id         = EXCLUDED.booking_id,\n        transaction_number = EXCLUDED.transaction_number,\n        amount             = EXCLUDED.amount,\n        currency           = EXCLUDED.currency,\n        transaction_time   = EXCLUDED.transaction_time,\n        last_synced_at     = now()\n    RETURNING bt.transaction_id\n)\nSELECT\n    (SELECT count(*) FROM kopf)                  AS kopfsaetze_aktualisiert,\n    (SELECT count(*) FROM positionen_geschrieben) AS positionen_gespeichert,\n    (SELECT count(*) FROM vorgaenge_geschrieben)  AS vorgaenge_gespeichert;",
+        "options": {}
+      },
+      "id": "c8d7b5e9-8095-4ba2-8d88-9be7f2e48005",
+      "name": "S12 Details speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S12 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S12 Buchungen auswaehlen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S12 Buchungen auswaehlen": {
+      "main": [
+        [
+          {
+            "node": "S12 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S12 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S12 Details holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S12 Details holen": {
+      "main": [
+        [
+          {
+            "node": "S12 Details speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

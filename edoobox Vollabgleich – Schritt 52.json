@@ -1,0 +1,80 @@
+{
+  "name": "S52 edoobox Relationskontrolle",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "52000000-0000-4000-8000-000000005201",
+      "name": "S52 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "52000000-0000-4000-8000-000000005202",
+      "name": "S52 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rein lesende Kontrolle aller Beziehungen zwischen den zwoelf\n// edoobox-Ressourcen. Es werden nur Mengen und Trefferquoten ausgegeben,\n// niemals IDs, Namen, Kontaktdaten oder andere Feldwerte.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\nif (!token || !edid) throw new Error('Token oder edid fehlt.');\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\nconst basis = 'https://app1.edoobox.com/v2';\n\nconst definitionen = [\n  ['admins', '/admin/list'],\n  ['vat', '/vat/list'],\n  ['countries', '/country/list'],\n  ['categories', '/category/list'],\n  ['offers', '/offer/list'],\n  ['users', '/user/list'],\n  ['dates', '/date/list'],\n  ['bookings', '/booking/list'],\n  ['pricecategories', '/pricecategory/list'],\n  ['attendances', '/attendance/list'],\n  ['invoices', '/invoice/list'],\n  ['transactions', '/transaction/list'],\n];\n\nfunction rowsAus(body) {\n  const d = body?.data;\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') return Object.values(d);\n  return [];\n}\n\nasync function holeAlle(pfad) {\n  const reply = 2000;\n  let start = 0;\n  let total = null;\n  const alle = [];\n  for (let seite = 1; seite <= 50; seite += 1) {\n    const a = await this.helpers.httpRequest({\n      method: 'GET',\n      url: basis + pfad,\n      headers,\n      qs: { 'limit[start]': start, 'limit[reply]': reply },\n      json: true,\n      returnFullResponse: true,\n      timeout: 60000,\n      ignoreHttpStatusErrors: true,\n    });\n    if (!(a.statusCode >= 200 && a.statusCode < 300)) {\n      throw new Error(`${pfad}: HTTP ${a.statusCode} bei Offset ${start}`);\n    }\n    const rows = rowsAus(a.body);\n    if (total === null && a.body?.limit?.total !== undefined) total = Number(a.body.limit.total);\n    alle.push(...rows);\n    start += rows.length;\n    if (rows.length === 0 || rows.length < reply || (total !== null && start >= total)) break;\n  }\n  if (total !== null && alle.length !== total) {\n    throw new Error(`${pfad}: unvollstaendig, gemeldet ${total}, gelesen ${alle.length}`);\n  }\n  return alle;\n}\n\nconst daten = {};\nfor (const [name, pfad] of definitionen) {\n  daten[name] = await holeAlle.call(this, pfad);\n}\n\nfunction idSet(name) {\n  return new Set(daten[name].map((r) => r?.id).filter((v) => v !== null && v !== undefined && v !== false && v !== '').map(String));\n}\n\nconst ids = Object.fromEntries(definitionen.map(([name]) => [name, idSet(name)]));\nconst ausgabe = [];\n\nfor (const [name, pfad] of definitionen) {\n  ausgabe.push({ json: {\n    schritt: 'S52',\n    bereich: 'A Vollstaendigkeit',\n    beziehung: name,\n    quellzeilen: daten[name].length,\n    zeilen_mit_bezug: null,\n    bezugswerte: ids[name].size,\n    verschieden: ids[name].size,\n    passend: ids[name].size,\n    fehlend: 0,\n    hinweis: `${pfad} vollstaendig gelesen`,\n  }});\n}\n\nfunction gueltig(v) {\n  return v !== null && v !== undefined && v !== false && v !== '';\n}\n\nfunction pruefe(name, quelle, extraktor, ziel, hinweis) {\n  const zielSet = ziel ? ids[ziel] : null;\n  let mit = 0;\n  let ohne = 0;\n  let mehrfach = 0;\n  let werte = 0;\n  let passend = 0;\n  let fehlend = 0;\n  const verschieden = new Set();\n\n  for (const row of daten[quelle]) {\n    let roh = extraktor(row);\n    if (!Array.isArray(roh)) roh = [roh];\n    const vals = roh.filter(gueltig).map(String);\n    if (vals.length === 0) ohne += 1;\n    else mit += 1;\n    if (vals.length > 1) mehrfach += 1;\n    for (const v of vals) {\n      werte += 1;\n      verschieden.add(v);\n      if (zielSet) {\n        if (zielSet.has(v)) passend += 1;\n        else fehlend += 1;\n      }\n    }\n  }\n\n  ausgabe.push({ json: {\n    schritt: 'S52',\n    bereich: 'B Beziehung',\n    beziehung: name,\n    quellzeilen: daten[quelle].length,\n    zeilen_mit_bezug: mit,\n    bezugswerte: werte,\n    verschieden: verschieden.size,\n    passend: zielSet ? passend : null,\n    fehlend: zielSet ? fehlend : null,\n    hinweis: `${hinweis} / ohne Bezug ${ohne} / Mehrfachbezug ${mehrfach}`,\n  }});\n}\n\npruefe('vat.country → countries.id', 'vat', r => r.country, 'countries', 'Umsatzsteuerland');\npruefe('categories.category → categories.id', 'categories', r => r.category, 'categories', 'Hierarchische Oberkategorie');\npruefe('offers.category → categories.id', 'offers', r => r.category, 'categories', 'Angebotskategorie');\npruefe('offers.country → countries.id', 'offers', r => r.country, 'countries', 'Angebotsland');\npruefe('offers.vat → vat.id', 'offers', r => r.vat, 'vat', 'Umsatzsteuerregel');\npruefe('users.country → countries.id', 'users', r => r.country, 'countries', 'Teilnehmerland');\npruefe('dates.offer → offers.id', 'dates', r => r.offer, 'offers', 'Terminangebot');\npruefe('dates.leader[] → admins.id', 'dates', r => r.leader ?? [], 'admins', 'Trainerzuordnung');\npruefe('bookings.offer → offers.id', 'bookings', r => r.offer, 'offers', 'Buchungsangebot');\npruefe('bookings.users[].user → users.id', 'bookings', r => (r.users ?? []).map(x => x?.user), 'users', 'Buchungsteilnehmer');\npruefe('bookings.users[].pricecategory → pricecategories.id', 'bookings', r => (r.users ?? []).map(x => x?.pricecategory), 'pricecategories', 'Gebuchte Preiskategorie');\npruefe('pricecategories.offer → offers.id', 'pricecategories', r => r.offer, 'offers', 'Preiskategorie des Angebots');\npruefe('attendances.date → dates.id', 'attendances', r => r.date, 'dates', 'Anwesenheit am Termin');\npruefe('attendances.user → users.id', 'attendances', r => r.user, 'users', 'Anwesenheitsbenutzer');\npruefe('attendances.participant', 'attendances', r => r.participant, null, 'Keine Teilnehmertabelle im vorgegebenen Zwölfermodell');\npruefe('invoices.user → users.id', 'invoices', r => r.user, 'users', 'Rechnungsempfaenger');\npruefe('invoices.paytrans → transactions.id', 'invoices', r => r.paytrans, 'transactions', 'Zahlungstransaktion');\npruefe('transactions.booking → bookings.id', 'transactions', r => r.booking, 'bookings', 'Transaktionsbuchung');\npruefe('transactions.offer → offers.id', 'transactions', r => r.offer, 'offers', 'Transaktionsangebot');\npruefe('transactions.user → users.id', 'transactions', r => r.user, 'users', 'Transaktionsbenutzer');\npruefe('transactions.userdata.id → users.id', 'transactions', r => r.userdata?.id, 'users', 'Eingebettete Benutzerkennung');\npruefe('transactions.pay', 'transactions', r => r.pay, null, 'Zielressource pay ist nicht Teil des vorgegebenen Zwölfermodells');\n\nreturn ausgabe;"
+      },
+      "id": "52000000-0000-4000-8000-000000005203",
+      "name": "S52 ERGEBNIS Relationskontrolle",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300]
+    }
+  ],
+  "connections": {
+    "S52 Manuell starten": {
+      "main": [[{"node": "S52 Token holen", "type": "main", "index": 0}]]
+    },
+    "S52 Token holen": {
+      "main": [[{"node": "S52 ERGEBNIS Relationskontrolle", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "52000000-0000-4000-8000-000000005299",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

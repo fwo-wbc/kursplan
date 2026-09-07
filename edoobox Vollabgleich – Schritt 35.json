@@ -1,0 +1,51 @@
+{
+  "name": "S35 Platzregel korrigiert",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "35000000-0000-4000-8000-000000003501",
+      "name": "S35 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Korrigierte Platzregel: Mengensumme nur bei Paketstruktur, sonst ein Kopf.\n-- Nur lesend.\nWITH pos AS (\n    SELECT\n        p.booking_id,\n        coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)') AS kat,\n        coalesce(p.quantity, 0) AS menge\n    FROM edoobox_raw.booking_position p\n),\nje_buchung AS (\n    SELECT\n        b.booking_id, b.offer_id, s.status,\n        coalesce(s.netto, 0) AS netto,\n        count(*) AS zeilen,\n        sum(pos.menge) AS menge_summe,\n        bool_or(pos.kat = 'Inklusive' OR pos.kat ~ 'weitere[ns]? Person') AS ist_paket\n    FROM edoobox_raw.booking b\n    JOIN kursplan.v_buchung_steuer s ON s.booking_id = b.booking_id\n    JOIN pos ON pos.booking_id = b.booking_id\n    GROUP BY b.booking_id, b.offer_id, s.status, 4\n),\nmit_plaetzen AS (\n    SELECT j.*,\n           CASE WHEN j.ist_paket THEN greatest(j.menge_summe, 1) ELSE 1 END AS plaetze\n    FROM je_buchung j\n),\nje_termin AS (\n    SELECT\n        o.offer_id, o.name, o.date_start, o.user_maximum,\n        count(*) FILTER (WHERE m.status = 'gebucht')                    AS buchungen,\n        coalesce(sum(m.plaetze) FILTER (WHERE m.status = 'gebucht'), 0) AS plaetze,\n        coalesce(sum(m.menge_summe) FILTER (WHERE m.status = 'gebucht'), 0) AS menge_alt,\n        round(coalesce(sum(m.netto) FILTER (WHERE m.status = 'gebucht'), 0), 2) AS netto\n    FROM edoobox_raw.offer o\n    JOIN mit_plaetzen m ON m.offer_id = o.offer_id\n    WHERE o.is_deleted IS NOT TRUE\n    GROUP BY o.offer_id, o.name, o.date_start, o.user_maximum\n),\ndoppelt AS (\n    SELECT o.name, o.date_start, count(*) AS saetze,\n           string_agg(o.offer_number, ' ' ORDER BY o.offer_number) AS nummern\n    FROM edoobox_raw.offer o\n    WHERE o.is_deleted IS NOT TRUE AND o.date_start IS NOT NULL\n    GROUP BY o.name, o.date_start\n    HAVING count(*) > 1\n),\nroh AS (\n    -- A. Plaetze je Buchung nach neuer Regel\n    SELECT 10 AS ordnung, 'A Plaetze neu' AS bereich,\n           concat(plaetze, ' plaetze') AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('paket ', count(*) FILTER (WHERE ist_paket),\n                  ' / netto ', round(sum(netto), 2)) AS hinweis\n    FROM mit_plaetzen WHERE status = 'gebucht'\n    GROUP BY 3\n\n    -- B. Wo alte und neue Regel auseinandergehen\n    UNION ALL SELECT 20, 'B Regelunterschied',\n           CASE\n               WHEN ist_paket THEN 'paket, mengensumme gilt'\n               WHEN menge_summe = 1 THEN 'einzel, menge war schon eins'\n               ELSE concat('einzel, menge ', menge_summe, ' auf eins gesetzt')\n           END,\n           count(*)::numeric,\n           concat('zeilen im schnitt ', round(avg(zeilen), 2),\n                  ' / netto ', round(sum(netto), 2))\n    FROM mit_plaetzen WHERE status = 'gebucht'\n    GROUP BY 3\n\n    -- C. Auslastung ab 2023 mit neuer Regel\n    UNION ALL SELECT 30, 'C Auslastung ab 2023',\n           CASE\n               WHEN user_maximum IS NULL OR user_maximum = 0 THEN 'ohne hoechstzahl'\n               WHEN plaetze::numeric / user_maximum > 1 THEN 'ueber 100 prozent'\n               WHEN plaetze::numeric / user_maximum >= 0.75 THEN '75 bis 100 prozent'\n               WHEN plaetze::numeric / user_maximum >= 0.5 THEN '50 bis 75 prozent'\n               WHEN plaetze::numeric / user_maximum >= 0.25 THEN '25 bis 50 prozent'\n               ELSE 'unter 25 prozent'\n           END,\n           count(*)::numeric,\n           concat('plaetze ', sum(plaetze), ' / netto ', round(sum(netto), 2))\n    FROM je_termin\n    WHERE date_start >= '2023-01-01' AND buchungen > 0\n    GROUP BY 3\n\n    -- D. Verbleibende Ueberbuchungen einzeln\n    UNION ALL SELECT 40, 'D Ueberbuchung neu',\n           concat(to_char(date_start, 'YYYY-MM-DD'), ' ',\n                  left(coalesce(name, 'ohne name'), 40)),\n           plaetze::numeric,\n           concat('hoechstzahl ', user_maximum,\n                  ' / buchungen ', buchungen,\n                  ' / mengensumme alt ', menge_alt,\n                  ' / netto ', netto)\n    FROM je_termin\n    WHERE user_maximum > 0 AND plaetze > user_maximum AND buchungen > 0\n\n    -- E. Auslastung ab 2023 im Mittel je Jahr\n    UNION ALL SELECT 50, 'E Auslastung Mittelwert',\n           concat('jahr ', extract(year FROM date_start)::int),\n           round(avg(plaetze::numeric / user_maximum) * 100, 1),\n           concat('termine ', count(*),\n                  ' / plaetze ', sum(plaetze),\n                  ' / hoechstzahl ', sum(user_maximum),\n                  ' / netto ', round(sum(netto), 2))\n    FROM je_termin\n    WHERE user_maximum > 0 AND buchungen > 0\n    GROUP BY 3\n\n    -- F. Termine mit gleichem Namen und gleichem Startdatum\n    UNION ALL SELECT 60, 'F Doppelte Termine',\n           concat(saetze, ' saetze je name und datum'),\n           count(*)::numeric,\n           concat('beispiel ', left(min(name), 34), ' ', min(nummern))\n    FROM doppelt\n    GROUP BY 3\n)\nSELECT\n    'S35' AS schritt,\n    count(*) AS zeilen,\n    string_agg(\n        concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')),\n                  coalesce(hinweis, '-')),\n        chr(10) ORDER BY ordnung, wert DESC, kennzahl\n    ) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "35000000-0000-4000-8000-000000003502",
+      "name": "S35 ERGEBNIS Platzregel",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S35 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S35 ERGEBNIS Platzregel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

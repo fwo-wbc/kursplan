@@ -1,0 +1,101 @@
+{
+  "name": "S9 Versatz und Filterform",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "f5a4e2b6-5d62-4e7f-9a55-6eb4c9b15001",
+      "name": "S9 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f5a4e2b6-5d62-4e7f-9a55-6eb4c9b15002",
+      "name": "S9 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Zwei Fragen in einem Lauf:\n//  Gruppe 1  weitere Namen fuer den Versatz\n//  Gruppe 2  Schreibweise des Filters auf Angebot beziehungsweise Buchung\n// Erkennungszeichen: sinkt gemeldet_total unter 4038, wurde der Filter angenommen.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst basis = 'https://app1.edoobox.com/v2/booking/list';\n\nfunction auswerten(body) {\n  const roh = body?.data;\n  const liste = roh && typeof roh === 'object' && !Array.isArray(roh) ? Object.entries(roh) : [];\n  const eintraege = liste.map(([k, v]) => (v && typeof v === 'object' ? v : { id: k }));\n  const l = body?.limit ?? {};\n  return {\n    anzahl: liste.length,\n    gemeldet_start: l.start ?? '-',\n    gemeldet_reply: l.reply ?? '-',\n    gemeldet_total: l.total ?? '-',\n    erste_id: eintraege[0]?.id ?? null,\n    erstes_angebot: eintraege[0]?.offer ?? null,\n  };\n}\n\nasync function abruf(bezeichnung, qs) {\n  try {\n    const antwort = await this.helpers.httpRequest({\n      method: 'GET',\n      url: basis,\n      headers,\n      qs,\n      json: true,\n      returnFullResponse: true,\n      timeout: 60000,\n    });\n    return { variante: bezeichnung, status: antwort.statusCode, ...auswerten(antwort.body) };\n  } catch (fehler) {\n    return {\n      variante: bezeichnung,\n      status: fehler?.response?.status ?? fehler?.httpCode ?? 'kein Status',\n      anzahl: 0,\n      fehlermeldung: String(fehler?.message ?? fehler).slice(0, 160),\n    };\n  }\n}\n\nconst hole = abruf.bind(this);\n\n// Vergleichsabruf, liefert zugleich eine echte Buchungs- und Angebots-ID.\nconst vergleich = await hole('A Vergleich limit 10', { limit: 10 });\nconst buchungId = vergleich.erste_id;\nconst angebotId = vergleich.erstes_angebot;\n\nconst gruppe1 = [\n  ['B limitstart', { limit: 10, limitstart: 100 }],\n  ['C startlimit', { limit: 10, startlimit: 100 }],\n  ['D start_limit', { limit: 10, start_limit: 100 }],\n  ['E next', { limit: 10, next: 100 }],\n  ['F after', { limit: 10, after: 100 }],\n  ['G cursor', { limit: 10, cursor: 100 }],\n  ['H limit als Paar', { limit: '100:10' }],\n  ['I reply und start', { reply: 10, start: 100, limit: 10 }],\n];\n\nconst gruppe2 = angebotId\n  ? [\n      ['J filter Klammer Angebot', { limit: 10, 'filter[offer.id]': angebotId }],\n      ['K filter Punkt Angebot', { limit: 10, 'filter.offer.id': angebotId }],\n      ['L filter Pfeil Angebot', { limit: 10, 'filter>offer.id': angebotId }],\n      ['M offer.id direkt', { limit: 10, 'offer.id': angebotId }],\n      ['N offer direkt', { limit: 10, offer: angebotId }],\n      ['O filter als JSON', { limit: 10, filter: JSON.stringify({ 'offer.id': angebotId }) }],\n    ]\n  : [];\n\nconst gruppe3 = buchungId\n  ? [\n      ['P filter Klammer Buchung', { 'filter[id]': buchungId }],\n      ['Q id direkt', { id: buchungId }],\n      ['R filter Punkt Buchung', { 'filter.id': buchungId }],\n    ]\n  : [];\n\nconst ergebnisse = [vergleich];\nfor (const [bezeichnung, qs] of [...gruppe1, ...gruppe2, ...gruppe3]) {\n  ergebnisse.push(await hole(bezeichnung, qs));\n}\n\nreturn ergebnisse.map((e) => ({\n  json: {\n    schritt: 'S9',\n    variante: e.variante,\n    status: e.status,\n    anzahl: e.anzahl,\n    gemeldet_start: e.gemeldet_start ?? '-',\n    gemeldet_total: e.gemeldet_total ?? '-',\n    filter_wirkt: e.gemeldet_total && e.gemeldet_total !== '-' && e.gemeldet_total < 4038 ? 'JA' : 'nein',\n    versatz_wirkt: e.erste_id && buchungId ? (e.erste_id !== buchungId ? 'JA' : 'nein') : '-',\n    fehlermeldung: e.fehlermeldung ?? '-',\n  },\n}));\n"
+      },
+      "id": "f5a4e2b6-5d62-4e7f-9a55-6eb4c9b15003",
+      "name": "S9 ERGEBNIS Versatz und Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S9 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S9 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S9 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S9 ERGEBNIS Versatz und Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

@@ -1,0 +1,51 @@
+{
+  "name": "S28 Steuersatz klaeren",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "28000000-0000-4000-8000-000000002801",
+      "name": "S28 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Klaert, welcher Steuersatz der abgerechnete ist.\n-- Vergleicht den Satz aus items.contained gegen invoice_data.items\n-- und gegen das Verhaeltnis brutto zu netto auf der Buchungsseite.\n-- Nur lesend.\nWITH paar AS (\n    -- Rechnungsposten und gedruckte Zeile ueber die Vorgangsnummer verbunden\n    SELECT\n        i.invoice_id,\n        i.transaction_number,\n        i.vat_percent  AS satz_posten,\n        l.vat_percent  AS satz_zeile,\n        l.vat_type,\n        l.price_net,\n        l.quantity\n    FROM edoobox_raw.invoice_item i\n    JOIN edoobox_raw.invoice_line l\n      ON l.invoice_id = i.invoice_id\n     AND l.transaction_number = i.transaction_number\n    WHERE i.transaction_number IS NOT NULL\n),\nnetto_je_buchung AS (\n    SELECT booking_id, sum(amount_net * coalesce(quantity, 1)) AS netto\n    FROM edoobox_raw.booking_position\n    GROUP BY booking_id\n    HAVING sum(amount_net * coalesce(quantity, 1)) > 0\n),\nfaktor AS (\n    SELECT\n        t.booking_id,\n        b.is_b2b,\n        i.vat_percent AS satz_posten,\n        round(t.amount / n.netto, 3) AS faktor\n    FROM edoobox_raw.booking_transaction t\n    JOIN netto_je_buchung n ON n.booking_id = t.booking_id\n    JOIN edoobox_raw.booking b ON b.booking_id = t.booking_id\n    JOIN edoobox_raw.invoice_item i ON i.transaction_id = t.transaction_id\n    WHERE t.amount IS NOT NULL AND t.amount > 0\n),\nohne_rechnung AS (\n    SELECT b.booking_id, b.status, extract(year FROM b.booking_time)::int AS jahr, b.is_b2b\n    FROM edoobox_raw.booking b\n    WHERE NOT EXISTS (\n        SELECT 1 FROM edoobox_raw.invoice_item i\n        JOIN edoobox_raw.booking_transaction t ON t.transaction_id = i.transaction_id\n        WHERE t.booking_id = b.booking_id)\n)\nSELECT * FROM (\n    -- A. Steuerart aus der gedruckten Zeile\n    SELECT 10 AS ordnung, 'A Steuerart aus invoice_line' AS bereich,\n           concat(coalesce(vat_type, 'ohne art'), ' bei ',\n                  coalesce(vat_percent::text, 'ohne'), ' Prozent') AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('zeilen in ', count(DISTINCT invoice_id), ' Rechnungen') AS hinweis\n    FROM edoobox_raw.invoice_line\n    GROUP BY vat_type, vat_percent\n\n    -- B. Posten gegen gedruckte Zeile\n    UNION ALL SELECT 20, 'B Posten gegen Zeile',\n           concat('posten ', satz_posten::text, ' / zeile ', coalesce(satz_zeile::text, 'ohne')),\n           count(*)::numeric,\n           CASE WHEN satz_posten = satz_zeile THEN 'gleich' ELSE 'abweichend' END\n    FROM paar GROUP BY satz_posten, satz_zeile\n\n    -- C. Postensatz gegen Verhaeltnis brutto zu netto der Buchung\n    UNION ALL SELECT 30, 'C Postensatz gegen Faktor',\n           concat('satz ', coalesce(satz_posten::text, 'ohne'), ' / faktor ',\n                  coalesce(faktor::text, 'ohne')),\n           count(*)::numeric,\n           concat('b2b ', count(*) FILTER (WHERE is_b2b), ' / nicht b2b ',\n                  count(*) FILTER (WHERE is_b2b IS NOT TRUE))\n    FROM faktor\n    GROUP BY satz_posten, faktor\n    HAVING count(*) >= 5\n\n    -- D. Vorzeichen der Postenbetraege\n    UNION ALL SELECT 40, 'D Vorzeichen',\n           concat(item_type, ' ',\n                  CASE WHEN amount < 0 THEN 'negativ' WHEN amount > 0 THEN 'positiv'\n                       WHEN amount = 0 THEN 'null' ELSE 'leer' END),\n           count(*)::numeric,\n           concat('summe ', round(sum(amount), 2), ' / betrag ohne vorzeichen ',\n                  round(sum(abs(amount)), 2))\n    FROM edoobox_raw.invoice_item\n    GROUP BY item_type, 3\n\n    -- E. Buchungen ohne Rechnung\n    UNION ALL SELECT 50, 'E Buchung ohne Rechnung', concat(status, ' ', jahr::text),\n           count(*)::numeric,\n           concat('b2b ', count(*) FILTER (WHERE is_b2b))\n    FROM ohne_rechnung GROUP BY status, jahr\n\n    -- F. Rechnungen ohne Buchung\n    UNION ALL SELECT 60, 'F Rechnung ohne Buchung',\n           concat(coalesce(r.invoice_number, 'ohne nummer'), ' status ', coalesce(r.status::text, 'ohne')),\n           coalesce(r.amount, 0),\n           concat('erstellt ', coalesce(to_char(r.date_create, 'YYYY-MM-DD'), 'ohne'),\n                  ' / posten ', (SELECT count(*) FROM edoobox_raw.invoice_item q WHERE q.invoice_id = r.invoice_id))\n    FROM edoobox_raw.invoice r\n    WHERE NOT EXISTS (\n        SELECT 1 FROM edoobox_raw.invoice_item i\n        JOIN edoobox_raw.booking_transaction t ON t.transaction_id = i.transaction_id\n        WHERE i.invoice_id = r.invoice_id)\n\n    -- G. Deckung der Nettobetraege\n    UNION ALL SELECT 70, 'G Netto', 'summe price_net_summation aus invoice_line',\n           (SELECT round(sum(price_net_summation), 2) FROM edoobox_raw.invoice_line)::numeric,\n           'nur Rechnungen ab 2023'\n    UNION ALL SELECT 71, 'G Netto', 'summe taxBasisTotalAmount',\n           (SELECT round(sum(tax_basis_total), 2) FROM edoobox_raw.invoice)::numeric, NULL\n    UNION ALL SELECT 72, 'G Netto', 'summe rechnungsbetrag ab 2023',\n           (SELECT round(sum(amount), 2) FROM edoobox_raw.invoice WHERE tax_total IS NOT NULL)::numeric,\n           NULL\n) x\nORDER BY ordnung, wert DESC, kennzahl;",
+        "options": {}
+      },
+      "id": "28000000-0000-4000-8000-000000002802",
+      "name": "S28 ERGEBNIS Steuersatz",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S28 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S28 ERGEBNIS Steuersatz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

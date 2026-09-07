@@ -1,0 +1,51 @@
+{
+  "name": "S17 Kennungen vergleichen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "cc000000-0000-4000-8000-00000000c001",
+      "name": "S17 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Warum passt keine Buchung zu einem Angebot?\n-- Verglichen werden Form, Praefix und tatsaechliche Ueberschneidung.\n\nWITH b AS (\n    SELECT DISTINCT offer_id FROM edoobox_raw.booking\n    WHERE is_deleted = false AND offer_id IS NOT NULL\n),\no AS (\n    SELECT offer_id FROM edoobox_raw.offer\n),\nformen AS (\n    SELECT 'Buchung' AS herkunft,\n           split_part(offer_id, '_', 1)                  AS praefix,\n           count(*)                                      AS anzahl,\n           min(length(offer_id))                         AS laenge_min,\n           max(length(offer_id))                         AS laenge_max,\n           min(offer_id)                                 AS beispiel\n    FROM b GROUP BY 2\n    UNION ALL\n    SELECT 'Angebot',\n           split_part(offer_id, '_', 1),\n           count(*), min(length(offer_id)), max(length(offer_id)), min(offer_id)\n    FROM o GROUP BY 2\n),\nueberschneidung AS (\n    SELECT 'ZUSAMMENFASSUNG' AS herkunft,\n           'Treffer' AS praefix,\n           (SELECT count(*) FROM b JOIN o USING (offer_id)) AS anzahl,\n           (SELECT count(*) FROM b) AS laenge_min,\n           (SELECT count(*) FROM o) AS laenge_max,\n           '' AS beispiel\n),\n-- Passt der mittlere Teil der Kennung zusammen, nur mit anderem Praefix?\nmittelteil AS (\n    SELECT 'ZUSAMMENFASSUNG' AS herkunft,\n           'Treffer nur Mittelteil' AS praefix,\n           (SELECT count(*)\n              FROM b JOIN o\n                ON split_part(b.offer_id, '_', 2) = split_part(o.offer_id, '_', 2)) AS anzahl,\n           0 AS laenge_min, 0 AS laenge_max, '' AS beispiel\n)\nSELECT * FROM formen\nUNION ALL SELECT * FROM ueberschneidung\nUNION ALL SELECT * FROM mittelteil\nORDER BY herkunft, praefix;",
+        "options": {}
+      },
+      "id": "cc000000-0000-4000-8000-00000000c002",
+      "name": "S17 ERGEBNIS Kennungsformen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        500,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S17 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S17 ERGEBNIS Kennungsformen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

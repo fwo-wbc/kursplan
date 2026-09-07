@@ -1,0 +1,101 @@
+{
+  "name": "S5 Buchungsliste blaettern",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b1c0a8d2-1f2e-4a3b-9c11-2a7f0e5d1001",
+      "name": "S5 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b1c0a8d2-1f2e-4a3b-9c11-2a7f0e5d1002",
+      "name": "S5 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prueft, wie sich die Buchungsliste blaettern laesst.\n// Nur Lesezugriffe. Ausgegeben werden Anzahlen, Feldnamen und Buchungs-IDs.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst basis = 'https://app1.edoobox.com/v2/booking/list';\n\n// Holt die eigentlichen Buchungssaetze heraus, egal ob\n// Array oder Objekt mit IDs als Schluesseln.\nfunction saetze(antwort) {\n  const roh = antwort?.data ?? antwort;\n  if (Array.isArray(roh)) {\n    return { form: 'array', liste: roh.map((e, i) => ({ schluessel: String(i), wert: e })) };\n  }\n  if (roh && typeof roh === 'object') {\n    return {\n      form: 'objekt mit IDs als Schluessel',\n      liste: Object.entries(roh).map(([k, v]) => ({ schluessel: k, wert: v })),\n    };\n  }\n  return { form: 'unbekannt', liste: [] };\n}\n\nfunction kennung(eintrag) {\n  const w = eintrag.wert;\n  if (w && typeof w === 'object') {\n    return w.id ?? w.booking ?? eintrag.schluessel;\n  }\n  return eintrag.schluessel;\n}\n\nasync function abruf(bezeichnung, query) {\n  try {\n    const antwort = await this.helpers.httpRequest({\n      method: 'GET',\n      url: basis,\n      headers,\n      qs: query,\n      json: true,\n      returnFullResponse: true,\n      timeout: 30000,\n    });\n    const { form, liste } = saetze(antwort.body);\n    return {\n      variante: bezeichnung,\n      parameter: query,\n      status: antwort.statusCode,\n      form,\n      anzahl: liste.length,\n      erste_ids: liste.slice(0, 3).map(kennung),\n      letzte_id: liste.length ? kennung(liste[liste.length - 1]) : null,\n      huellenfelder:\n        antwort.body && typeof antwort.body === 'object' && !Array.isArray(antwort.body)\n          ? Object.keys(antwort.body)\n          : [],\n      eintragsfelder:\n        liste.length && liste[0].wert && typeof liste[0].wert === 'object'\n          ? Object.keys(liste[0].wert)\n          : [],\n    };\n  } catch (fehler) {\n    return {\n      variante: bezeichnung,\n      parameter: query,\n      status: fehler?.response?.status ?? fehler?.httpCode ?? 'kein Status',\n      fehlermeldung: String(fehler?.message ?? fehler).slice(0, 300),\n    };\n  }\n}\n\nconst hole = abruf.bind(this);\n\nconst varianten = [\n  ['ohne Parameter', {}],\n  ['eckige Klammern Seite 1', { 'limit[start]': 0, 'limit[reply]': 10, 'order[time]': 'DESC' }],\n  ['eckige Klammern Seite 2', { 'limit[start]': 10, 'limit[reply]': 10, 'order[time]': 'DESC' }],\n  ['punktschreibweise Seite 1', { 'limit.start': 0, 'limit.reply': 10, 'order.time': 'DESC' }],\n  ['flach Seite 1', { start: 0, reply: 10, order: 'DESC' }],\n];\n\nconst ergebnisse = [];\nfor (const [bezeichnung, query] of varianten) {\n  ergebnisse.push(await hole(bezeichnung, query));\n}\n\nconst seite1 = ergebnisse.find((e) => e.variante === 'eckige Klammern Seite 1');\nconst seite2 = ergebnisse.find((e) => e.variante === 'eckige Klammern Seite 2');\n\nlet befund = 'unklar';\nif (seite1?.anzahl && seite2?.anzahl) {\n  const gleich = JSON.stringify(seite1.erste_ids) === JSON.stringify(seite2.erste_ids);\n  befund = gleich ? 'Seite 1 und Seite 2 identisch - Blaettern wirkt NICHT' : 'Blaettern funktioniert';\n}\n\n// Eine Zeile je Variante, damit die Tabellenansicht alles zeigt.\nconst zeilen = ergebnisse.map((e) => ({\n  json: {\n    schritt: 'S5',\n    variante: e.variante,\n    status: e.status,\n    form: e.form ?? '-',\n    anzahl: e.anzahl ?? 0,\n    huellenfelder: (e.huellenfelder ?? []).join(', ') || '-',\n    eintragsfelder: (e.eintragsfelder ?? []).join(', ') || '-',\n    fehlermeldung: e.fehlermeldung ?? '-',\n  },\n}));\n\nzeilen.push({\n  json: {\n    schritt: 'S5',\n    variante: 'ZUSAMMENFASSUNG',\n    status: '-',\n    form: '-',\n    anzahl: 0,\n    huellenfelder: befund,\n    eintragsfelder: '-',\n    fehlermeldung: '-',\n  },\n});\n\nreturn zeilen;\n"
+      },
+      "id": "b1c0a8d2-1f2e-4a3b-9c11-2a7f0e5d1003",
+      "name": "S5 ERGEBNIS Blaetterlogik",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S5 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S5 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S5 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S5 ERGEBNIS Blaetterlogik",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

@@ -1,0 +1,51 @@
+{
+  "name": "S16a Angebotstabelle anlegen (Verwaltungskonto)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "bb000000-0000-4000-8000-00000000b001",
+      "name": "S16a Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Angebotstabelle, einmalig mit dem Eigentuemerkonto anzulegen.\n-- Kernfelder sind typisiert, die vollstaendige Antwort wird zusaetzlich\n-- als payload abgelegt. So sind spaetere Auswertungen moeglich, ohne\n-- die Struktur erneut aendern zu muessen.\nCREATE TABLE IF NOT EXISTS edoobox_raw.offer (\n    offer_id            text        PRIMARY KEY,\n    offer_number        text,\n    name                text,\n    category_ref        text,\n    offerdef_ref        text,\n    place_ref           text,\n    date_start          timestamptz,\n    date_end            timestamptz,\n    date_signupstart    timestamptz,\n    date_close          timestamptz,\n    user_minimal        integer,\n    user_maximum        integer,\n    status              text,\n    mode                text,\n    offer_type          text,\n    vat_rate            numeric(6,3),\n    country             text,\n    internal_code       text,\n    is_archived         boolean     NOT NULL DEFAULT false,\n    is_trash            boolean     NOT NULL DEFAULT false,\n    has_waiting_list    boolean,\n    mustpay             boolean,\n    is_multi_offer      boolean,\n    is_multi_offer_child boolean,\n    payload             jsonb,\n    first_seen_at       timestamptz NOT NULL DEFAULT now(),\n    last_synced_at      timestamptz NOT NULL DEFAULT now(),\n    last_changed_at     timestamptz NOT NULL DEFAULT now(),\n    payload_hash        text,\n    is_deleted          boolean     NOT NULL DEFAULT false\n);\n\nCOMMENT ON TABLE edoobox_raw.offer IS\n    'Spiegelung von GET /v2/offer/list. Ein Satz je Kursangebot bzw Termin.';\n\nCREATE INDEX IF NOT EXISTS offer_start_idx     ON edoobox_raw.offer (date_start);\nCREATE INDEX IF NOT EXISTS offer_category_idx  ON edoobox_raw.offer (category_ref);\nCREATE INDEX IF NOT EXISTS offer_aktiv_idx     ON edoobox_raw.offer (is_deleted, is_archived, is_trash);\n\nGRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA edoobox_raw TO n8n_writer;\nGRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA edoobox_raw TO n8n_writer;\n\nSELECT\n    (SELECT count(*) FROM edoobox_raw.offer)   AS angebote_in_tabelle,\n    (SELECT count(DISTINCT offer_id) FROM edoobox_raw.booking\n      WHERE is_deleted = false)                AS referenzierte_angebote;",
+        "options": {}
+      },
+      "id": "bb000000-0000-4000-8000-00000000b002",
+      "name": "S16a Tabelle anlegen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        500,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S16a Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S16a Tabelle anlegen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

@@ -1,0 +1,51 @@
+{
+  "name": "S29 Sichten abnehmen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "29000000-0000-4000-8000-000000002901",
+      "name": "S29 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Abnahme der drei Sichten. Nur lesend.\n-- Ausgabe als ein einziges Textfeld zum Kopieren.\nWITH roh AS (\n-- Abnahme der drei Sichten. Nur lesend.\n\n    -- A. Steuerfall je Buchung\n    SELECT 10 AS ordnung, 'A Steuerfall' AS bereich, steuerfall AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('netto ', round(coalesce(sum(netto), 0), 2),\n                  ' / steuer ', round(coalesce(sum(steuerbetrag), 0), 2),\n                  ' / b2b ', count(*) FILTER (WHERE is_b2b)) AS hinweis\n    FROM kursplan.v_buchung_steuer\n    GROUP BY steuerfall\n\n    -- B. Steuerfall nur fuer gebuchte Buchungen\n    UNION ALL SELECT 20, 'B Steuerfall nur gebucht', steuerfall,\n           count(*)::numeric,\n           concat('netto ', round(coalesce(sum(netto), 0), 2),\n                  ' / brutto ', round(coalesce(sum(brutto), 0), 2))\n    FROM kursplan.v_buchung_steuer WHERE status = 'gebucht'\n    GROUP BY steuerfall\n\n    -- C. Nominalsatz gegen Steuerfall, nur wo es auseinandergeht\n    UNION ALL SELECT 30, 'C Nominal gegen gemessen',\n           concat('nominal ', coalesce(nominalsatz::text, 'ohne'), ' / ', steuerfall),\n           count(*)::numeric,\n           concat('b2b ', count(*) FILTER (WHERE is_b2b),\n                  ' / nicht b2b ', count(*) FILTER (WHERE is_b2b IS NOT TRUE))\n    FROM kursplan.v_buchung_steuer\n    GROUP BY nominalsatz, steuerfall\n    HAVING count(*) >= 3\n\n    -- D. Die abweichenden Faktoren einzeln\n    UNION ALL SELECT 40, 'D Abweichende Faktoren',\n           concat('faktor ', coalesce(faktor::text, 'ohne'),\n                  ' bei nominal ', coalesce(nominalsatz::text, 'ohne')),\n           count(*)::numeric,\n           concat('netto ', round(sum(netto), 2), ' / brutto ', round(sum(brutto), 2),\n                  ' / status ', string_agg(DISTINCT status, ' '))\n    FROM kursplan.v_buchung_steuer\n    WHERE steuerfall = 'abweichend'\n    GROUP BY faktor, nominalsatz\n\n    -- E. Buchungen ohne Betrag\n    UNION ALL SELECT 50, 'E Ohne Betrag',\n           concat(status, ' netto ',\n                  CASE WHEN netto IS NULL THEN 'leer' WHEN netto = 0 THEN 'null' ELSE 'vorhanden' END,\n                  ' brutto ',\n                  CASE WHEN brutto IS NULL THEN 'leer' WHEN brutto = 0 THEN 'null' ELSE 'vorhanden' END),\n           count(*)::numeric, NULL\n    FROM kursplan.v_buchung_steuer\n    WHERE netto IS NULL OR netto = 0 OR brutto IS NULL OR brutto = 0\n    GROUP BY 3\n\n    -- F. Zuordnungsgrad\n    UNION ALL SELECT 60, 'F Zuordnungsgrad', zuordnungsgrad,\n           count(*)::numeric,\n           concat(count(DISTINCT invoice_id), ' Rechnungen / ',\n                  count(DISTINCT booking_id), ' Buchungen')\n    FROM kursplan.v_buchung_rechnung\n    GROUP BY zuordnungsgrad\n    UNION ALL SELECT 61, 'F Zuordnungsgrad', 'buchungen mit mehreren rechnungen',\n           count(DISTINCT booking_id)::numeric, NULL\n    FROM kursplan.v_buchung_rechnung WHERE mehrere_rechnungen\n\n    -- G. Termine und Erloes\n    UNION ALL SELECT 70, 'G Termine', 'termine gesamt',\n           count(*)::numeric, NULL FROM kursplan.v_termin_erloes\n    UNION ALL SELECT 71, 'G Termine', 'termine mit buchung',\n           count(*) FILTER (WHERE buchungen_gebucht > 0)::numeric, NULL\n    FROM kursplan.v_termin_erloes\n    UNION ALL SELECT 72, 'G Termine', 'summe netto gebucht',\n           round(sum(netto_gebucht), 2),\n           'Vergleich Schritt 18: 784854.84' FROM kursplan.v_termin_erloes\n    UNION ALL SELECT 73, 'G Termine', 'summe brutto gebucht',\n           round(sum(brutto_gebucht), 2),\n           'Vergleich Zahlungsvorgaenge: 848037.44' FROM kursplan.v_termin_erloes\n    UNION ALL SELECT 74, 'G Termine', 'summe plaetze gebucht',\n           sum(plaetze_gebucht)::numeric, NULL FROM kursplan.v_termin_erloes\n    UNION ALL SELECT 75, 'G Termine', 'auslastung ueber 100 prozent',\n           count(*) FILTER (WHERE auslastung_prozent > 100)::numeric,\n           concat('hoechstwert ', max(auslastung_prozent)) FROM kursplan.v_termin_erloes\n    UNION ALL SELECT 76, 'G Termine', 'ohne hoechstteilnehmerzahl',\n           count(*) FILTER (WHERE user_maximum IS NULL OR user_maximum = 0)::numeric,\n           NULL FROM kursplan.v_termin_erloes\n\n    -- H. Gegenprobe Nettoerloes aus zwei Quellen\n    UNION ALL SELECT 80, 'H Gegenprobe', 'netto aus v_buchung_steuer gebucht',\n           (SELECT round(sum(netto), 2) FROM kursplan.v_buchung_steuer\n             WHERE status = 'gebucht')::numeric,\n           'ohne Bezug auf einen Termin enthalten'\n    UNION ALL SELECT 81, 'H Gegenprobe', 'netto aus booking_position gebucht',\n           (SELECT round(sum(p.amount_net * coalesce(p.quantity, 1)), 2)\n              FROM edoobox_raw.booking_position p\n              JOIN edoobox_raw.booking b ON b.booking_id = p.booking_id\n             WHERE b.status = 'gebucht')::numeric, NULL\n    UNION ALL SELECT 82, 'H Gegenprobe', 'netto aller buchungen',\n           (SELECT round(sum(netto), 2) FROM kursplan.v_buchung_steuer)::numeric, NULL\n)\n-- Die Reihenfolge muss in string_agg stehen, ein ORDER BY im CTE waere unverbindlich.\nSELECT\n    'S29' AS schritt,\n    count(*) AS zeilen,\n    string_agg(\n        concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')),\n                  coalesce(hinweis, '-')),\n        chr(10) ORDER BY ordnung, wert DESC, kennzahl\n    ) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "29000000-0000-4000-8000-000000002902",
+      "name": "S29 ERGEBNIS Abnahme",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S29 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S29 ERGEBNIS Abnahme",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

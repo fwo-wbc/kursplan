@@ -1,0 +1,51 @@
+{
+  "name": "S37 Endgueltige Platzformel pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "37000000-0000-4000-8000-000000003701",
+      "name": "S37 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Prueft die endgueltige Kopfregel und die Termindubletten. Nur lesend.\nWITH pos AS (\n    SELECT\n        p.booking_id,\n        coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)') AS kat,\n        coalesce(p.quantity, 0) AS menge,\n        coalesce(p.amount_net, 0) AS betrag,\n        CASE\n            WHEN p.pricecategory_name ~* '(bis zu|max\\\\.?|fuer|für)[^0-9]{0,12}[0-9]+[[:space:]]*person'\n            THEN (substring(p.pricecategory_name from '(?i)(?:bis zu|max\\\\.?|fuer|für)[^0-9]{0,12}([0-9]+)[[:space:]]*person'))::int\n        END AS basis_n,\n        (p.pricecategory_name ~* '(jede|je|pro)[[:space:]]+weitere|preis[^a-zA-ZäöüÄÖÜß]*für[^a-zA-ZäöüÄÖÜß]*jede[^a-zA-ZäöüÄÖÜß]*weitere') AS ist_zusatz\n    FROM edoobox_raw.booking_position p\n),\nje_buchung AS (\n    SELECT\n        b.booking_id,\n        b.offer_id,\n        s.status,\n        coalesce(s.netto, 0) AS netto,\n        max(pos.basis_n) AS basis_n,\n        coalesce(sum(pos.menge) FILTER (WHERE pos.ist_zusatz), 0) AS zusatz_n,\n        bool_or(pos.kat = 'Inklusive') AS hat_inklusive,\n        coalesce(sum(pos.menge) FILTER (WHERE pos.kat = 'Inklusive'), 0) AS inklusive_n,\n        sum(pos.menge) AS menge_alt,\n        string_agg(concat(left(pos.kat, 35), ' x', pos.menge), ' + ' ORDER BY pos.betrag DESC, pos.kat) AS zeilen_text\n    FROM edoobox_raw.booking b\n    JOIN kursplan.v_buchung_steuer s ON s.booking_id = b.booking_id\n    JOIN pos ON pos.booking_id = b.booking_id\n    GROUP BY b.booking_id, b.offer_id, s.status, 4\n),\nmit_plaetzen AS (\n    SELECT j.*,\n           CASE\n               WHEN basis_n IS NOT NULL THEN basis_n + zusatz_n\n               WHEN hat_inklusive THEN NULL\n               ELSE 1\n           END AS plaetze,\n           CASE\n               WHEN basis_n IS NOT NULL THEN 'paket sicher'\n               WHEN hat_inklusive THEN 'paket basis unklar'\n               ELSE 'einzelbuchung'\n           END AS regel\n    FROM je_buchung j\n),\nje_termin AS (\n    SELECT\n        o.offer_id, o.offer_number, o.name, o.date_start, o.user_maximum,\n        count(*) FILTER (WHERE m.status = 'gebucht') AS buchungen,\n        count(*) FILTER (WHERE m.status = 'gebucht' AND m.plaetze IS NULL) AS unklare_buchungen,\n        coalesce(sum(m.plaetze) FILTER (WHERE m.status = 'gebucht'), 0) AS plaetze_sicher,\n        round(coalesce(sum(m.netto) FILTER (WHERE m.status = 'gebucht'), 0), 2) AS netto\n    FROM edoobox_raw.offer o\n    JOIN mit_plaetzen m ON m.offer_id = o.offer_id\n    WHERE o.is_deleted IS NOT TRUE\n    GROUP BY o.offer_id, o.offer_number, o.name, o.date_start, o.user_maximum\n),\ndublettenschluessel AS (\n    SELECT name, date_start\n    FROM edoobox_raw.offer\n    WHERE is_deleted IS NOT TRUE AND date_start IS NOT NULL\n    GROUP BY name, date_start\n    HAVING count(*) > 1\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Regelabdeckung' AS bereich,\n           regel AS kennzahl, count(*)::numeric AS wert,\n           concat('netto ', round(sum(netto), 2),\n                  ' / inklusive-menge ', sum(inklusive_n),\n                  ' / alte mengensumme ', sum(menge_alt)) AS hinweis\n    FROM mit_plaetzen\n    WHERE status = 'gebucht'\n    GROUP BY 3\n\n    UNION ALL SELECT 20, 'B Sichere Paketgroesse',\n           concat(plaetze, ' plaetze'), count(*)::numeric,\n           concat('basis im schnitt ', round(avg(basis_n), 2),\n                  ' / zusatz im schnitt ', round(avg(zusatz_n), 2),\n                  ' / netto ', round(sum(netto), 2))\n    FROM mit_plaetzen\n    WHERE status = 'gebucht' AND regel = 'paket sicher'\n    GROUP BY 3\n\n    UNION ALL SELECT 30, 'C Ueberbuchung sicher',\n           concat(to_char(t.date_start, 'YYYY-MM-DD'), ' ', left(t.name, 36)),\n           t.plaetze_sicher::numeric,\n           concat('hoechstzahl ', t.user_maximum,\n                  ' / buchungen ', t.buchungen,\n                  ' / unklar ', t.unklare_buchungen,\n                  ' / netto ', t.netto)\n    FROM je_termin t\n    WHERE t.user_maximum > 0\n      AND t.unklare_buchungen = 0\n      AND t.plaetze_sicher > t.user_maximum\n\n    UNION ALL SELECT 40, 'D Unklare Paketbuchung',\n           concat('b', right(booking_id::text, 5)),\n           inklusive_n::numeric,\n           left(zeilen_text, 170)\n    FROM mit_plaetzen\n    WHERE status = 'gebucht' AND regel = 'paket basis unklar'\n\n    UNION ALL SELECT 50, 'E Dublettenbelegung',\n           concat(to_char(t.date_start, 'YYYY-MM-DD'), ' ', left(t.name, 30)),\n           t.buchungen::numeric,\n           concat('nummer ', left(coalesce(t.offer_number, '-'), 35),\n                  ' / plaetze sicher ', t.plaetze_sicher,\n                  ' / unklar ', t.unklare_buchungen,\n                  ' / netto ', t.netto)\n    FROM je_termin t\n    JOIN dublettenschluessel d ON d.name = t.name AND d.date_start = t.date_start\n\n    UNION ALL SELECT 60, 'F offerdef_ref',\n           'verschiedene werte', count(DISTINCT offerdef_ref)::numeric,\n           concat('nicht leer ', count(offerdef_ref),\n                  ' / termine ', count(*),\n                  ' / groesste gruppe ', max(gruppengroesse))\n    FROM (\n        SELECT offerdef_ref, count(*) OVER (PARTITION BY offerdef_ref) AS gruppengroesse\n        FROM edoobox_raw.offer\n        WHERE is_deleted IS NOT TRUE\n    ) x\n)\nSELECT\n    'S37' AS schritt,\n    count(*) AS zeilen,\n    string_agg(\n        concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n        chr(10) ORDER BY ordnung, wert DESC, kennzahl\n    ) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "37000000-0000-4000-8000-000000003702",
+      "name": "S37 ERGEBNIS Platzformel",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S37 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S37 ERGEBNIS Platzformel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

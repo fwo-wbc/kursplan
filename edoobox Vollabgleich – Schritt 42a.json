@@ -1,0 +1,37 @@
+{
+  "name": "S42a Preiskategorie-Regeln einrichten",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "42100000-0000-4000-8000-000000004201",
+      "name": "S42a Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Verwaltungsschritt: fuellt kursplan.preiskategorie_regel.\n-- Hierfuer das Verwaltungscredential verwenden.\nINSERT INTO kursplan.preiskategorie_regel\n    (regel_id, reihenfolge, muster, bezeichnung, ist_erloes, ist_teilnehmer, ist_aktiv, bemerkung)\nVALUES\n    (10, 10, 'stornogebuehr|stornogebuhr|diff nach verrechnung',\n     'Stornoausgleich', true, false, true, 'Erloes ohne belegten Teilnehmerplatz.'),\n    (20, 20, 'nachhol|ersatztermin|ersatzkurs|wiederhol',\n     'Nachhol- oder Ersatztermin', false, true, true, 'Kein neuer Erloes, belegt aber einen Platz.'),\n    (30, 30, 'verrechnung|abrechnung ueber|rahmenvertrag|lexware|ebinghaus|billomat|horstmann|teilnehmer tausch',\n     'Extern verrechnet', false, true, true, 'Buchungsposition ohne eigenen Betrag, Teilnehmer zaehlt.'),\n    (40, 40, 'inklusive',\n     'Im Gruppenpreis enthalten', false, true, true, 'Teil der Gruppengroesse, nicht nochmals als Erloes.'),\n    (50, 50, 'kostenlos|gratis|gast|nulltarif',\n     'Kostenlose Teilnahme', false, true, true, 'Teilnehmer ohne Erloes.'),\n    (60, 60, '^intern$|organisator|^-$|^--$|^---$|trainerausfall',\n     'Intern oder organisatorisch', false, true, true, 'Belegt gegebenenfalls einen Platz, kein Erloes.'),\n    (70, 70, 'kombibuchung|kombirabatt',\n     'Kombirabatt', true, true, true, NULL),\n    (80, 80, 'last ?-? ?mi[a-z]*te|last minute',\n     'Last-Minute-Preis', true, true, true, 'Erfasst auch historische Schreibvarianten.'),\n    (90, 90, 'standard ?-? ?preis|^standard$',\n     'Standardpreis', true, true, true, NULL),\n    (100, 100, 'partner',\n     'Partnerrabatt', true, true, true, NULL),\n    (110, 110, 'privatbucher|behoerdenrabatt|behordenrabatt|kundenrabatt|vereinsrabatt|rabatt fuer schulen|anschluss|paketrabatt|gruppenrabatt',\n     'Sonstiger Rabatt', true, true, true, NULL),\n    (120, 120, 'weitere person|weitere teilnehmer|pro person|personen|teiln|gruppenpreis|gruppenanmeldung|workshop|webinarpreis|firmenwebinar',\n     'Personen- oder Gruppenpreis', true, true, true, 'Gruppenpreise werden in der Platzsicht gesondert behandelt.'),\n    (130, 130, 'kurspreis|kursgebuehr|kursgebuhr|gesamtpreis|^preis$|^preis ',\n     'Sonstiger Kurspreis', true, true, true, NULL)\nON CONFLICT (regel_id) DO UPDATE SET\n    reihenfolge = EXCLUDED.reihenfolge,\n    muster = EXCLUDED.muster,\n    bezeichnung = EXCLUDED.bezeichnung,\n    ist_erloes = EXCLUDED.ist_erloes,\n    ist_teilnehmer = EXCLUDED.ist_teilnehmer,\n    ist_aktiv = EXCLUDED.ist_aktiv,\n    bemerkung = EXCLUDED.bemerkung;\n\nGRANT SELECT ON kursplan.preiskategorie_regel TO n8n_writer;\n\nWITH eingestuft AS (\n    SELECT p.position_id, p.pricecategory_name, p.amount_net,\n           e.ist_erloes, e.ist_teilnehmer, e.quelle\n    FROM edoobox_raw.booking_position p\n    CROSS JOIN LATERAL kursplan.einstufung(p.pricecategory_name, p.amount_net) e\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Regeln' AS bereich, 'aktive Regeln' AS kennzahl,\n           count(*)::numeric AS wert, 'erwartet 13' AS hinweis\n    FROM kursplan.preiskategorie_regel WHERE ist_aktiv\n\n    UNION ALL SELECT 20, 'B Einstufung', quelle, count(*)::numeric,\n           concat('netto ', round(sum(coalesce(amount_net, 0)), 2))\n    FROM eingestuft\n    GROUP BY 3\n\n    UNION ALL SELECT 30, 'C Ungeklaert mit Betrag',\n           coalesce(nullif(btrim(pricecategory_name), ''), '(ohne namen)'),\n           count(*)::numeric,\n           concat('netto ', round(sum(coalesce(amount_net, 0)), 2))\n    FROM eingestuft\n    WHERE quelle = 'ungeklaert' AND coalesce(amount_net, 0) <> 0\n    GROUP BY 3\n    HAVING count(*) >= 2\n)\nSELECT 'S42a' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, wert DESC, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "42100000-0000-4000-8000-000000004202",
+      "name": "S42a ADMIN Regeln",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S42a Manuell starten": {
+      "main": [[{"node": "S42a ADMIN Regeln", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

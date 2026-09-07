@@ -1,0 +1,51 @@
+{
+  "name": "S30 Nullfaelle klaeren",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "30000000-0000-4000-8000-000000003001",
+      "name": "S30 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Nullfaelle auf allen drei Ebenen: Buchung, Rechnungsposition, Rechnung.\n-- Prueft ausserdem die Erklaerung kostenloser Nachholtermin.\n-- Nur lesend. Ausgabe als ein Textfeld zum Kopieren.\nWITH bezahlt AS (\n    -- Alle Buchungen mit Erloes, mit Teilnehmerkennung und Kursdefinition\n    SELECT b.user_ref, o.offerdef_ref\n    FROM kursplan.v_buchung_steuer s\n    JOIN edoobox_raw.booking b ON b.booking_id = s.booking_id\n    LEFT JOIN edoobox_raw.offer o ON o.offer_id = s.offer_id\n    WHERE s.netto > 0 AND b.user_ref IS NOT NULL\n),\nnull_buchung AS (\n    -- Gebuchte Buchungen ohne jeden Betrag\n    SELECT s.booking_id, b.user_ref, o.offerdef_ref\n    FROM kursplan.v_buchung_steuer s\n    JOIN edoobox_raw.booking b ON b.booking_id = s.booking_id\n    LEFT JOIN edoobox_raw.offer o ON o.offer_id = s.offer_id\n    WHERE coalesce(s.netto, 0) = 0 AND coalesce(s.brutto, 0) = 0\n      AND s.status = 'gebucht'\n),\nroh AS (\n    -- A. Nullfaelle je Ebene\n    SELECT 10 AS ordnung, 'A Ebenen' AS bereich, 'buchungen netto und brutto null' AS kennzahl,\n           count(*)::numeric AS wert, NULL::text AS hinweis\n    FROM kursplan.v_buchung_steuer WHERE coalesce(netto, 0) = 0 AND coalesce(brutto, 0) = 0\n    UNION ALL SELECT 11, 'A Ebenen', 'buchungen ganz ohne positionszeile',\n           count(*)::numeric, NULL\n    FROM edoobox_raw.booking b\n    WHERE NOT EXISTS (SELECT 1 FROM edoobox_raw.booking_position p WHERE p.booking_id = b.booking_id)\n    UNION ALL SELECT 12, 'A Ebenen', 'positionszeilen mit amount_net null',\n           count(*)::numeric,\n           concat('von ', (SELECT count(*) FROM edoobox_raw.booking_position), ' zeilen')\n    FROM edoobox_raw.booking_position WHERE coalesce(amount_net, 0) = 0\n    UNION ALL SELECT 13, 'A Ebenen', 'rechnungen mit betrag null',\n           count(*)::numeric,\n           concat('von ', (SELECT count(*) FROM edoobox_raw.invoice), ' rechnungen')\n    FROM edoobox_raw.invoice WHERE coalesce(amount, 0) = 0\n    UNION ALL SELECT 14, 'A Ebenen', 'rechnungszeilen mit price_net null',\n           count(*)::numeric,\n           concat('von ', (SELECT count(*) FROM edoobox_raw.invoice_line), ' zeilen')\n    FROM edoobox_raw.invoice_line WHERE coalesce(price_net, 0) = 0\n    UNION ALL SELECT 15, 'A Ebenen', 'vorgaenge mit betrag null',\n           count(*)::numeric,\n           concat('von ', (SELECT count(*) FROM edoobox_raw.booking_transaction), ' vorgaengen')\n    FROM edoobox_raw.booking_transaction WHERE coalesce(amount, 0) = 0\n\n    -- B. Nullbuchungen nach Jahr und Status\n    UNION ALL SELECT 20, 'B Nullbuchung je Jahr',\n           concat(s.status, ' ', extract(year FROM s.booking_time)::int::text),\n           count(*)::numeric,\n           concat('mit rechnungsposten ', count(s.nominalsatz))\n    FROM kursplan.v_buchung_steuer s\n    WHERE coalesce(s.netto, 0) = 0 AND coalesce(s.brutto, 0) = 0\n    GROUP BY 3\n\n    -- C. Nachholtermin-Test: derselbe Teilnehmer hat denselben Kurs schon bezahlt\n    UNION ALL SELECT 30, 'C Nachholtermin-Test',\n           CASE\n               WHEN g.user_ref IS NOT NULL THEN 'gleicher kurs schon bezahlt'\n               WHEN a.user_ref IS NOT NULL THEN 'anderer kurs bezahlt'\n               ELSE 'nie etwas bezahlt'\n           END,\n           count(*)::numeric,\n           concat('von ', (SELECT count(*) FROM null_buchung), ' gebuchten nullbuchungen')\n    FROM null_buchung nb\n    LEFT JOIN (SELECT DISTINCT user_ref, offerdef_ref FROM bezahlt) g\n           ON g.user_ref = nb.user_ref AND g.offerdef_ref = nb.offerdef_ref\n    LEFT JOIN (SELECT DISTINCT user_ref FROM bezahlt) a\n           ON a.user_ref = nb.user_ref\n    GROUP BY 3\n\n    -- D. Kursnamen der Nullbuchungen\n    UNION ALL SELECT 40, 'D Kurs der Nullbuchung',\n           left(coalesce(o.name, 'ohne angebot'), 60),\n           count(*)::numeric,\n           concat('jahre ', min(extract(year FROM s.booking_time)::int), ' bis ',\n                  max(extract(year FROM s.booking_time)::int))\n    FROM kursplan.v_buchung_steuer s\n    LEFT JOIN edoobox_raw.offer o ON o.offer_id = s.offer_id\n    WHERE coalesce(s.netto, 0) = 0 AND coalesce(s.brutto, 0) = 0\n      AND s.status = 'gebucht'\n    GROUP BY 3\n    HAVING count(*) >= 5\n\n    -- E. Termine, die ausschliesslich Nullbuchungen haben\n    UNION ALL SELECT 50, 'E Termin nur Nullbuchungen', 'termine', count(*)::numeric,\n           'Hinweis auf Testtermine oder reine Gratisangebote'\n    FROM (\n        SELECT s.offer_id\n        FROM kursplan.v_buchung_steuer s\n        WHERE s.status = 'gebucht' AND s.offer_id IS NOT NULL\n        GROUP BY s.offer_id\n        HAVING count(*) FILTER (WHERE coalesce(s.netto, 0) > 0) = 0\n           AND count(*) > 0\n    ) t\n\n    -- F. Nullbuchungen auf Terminen, die auch zahlende Buchungen haben\n    UNION ALL SELECT 51, 'F Gemischte Termine', 'nullbuchungen auf bezahlten terminen',\n           count(*)::numeric,\n           'diese belegen einen Platz ohne Erloes'\n    FROM kursplan.v_buchung_steuer s\n    WHERE s.status = 'gebucht' AND coalesce(s.netto, 0) = 0 AND s.offer_id IS NOT NULL\n      AND EXISTS (SELECT 1 FROM kursplan.v_buchung_steuer z\n                   WHERE z.offer_id = s.offer_id AND z.netto > 0 AND z.status = 'gebucht')\n\n    -- G. Rechnungen mit Betrag null naeher betrachtet\n    UNION ALL SELECT 60, 'G Rechnung mit null',\n           concat('status ', coalesce(status::text, 'ohne'), ' jahr ',\n                  coalesce(extract(year FROM date_create)::int::text, 'ohne')),\n           count(*)::numeric, NULL\n    FROM edoobox_raw.invoice WHERE coalesce(amount, 0) = 0\n    GROUP BY 3\n)\nSELECT\n    'S30' AS schritt,\n    count(*) AS zeilen,\n    string_agg(\n        concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')),\n                  coalesce(hinweis, '-')),\n        chr(10) ORDER BY ordnung, wert DESC, kennzahl\n    ) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "30000000-0000-4000-8000-000000003002",
+      "name": "S30 ERGEBNIS Nullfaelle",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S30 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S30 ERGEBNIS Nullfaelle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

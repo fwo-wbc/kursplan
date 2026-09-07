@@ -1,0 +1,103 @@
+{
+  "name": "S25 Rechnungsdetails erkunden",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "25000000-0000-4000-8000-000000002501",
+      "name": "S25 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 8 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "25000000-0000-4000-8000-000000002502",
+      "name": "S25 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Steigt in die verschachtelten Felder der Einzelrechnung hinab:\n// invoice_data, invoice_data.items, invoice_data.counts, items, pay, receipt.\n// Zeigt Klarwerte nur bei steuer-, betrags- und kennungsbezogenen Feldern.\n\nconst auth = $('S25 Token holen').first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nasync function abruf(pfad, qs) {\n  return await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://app1.edoobox.com/v2${pfad}`,\n    headers,\n    qs,\n    json: true,\n    returnFullResponse: true,\n    timeout: 120000,\n    ignoreHttpStatusErrors: true,\n  });\n}\n\nconst hole = abruf.bind(this);\n\nfunction liste(h) {\n  if (!h || typeof h !== 'object') return [];\n  const d = h.data;\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') return Object.values(d);\n  return [];\n}\n\n// Rechnungsliste holen und eine gemischte Probe bilden.\nconst a = await hole('/invoice/list', { 'limit[start]': 0, 'limit[reply]': 2000 });\nif (a.statusCode !== 200) throw new Error(`invoice/list Status ${a.statusCode}`);\nconst roh = liste(a.body).filter((r) => r && r.id);\n\nconst proben = [];\nfor (const s of [1, 2, 3]) {\n  for (const r of roh.filter((x) => Number(x.status) === s).slice(0, 3)) proben.push(r);\n}\nfor (const r of roh.slice(-3)) if (!proben.includes(r)) proben.push(r);\n\nconst offen = /id$|_id|ref|booking|offer|order|user|trans|vat|ust|tax|steuer|mwst|rate|satz|net|gross|brutto|netto|amount|betrag|total|sum|count|menge|quantity|status|type|art|number|nummer|country|land|currency|contained|included/i;\nconst geheim = /address|iban|bic|creditor|message|name|mail|street|strasse|phone/i;\n\nfunction art(w) {\n  if (w === null) return 'null';\n  if (Array.isArray(w)) return `liste[${w.length}]`;\n  if (typeof w === 'object') return `objekt{${Object.keys(w).slice(0, 16).join(',')}}`;\n  if (typeof w === 'boolean') return `wahrheitswert:${w}`;\n  if (typeof w === 'number') return 'zahl';\n  if (typeof w === 'string') {\n    if (w === '') return 'text:leer';\n    if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(w)) return 'text:zeitpunkt';\n    return `text(${w.length})`;\n  }\n  return typeof w;\n}\n\nconst uebersicht = new Map();\n\nfunction erfassen(bereich, obj) {\n  if (!obj || typeof obj !== 'object') return;\n  for (const [feld, wert] of Object.entries(obj)) {\n    const schluessel = bereich + '::' + feld;\n    if (!uebersicht.has(schluessel)) {\n      uebersicht.set(schluessel, { bereich, feld, arten: new Set(), werte: new Set() });\n    }\n    const e = uebersicht.get(schluessel);\n    e.arten.add(art(wert));\n    if (!geheim.test(feld) && offen.test(feld) && (typeof wert !== 'object' || wert === null)) {\n      const t = String(wert);\n      if (t.length <= 40) e.werte.add(t);\n    }\n  }\n}\n\nlet gelesen = 0;\nlet fehler = '';\n\nfor (const p of proben) {\n  const antwort = await hole(`/invoice/${encodeURIComponent(String(p.id))}/data`, {});\n  if (antwort.statusCode !== 200) {\n    if (!fehler) fehler = `Status ${antwort.statusCode}`;\n    continue;\n  }\n  const r0 = antwort.body?.data;\n  const r = Array.isArray(r0) ? r0[0] : r0;\n  if (!r || typeof r !== 'object') continue;\n  gelesen += 1;\n\n  const id = r.invoice_data;\n  erfassen('invoice_data', id);\n\n  if (id && typeof id === 'object') {\n    const it = id.items;\n    if (Array.isArray(it)) {\n      erfassen('invoice_data.items[]', it[0]);\n      for (const z of it.slice(0, 4)) erfassen('invoice_data.items[]', z);\n    } else {\n      erfassen('invoice_data.items', it);\n      if (it && typeof it === 'object') for (const z of Object.values(it).slice(0, 4)) erfassen('invoice_data.items.wert', z);\n    }\n\n    const c = id.counts;\n    if (Array.isArray(c)) {\n      for (const z of c.slice(0, 4)) erfassen('invoice_data.counts[]', z);\n    } else {\n      erfassen('invoice_data.counts', c);\n      if (c && typeof c === 'object') for (const z of Object.values(c).slice(0, 4)) erfassen('invoice_data.counts.wert', z);\n    }\n\n    const dd = id.data;\n    erfassen('invoice_data.data', dd);\n  }\n\n  erfassen('items', r.items);\n  if (r.items && typeof r.items === 'object') {\n    const cont = r.items.contained;\n    if (Array.isArray(cont)) {\n      for (const z of cont.slice(0, 4)) erfassen('items.contained[]', z);\n    } else {\n      erfassen('items.contained', cont);\n      if (cont && typeof cont === 'object') for (const z of Object.values(cont).slice(0, 4)) erfassen('items.contained.wert', z);\n    }\n  }\n\n  if (r.pay && typeof r.pay === 'object' && !Array.isArray(r.pay)) {\n    erfassen('pay', r.pay);\n    for (const z of Object.values(r.pay).slice(0, 3)) erfassen('pay.wert', z);\n  }\n\n  if (r.receipt && typeof r.receipt === 'object' && !Array.isArray(r.receipt)) {\n    erfassen('receipt', r.receipt);\n    for (const z of Object.values(r.receipt).slice(0, 3)) erfassen('receipt.wert', z);\n  }\n}\n\nconst zeilen = [{\n  json: {\n    schritt: 'S25',\n    bereich: '(Probe)',\n    feld: '',\n    arten: `${gelesen} von ${proben.length} Rechnungen gelesen${fehler ? ', Fehler: ' + fehler : ''}`,\n    beispielwerte: '',\n  },\n}];\n\nfor (const e of [...uebersicht.values()].sort((x, y) =>\n  x.bereich.localeCompare(y.bereich) || x.feld.localeCompare(y.feld))) {\n  zeilen.push({\n    json: {\n      schritt: 'S25',\n      bereich: e.bereich,\n      feld: e.feld,\n      arten: [...e.arten].slice(0, 4).join(' | '),\n      beispielwerte: [...e.werte].slice(0, 8).join(' | '),\n    },\n  });\n}\n\nreturn zeilen;\n"
+      },
+      "id": "25000000-0000-4000-8000-000000002503",
+      "name": "S25 ERGEBNIS Verschachtelung",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S25 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S25 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S25 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S25 ERGEBNIS Verschachtelung",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "executionTimeout": 900
+  },
+  "active": false,
+  "tags": []
+}

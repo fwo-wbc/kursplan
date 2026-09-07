@@ -1,0 +1,236 @@
+{
+  "name": "P90 Ressourcen-Unterworkflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "p90-0001-input",
+      "name": "P90 Eingang",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// P90 - Konfiguration aufloesen\r\n// Prueft die Ressourcenkennung gegen die fest hinterlegte Konfigurationstabelle.\r\n// Zielwerte (Endpunkt, Tabelle, Primaerschluessel, Seitengroesse) kommen\r\n// ausschliesslich aus dieser festen Konfiguration, NICHT aus Aufrufer-Eingaben\r\n// (E-31c, E-31j: keine dynamischen SQL-/Tabellennamen aus Nutzereingaben).\r\n\r\nconst eingabe = $input.first().json;\r\n\r\nfunction feld(name, fallback) {\r\n  const w = eingabe[name];\r\n  if (w !== undefined && w !== null && w !== '') return w;\r\n  return fallback;\r\n}\r\n\r\nconst kennung = feld('Ressourcenkennung', feld('ressourcenkennung', feld('kennung', null)));\r\nconst runId = feld('Laufkennung', feld('run_id', feld('runId', null)));\r\nconst loeschungenEingabe =\r\n  eingabe['Löschungen auswerten'] !== undefined ? eingabe['Löschungen auswerten'] :\r\n  eingabe['Loeschungen auswerten'] !== undefined ? eingabe['Loeschungen auswerten'] :\r\n  eingabe['loeschungen_auswerten'];\r\n\r\n// ---------------------------------------------------------------------------\r\n// Feste Konfigurationstabelle.\r\n// ---------------------------------------------------------------------------\r\nconst KONFIG = {\r\n  edo_admins: {\r\n    kennung: 'edo_admins',\r\n    endpunkt: '/admin/list',\r\n    schema: 'edoobox_raw',\r\n    zieltabelle: 'trainer_admin',\r\n    pk: 'admin_id',\r\n    seitengroesse: 2000,\r\n    loeschungen: true,\r\n    hash: false,\r\n    payload: false,\r\n    spalten: [\r\n      { ziel: 'admin_id',  quelle: 'id',         typ: 'kennung', sqlTyp: 'text' },\r\n      { ziel: 'shortcut',  quelle: 'shortcut',   typ: 'text',    sqlTyp: 'text' },\r\n      { ziel: 'permission', quelle: 'permission', typ: 'text',   sqlTyp: 'text' },\r\n      { ziel: 'is_active', quelle: 'status',     typ: 'wahr',    sqlTyp: 'boolean' },\r\n    ],\r\n    zusatzSpalten: [],\r\n    userRef: null,\r\n    hashFelder: ['shortcut', 'permission', 'is_active'],\r\n  },\r\n\r\n  edo_dates: {\r\n    kennung: 'edo_dates',\r\n    endpunkt: '/date/list',\r\n    schema: 'edoobox_raw',\r\n    zieltabelle: 'offer_date',\r\n    pk: 'date_id',\r\n    seitengroesse: 2000,\r\n    loeschungen: true,\r\n    hash: false,\r\n    payload: false,\r\n    spalten: [\r\n      { ziel: 'date_id',    quelle: 'id',         typ: 'kennung', sqlTyp: 'text' },\r\n      { ziel: 'offer_id',   quelle: 'offer',      typ: 'kennung', sqlTyp: 'text' },\r\n      { ziel: 'date_start', quelle: 'date_start', typ: 'zeitpunkt', sqlTyp: 'timestamptz' },\r\n      { ziel: 'date_end',   quelle: 'date_end',   typ: 'zeitpunkt', sqlTyp: 'timestamptz' },\r\n      { ziel: 'place_ref',  quelle: 'place',      typ: 'kennung', sqlTyp: 'text' },\r\n      { ziel: 'room_ref',   quelle: 'room',       typ: 'kennung', sqlTyp: 'text' },\r\n    ],\r\n    zusatzSpalten: [],\r\n    userRef: null,\r\n    hashFelder: ['offer_id', 'date_start', 'date_end', 'place_ref', 'room_ref'],\r\n  },\r\n\r\n  edo_offers: {\r\n    kennung: 'edo_offers',\r\n    endpunkt: '/offer/list',\r\n    schema: 'edoobox_raw',\r\n    zieltabelle: 'offer',\r\n    pk: 'offer_id',\r\n    seitengroesse: 2000,\r\n    loeschungen: true,\r\n    hash: true,\r\n    payload: true,\r\n    spalten: [\r\n      { ziel: 'offer_id',            quelle: 'id',                 typ: 'kennung',   sqlTyp: 'text' },\r\n      { ziel: 'offer_number',        quelle: 'number',             typ: 'text',      sqlTyp: 'text' },\r\n      { ziel: 'name',                quelle: 'name',               typ: 'text',      sqlTyp: 'text' },\r\n      { ziel: 'category_ref',        quelle: 'category',           typ: 'kennung',   sqlTyp: 'text' },\r\n      { ziel: 'offerdef_ref',        quelle: 'offerdef',           typ: 'kennung',   sqlTyp: 'text' },\r\n      { ziel: 'place_ref',           quelle: 'place',              typ: 'kennung',   sqlTyp: 'text' },\r\n      { ziel: 'date_start',          quelle: 'date_start',         typ: 'zeitpunkt', sqlTyp: 'timestamptz' },\r\n      { ziel: 'date_end',            quelle: 'date_end',           typ: 'zeitpunkt', sqlTyp: 'timestamptz' },\r\n      { ziel: 'date_signupstart',    quelle: 'date_signupstart',   typ: 'zeitpunkt', sqlTyp: 'timestamptz' },\r\n      { ziel: 'date_close',          quelle: 'date_close',         typ: 'zeitpunkt', sqlTyp: 'timestamptz' },\r\n      { ziel: 'user_minimal',        quelle: 'user_minimal',       typ: 'ganzzahl',  sqlTyp: 'integer' },\r\n      { ziel: 'user_maximum',        quelle: 'user_maximum',       typ: 'ganzzahl',  sqlTyp: 'integer' },\r\n      { ziel: 'status',              quelle: 'status',             typ: 'text',      sqlTyp: 'text' },\r\n      { ziel: 'mode',                quelle: 'mode',               typ: 'text',      sqlTyp: 'text' },\r\n      { ziel: 'offer_type',          quelle: 'type',               typ: 'text',      sqlTyp: 'text' },\r\n      { ziel: 'vat_rate',            quelle: 'vat',                typ: 'kommazahl', sqlTyp: 'numeric(6,3)' },\r\n      { ziel: 'country',             quelle: 'country',            typ: 'text',      sqlTyp: 'text' },\r\n      { ziel: 'internal_code',       quelle: 'internal_code',      typ: 'text',      sqlTyp: 'text' },\r\n      { ziel: 'is_archived',         quelle: 'archive',            typ: 'wahr',      sqlTyp: 'boolean' },\r\n      { ziel: 'is_trash',            quelle: 'trash',              typ: 'wahr',      sqlTyp: 'boolean' },\r\n      { ziel: 'has_waiting_list',    quelle: 'waiting_list',       typ: 'wahr',      sqlTyp: 'boolean' },\r\n      { ziel: 'mustpay',             quelle: 'mustpay',            typ: 'wahr',      sqlTyp: 'boolean' },\r\n      { ziel: 'is_multi_offer',      quelle: 'multi_offer',        typ: 'wahr',      sqlTyp: 'boolean' },\r\n      { ziel: 'is_multi_offer_child', quelle: 'multi_offer_child', typ: 'wahr',      sqlTyp: 'boolean' },\r\n    ],\r\n    zusatzSpalten: [],\r\n    userRef: null,\r\n    hashFelder: [\r\n      'name', 'offer_number', 'category_ref', 'place_ref',\r\n      'date_start', 'date_end', 'user_minimal', 'user_maximum',\r\n      'status', 'mode', 'offer_type', 'vat_rate', 'is_archived', 'is_trash',\r\n    ],\r\n  },\r\n\r\n  edo_bookings: {\r\n    kennung: 'edo_bookings',\r\n    endpunkt: '/booking/list',\r\n    schema: 'edoobox_raw',\r\n    zieltabelle: 'booking',\r\n    pk: 'booking_id',\r\n    seitengroesse: 2000,\r\n    loeschungen: true,\r\n    hash: true,\r\n    payload: false,\r\n    source: 'api',\r\n    spalten: [\r\n      { ziel: 'booking_id',     quelle: 'id',           typ: 'kennung',   sqlTyp: 'text' },\r\n      { ziel: 'offer_id',       quelle: 'offer',        typ: 'kennung',   sqlTyp: 'text' },\r\n      { ziel: 'status',         quelle: 'status',       typ: 'text',      sqlTyp: 'text' },\r\n      { ziel: 'booking_time',   quelle: 'time',         typ: 'zeitpunkt', sqlTyp: 'timestamptz' },\r\n      { ziel: 'is_b2b',         quelle: 'b2b',          typ: 'wahr',      sqlTyp: 'boolean' },\r\n      { ziel: 'is_multi_offer', quelle: 'multi_offer',  typ: 'wahr',      sqlTyp: 'boolean' },\r\n    ],\r\n    zusatzSpalten: [\r\n      { name: 'owner',   quelle: 'owner',   typ: 'text', sqlTyp: 'text' },\r\n      { name: 'mustpay', quelle: 'mustpay', typ: 'wahr', sqlTyp: 'boolean' },\r\n      { name: 'label',   quelle: 'label',   typ: 'text', sqlTyp: 'text' },\r\n    ],\r\n    userRef: { quelle: 'owner', ziel: 'user_ref' },\r\n    hashFelder: ['offer_id', 'status', 'booking_time', 'mustpay', 'label'],\r\n  },\r\n\r\n  edo_invoices: {\r\n    kennung: 'edo_invoices',\r\n    endpunkt: '/invoice/list',\r\n    schema: 'edoobox_raw',\r\n    zieltabelle: 'invoice',\r\n    pk: 'invoice_id',\r\n    seitengroesse: 2000,\r\n    loeschungen: true,\r\n    hash: true,\r\n    payload: true,\r\n    spalten: [\r\n      { ziel: 'invoice_id',       quelle: 'id',               typ: 'kennung',      sqlTyp: 'text' },\r\n      { ziel: 'invoice_number',   quelle: 'number',           typ: 'text',         sqlTyp: 'text' },\r\n      { ziel: 'status',           quelle: 'status',           typ: 'ganzzahl',     sqlTyp: 'integer' },\r\n      { ziel: 'status_text',      quelle: 'status',           typ: 'rechnungsstatus', sqlTyp: 'text' },\r\n      { ziel: 'currency',         quelle: 'currency',         typ: 'waehrung',     sqlTyp: 'text' },\r\n      { ziel: 'amount',           quelle: 'amount',           typ: 'kommazahl',    sqlTyp: 'numeric(12,2)' },\r\n      { ziel: 'date_create',      quelle: 'date_create',      typ: 'zeitpunkt',    sqlTyp: 'timestamptz' },\r\n      { ziel: 'date_pay',         quelle: 'date_pay',         typ: 'zeitpunkt',    sqlTyp: 'timestamptz' },\r\n      { ziel: 'date_payuntil',    quelle: 'date_payuntil',    typ: 'zeitpunkt',    sqlTyp: 'timestamptz' },\r\n      { ziel: 'date_cancelled',   quelle: 'date_cancelled',   typ: 'zeitpunkt',    sqlTyp: 'timestamptz' },\r\n      { ziel: 'offer_start_date', quelle: 'offer_start_date', typ: 'zeitpunkt',    sqlTyp: 'timestamptz' },\r\n    ],\r\n    zusatzSpalten: [\r\n      { name: 'user', quelle: 'user', typ: 'text', sqlTyp: 'text' },\r\n    ],\r\n    userRef: { quelle: 'user', ziel: 'user_ref' },\r\n    hashFelder: [\r\n      'invoice_number', 'status', 'status_text', 'currency', 'amount',\r\n      'date_create', 'date_pay', 'date_payuntil', 'date_cancelled', 'offer_start_date',\r\n    ],\r\n  },\r\n};\r\n\r\n// Ressourcen ohne Zieltabelle im Workspace (offener Punkt O-2).\r\nconst NICHT_SPIEGELBAR = {\r\n  Vat:                 { kennung: 'Vat',                 endpunkt: '/vat/list',            grund: 'keine Zieltabelle im Workspace (O-2)' },\r\n  Countries:           { kennung: 'Countries',           endpunkt: '/country/list',        grund: 'keine Zieltabelle im Workspace (O-2)' },\r\n  edo_categories:      { kennung: 'edo_categories',      endpunkt: '/category/list',       grund: 'keine Zieltabelle im Workspace (O-2)' },\r\n  edo_users:           { kennung: 'edo_users',           endpunkt: '/user/list',           grund: 'keine Zieltabelle; nur md5(user_ref) in booking/invoice (O-2)' },\r\n  edo_pricecategories: { kennung: 'edo_pricecategories', endpunkt: '/pricecategory/list',  grund: 'keine eigenstaendige Zieltabelle; nur booking_position/preiskategorie_ausnahme (O-2)' },\r\n  edo_attendances:     { kennung: 'edo_attendances',     endpunkt: '/attendance/list',     grund: 'keine Zieltabelle; nicht erforderlich fuer DB I (O-2)' },\r\n  edo_transactions:    { kennung: 'edo_transactions',    endpunkt: '/transaction/list',    grund: 'nur Buchungsbezug in booking_transaction; Gesamtressource ohne Zieltabelle (O-2/O-9)' },\r\n};\r\n\r\nif (!kennung) {\r\n  throw new Error('P90: Parameter \"Ressourcenkennung\" fehlt.');\r\n}\r\n\r\nif (NICHT_SPIEGELBAR[kennung]) {\r\n  const n = NICHT_SPIEGELBAR[kennung];\r\n  throw new Error('P90: Ressource \"' + kennung + '\" ist nicht spiegelbar: ' + n.grund);\r\n}\r\n\r\nconst konfig = KONFIG[kennung];\r\nif (!konfig) {\r\n  throw new Error(\r\n    'P90: Unbekannte Ressourcenkennung \"' + kennung + '\". Bekannt: ' + Object.keys(KONFIG).join(', ')\r\n  );\r\n}\r\n\r\n// Loesch-Auswertung: Der Aufrufer kann den Modus steuern (P01 normal=false,\r\n// P03 voll=true). Ohne explizite Vorgabe gilt der Konfigurationswert.\r\nconst loeschungen = typeof loeschungenEingabe === 'boolean' ? loeschungenEingabe : konfig.loeschungen;\r\n\r\nreturn [{\r\n  json: {\r\n    kennung: konfig.kennung,\r\n    endpunkt: konfig.endpunkt,\r\n    zieltabelle: konfig.zieltabelle,\r\n    primaerschluessel: konfig.pk,\r\n    seitengroesse: konfig.seitengroesse,\r\n    loeschungen,\r\n    run_id: runId,\r\n    hash: konfig.hash,\r\n    konfig,\r\n  },\r\n}];\r\n"
+      },
+      "id": "p90-0002-konfig",
+      "name": "P90 Konfiguration aufloesen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "p90-0003-token",
+      "name": "P90 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// P90 - Ressource holen\r\n// Seitenweiser Abruf (Paginierung ueber limit[start]/limit[reply]),\r\n// Normalisierung, Hash-Bildung und Erzeugung der parametrisierten UPSERT-Abfrage.\r\n// Tabellen-/Spaltennamen stammen ausschliesslich aus der festen Konfiguration.\r\n\r\nconst auth = $('P90 Token holen').first().json;\r\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\r\nconst edid = auth.edid ?? auth?.data?.edid;\r\nif (!token || !edid) {\r\n  throw new Error('P90: Token oder edid nicht gefunden. Felder: ' + Object.keys(auth).join(', '));\r\n}\r\n\r\nconst meta = $('P90 Konfiguration aufloesen').first().json;\r\nconst k = meta.konfig;\r\nconst runId = meta.run_id;\r\nconst loeschungen = meta.loeschungen;\r\n\r\nconst headers = {\r\n  edid,\r\n  'grant-type': 'access_token',\r\n  Authorization: 'Bearer ' + token,\r\n  'Content-Type': 'application/json',\r\n};\r\n\r\nconst basis = 'https://app1.edoobox.com/v2';\r\n\r\n// ---- Normalisierungs-Helfer (vgl. Schritt 16/26/54) ----\r\nfunction kennung(w) {\r\n  if (w === null || w === undefined || w === '') return null;\r\n  if (typeof w === 'string' || typeof w === 'number') return String(w);\r\n  if (typeof w === 'object') return w.id ? String(w.id) : null;\r\n  return null;\r\n}\r\nfunction text(w) {\r\n  if (w === null || w === undefined) return null;\r\n  if (typeof w === 'string') return w;\r\n  if (typeof w === 'number' || typeof w === 'boolean') return String(w);\r\n  return null;\r\n}\r\nfunction ganzzahl(w) {\r\n  const n = Number(w);\r\n  return Number.isFinite(n) ? Math.trunc(n) : null;\r\n}\r\nfunction kommazahl(w) {\r\n  if (w === null || w === undefined || w === '') return null;\r\n  const n = Number(String(w).replace(',', '.'));\r\n  return Number.isFinite(n) ? n : null;\r\n}\r\nfunction zeitpunkt(w) {\r\n  if (typeof w !== 'string') return null;\r\n  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(w)) return null;\r\n  if (/^0{4}-0{2}-0{2}/.test(w)) return null;\r\n  return w;\r\n}\r\nfunction wahr(w) {\r\n  if (w === true || w === 1 || w === '1' || w === 'true') return true;\r\n  if (w === false || w === 0 || w === '0' || w === 'false' || w === '' || w === null || w === undefined) return false;\r\n  return Boolean(w);\r\n}\r\nfunction rechnungsstatus(w) {\r\n  const n = Number(w);\r\n  return ({ 1: 'offen', 2: 'bezahlt', 3: 'storniert' })[n] ?? null;\r\n}\r\nfunction waehrung(w) {\r\n  const t = text(w);\r\n  if (!t) return 'EUR';\r\n  return t.toUpperCase().slice(0, 3);\r\n}\r\n\r\nfunction transformiere(typ, w) {\r\n  switch (typ) {\r\n    case 'kennung': return kennung(w);\r\n    case 'text': return text(w);\r\n    case 'ganzzahl': return ganzzahl(w);\r\n    case 'kommazahl': return kommazahl(w);\r\n    case 'zeitpunkt': return zeitpunkt(w);\r\n    case 'wahr': return wahr(w);\r\n    case 'rechnungsstatus': return rechnungsstatus(w);\r\n    case 'waehrung': return waehrung(w);\r\n    default: return text(w);\r\n  }\r\n}\r\n\r\n// ---- Paginierung ----\r\nasync function holeAlle(pfad, reply) {\r\n  const alle = [];\r\n  let start = 0;\r\n  let total = null;\r\n  let abrufe = 0;\r\n  let letzteErsteId = null;\r\n  const hoechstzahlSeiten = 500; // Schutz gegen Endlosschleifen\r\n\r\n  for (let seite = 1; seite <= hoechstzahlSeiten; seite += 1) {\r\n    const a = await this.helpers.httpRequest({\r\n      method: 'GET',\r\n      url: basis + pfad,\r\n      headers,\r\n      qs: { 'limit[start]': start, 'limit[reply]': reply },\r\n      json: true,\r\n      returnFullResponse: true,\r\n      timeout: 120000,\r\n      ignoreHttpStatusErrors: true,\r\n    });\r\n    abrufe += 1;\r\n\r\n    if (!(a.statusCode >= 200 && a.statusCode < 300)) {\r\n      throw new Error('P90: ' + pfad + ' lieferte HTTP ' + a.statusCode + ' ab Versatz ' + start);\r\n    }\r\n\r\n    const body = a.body;\r\n    const limit = body && body.limit ? body.limit : {};\r\n    if (total === null && limit.total !== undefined && limit.total !== null) {\r\n      total = Number(limit.total);\r\n    }\r\n\r\n    const roh = body ? body.data : undefined;\r\n    const eintraege = Array.isArray(roh)\r\n      ? roh\r\n      : (roh && typeof roh === 'object' ? Object.values(roh) : []);\r\n\r\n    if (eintraege.length === 0) break;\r\n\r\n    // Schutz gegen nicht angenommenen Versatz: wiederholt sich die erste Kennung\r\n    // einer Folgeseite, wird abgebrochen (kein Endlosschleifen, E-31f).\r\n    const ersteId = eintraege[0] && typeof eintraege[0] === 'object' ? String(eintraege[0].id ?? '') : '';\r\n    if (seite > 1 && ersteId !== '' && ersteId === letzteErsteId) {\r\n      throw new Error('P90: ' + pfad + ' nimmt Versatz ab ' + start + ' nicht an (gleiche erste Kennung ' + ersteId + ')');\r\n    }\r\n    letzteErsteId = ersteId;\r\n\r\n    alle.push(...eintraege);\r\n    start += eintraege.length;\r\n\r\n    if (eintraege.length < reply || (total !== null && start >= total)) break;\r\n  }\r\n\r\n  // Vollstaendigkeitsnachweis: gemeldet = gelesen (E-31f).\r\n  if (total !== null && alle.length !== total) {\r\n    throw new Error('P90: ' + pfad + ' meldet ' + total + ' Datensaetze, gelesen ' + alle.length);\r\n  }\r\n\r\n  return { alle, total, abrufe };\r\n}\r\n\r\nconst reply = Math.min(k.seitengroesse || 2000, 2000); // gepruefter Hoechstwert 2000\r\nconst { alle, total, abrufe } = await holeAlle(k.endpunkt, reply);\r\n\r\n// ---- Normalisierung ----\r\nfunction normalisiere(satz) {\r\n  const s = satz && typeof satz === 'object' ? satz : {};\r\n  const out = {};\r\n  for (const sp of k.spalten) out[sp.ziel] = transformiere(sp.typ, s[sp.quelle]);\r\n  for (const z of (k.zusatzSpalten || [])) out[z.name] = transformiere(z.typ, s[z.quelle]);\r\n  if (k.payload) out.payload = s;\r\n  return out;\r\n}\r\n\r\nconst saetze = alle.map(normalisiere);\r\nconst datenJson = JSON.stringify(saetze);\r\n\r\n// ---- UPSERT-Abfrage generieren ----\r\nfunction quotIdent(name) {\r\n  return '\"' + String(name).replace(/\"/g, '\"\"') + '\"';\r\n}\r\n\r\nconst tabelleQualifiziert = quotIdent(k.schema) + '.' + quotIdent(k.zieltabelle);\r\nconst pk = k.pk;\r\nconst pkQualifiziert = quotIdent(pk);\r\n\r\nconst recordset = [];\r\nfor (const sp of k.spalten) recordset.push(quotIdent(sp.ziel) + ' ' + (sp.sqlTyp || 'text'));\r\nfor (const z of (k.zusatzSpalten || [])) recordset.push(quotIdent(z.name) + ' ' + (z.sqlTyp || 'text'));\r\nif (k.payload) recordset.push(quotIdent('payload') + ' jsonb');\r\nconst recordsetDef = recordset.join(', ');\r\n\r\nconst insertSpalten = [];\r\nconst insertWerte = [];\r\nfor (const sp of k.spalten) {\r\n  insertSpalten.push(quotIdent(sp.ziel));\r\n  insertWerte.push('e.' + quotIdent(sp.ziel));\r\n}\r\nif (k.payload) {\r\n  insertSpalten.push(quotIdent('payload'));\r\n  insertWerte.push('e.' + quotIdent('payload'));\r\n}\r\nif (k.userRef) {\r\n  insertSpalten.push(quotIdent(k.userRef.ziel));\r\n  insertWerte.push('e.' + quotIdent(k.userRef.ziel));\r\n}\r\nif (k.source) {\r\n  insertSpalten.push(quotIdent('source'));\r\n  insertWerte.push(\"'\" + String(k.source).replace(/'/g, \"''\") + \"'\");\r\n}\r\n\r\nfunction hashExpr(alias, felder) {\r\n  const teile = felder.map((f) => alias + '.' + quotIdent(f) + '::text');\r\n  return \"md5(concat_ws('|', \" + teile.join(', ') + '))';\r\n}\r\n\r\n// Dollar-Tag so waehlen, dass es nicht im datenJson vorkommt.\r\nlet tag = '$p90' + Math.random().toString(36).slice(2, 10) + '$';\r\nwhile (datenJson.includes(tag)) tag = '$p90' + Math.random().toString(36).slice(2, 10) + '$';\r\nconst jsonLiteral = tag + datenJson + tag + '::jsonb';\r\n\r\n// Zusaetzlich berechnete Felder im eingang-CTE.\r\nconst userRefSelect = k.userRef\r\n  ? ', CASE WHEN t.' + quotIdent(k.userRef.quelle) + ' IS NULL THEN NULL ELSE md5(t.' + quotIdent(k.userRef.quelle) + ') END AS ' + quotIdent(k.userRef.ziel)\r\n  : '';\r\n\r\n// Spalten fuer DO UPDATE SET (alle Nicht-PK-Zielspalten + payload + user_ref + source).\r\nconst updateSet = [];\r\nfor (const sp of k.spalten) {\r\n  if (sp.ziel === pk) continue;\r\n  updateSet.push(quotIdent(sp.ziel) + ' = EXCLUDED.' + quotIdent(sp.ziel));\r\n}\r\nif (k.payload) updateSet.push(quotIdent('payload') + ' = EXCLUDED.' + quotIdent('payload'));\r\nif (k.userRef) updateSet.push(quotIdent(k.userRef.ziel) + ' = EXCLUDED.' + quotIdent(k.userRef.ziel));\r\nif (k.source) updateSet.push(quotIdent('source') + ' = EXCLUDED.' + quotIdent('source'));\r\n\r\nlet sql = '';\r\n\r\nif (k.hash) {\r\n  // Variante mit gespeichertem payload_hash und last_changed_at.\r\n  const hashEingang = hashExpr('t', k.hashFelder);\r\n  const buchInsert = insertSpalten.concat([\r\n    quotIdent('first_seen_at'), quotIdent('last_synced_at'),\r\n    quotIdent('last_changed_at'), quotIdent('payload_hash'), quotIdent('is_deleted'),\r\n  ]).join(', ');\r\n  const buchWerte = insertWerte.concat([\r\n    'now()', 'now()', 'now()', 'e.' + quotIdent('payload_hash'), 'false',\r\n  ]).join(', ');\r\n\r\n  sql =\r\n    'WITH eingang AS (\\n    SELECT t.*, ' + hashEingang + ' AS ' + quotIdent('payload_hash') + userRefSelect +\r\n    '\\n    FROM jsonb_to_recordset(' + jsonLiteral + ') AS t(' + recordsetDef + ')\\n),\\n' +\r\n    'kennzahlen AS (\\n    SELECT\\n        count(*) AS zeilen,\\n' +\r\n    '        count(*) FILTER (WHERE o.' + pkQualifiziert + ' IS NULL) AS neu,\\n' +\r\n    '        count(*) FILTER (WHERE o.' + pkQualifiziert + ' IS NOT NULL AND o.' + quotIdent('payload_hash') + ' IS DISTINCT FROM e.' + quotIdent('payload_hash') + ') AS geaendert\\n' +\r\n    '    FROM eingang e\\n    LEFT JOIN ' + tabelleQualifiziert + ' o ON o.' + pkQualifiziert + ' = e.' + pkQualifiziert + '\\n),\\n' +\r\n    'geschrieben AS (\\n    INSERT INTO ' + tabelleQualifiziert + ' AS o (' + buchInsert + ')\\n' +\r\n    '    SELECT ' + buchWerte + '\\n    FROM eingang e\\n' +\r\n    '    ON CONFLICT (' + pkQualifiziert + ') DO UPDATE SET\\n        ' + updateSet.join(',\\n        ') + ',\\n' +\r\n    '        ' + quotIdent('last_synced_at') + ' = now(),\\n' +\r\n    '        ' + quotIdent('is_deleted') + ' = false,\\n' +\r\n    '        ' + quotIdent('last_changed_at') + ' = CASE WHEN o.' + quotIdent('payload_hash') + ' IS DISTINCT FROM EXCLUDED.' + quotIdent('payload_hash') + ' THEN now() ELSE o.' + quotIdent('last_changed_at') + ' END,\\n' +\r\n    '        ' + quotIdent('payload_hash') + ' = EXCLUDED.' + quotIdent('payload_hash') + '\\n' +\r\n    '    RETURNING o.' + pkQualifiziert + '\\n)';\r\n} else {\r\n  // Variante ohne gespeicherten Hash (offer_date, trainer_admin):\r\n  // \"geaendert\" wird ueber einen On-the-fly-Hashvergleich der bestehenden Zeile bestimmt.\r\n  const hashO = hashExpr('o', k.hashFelder);\r\n  const hashE = hashExpr('e', k.hashFelder);\r\n  const buchInsert = insertSpalten.concat([\r\n    quotIdent('first_seen_at'), quotIdent('last_synced_at'), quotIdent('is_deleted'),\r\n  ]).join(', ');\r\n  const buchWerte = insertWerte.concat(['now()', 'now()', 'false']).join(', ');\r\n\r\n  sql =\r\n    'WITH eingang AS (\\n    SELECT t.*' + userRefSelect +\r\n    '\\n    FROM jsonb_to_recordset(' + jsonLiteral + ') AS t(' + recordsetDef + ')\\n),\\n' +\r\n    'kennzahlen AS (\\n    SELECT\\n        count(*) AS zeilen,\\n' +\r\n    '        count(*) FILTER (WHERE o.' + pkQualifiziert + ' IS NULL) AS neu,\\n' +\r\n    '        count(*) FILTER (WHERE o.' + pkQualifiziert + ' IS NOT NULL AND ' + hashO + ' IS DISTINCT FROM ' + hashE + ') AS geaendert\\n' +\r\n    '    FROM eingang e\\n    LEFT JOIN ' + tabelleQualifiziert + ' o ON o.' + pkQualifiziert + ' = e.' + pkQualifiziert + '\\n),\\n' +\r\n    'geschrieben AS (\\n    INSERT INTO ' + tabelleQualifiziert + ' AS o (' + buchInsert + ')\\n' +\r\n    '    SELECT ' + buchWerte + '\\n    FROM eingang e\\n' +\r\n    '    ON CONFLICT (' + pkQualifiziert + ') DO UPDATE SET\\n        ' + updateSet.join(',\\n        ') + ',\\n' +\r\n    '        ' + quotIdent('last_synced_at') + ' = now(),\\n' +\r\n    '        ' + quotIdent('is_deleted') + ' = false\\n' +\r\n    '    RETURNING o.' + pkQualifiziert + '\\n)';\r\n}\r\n\r\n// Loesch-Markierung nur im Vollabgleich.\r\nif (loeschungen) {\r\n  sql +=\r\n    ',\\nfehlend AS (\\n    UPDATE ' + tabelleQualifiziert + '\\n' +\r\n    '    SET ' + quotIdent('is_deleted') + ' = true, ' + quotIdent('last_synced_at') + ' = now()\\n' +\r\n    '    WHERE ' + quotIdent('is_deleted') + ' = false\\n' +\r\n    '      AND ' + pkQualifiziert + ' NOT IN (SELECT ' + pkQualifiziert + ' FROM eingang)\\n' +\r\n    '    RETURNING ' + pkQualifiziert + '\\n)';\r\n}\r\n\r\nsql +=\r\n  '\\nSELECT\\n' +\r\n  '    (SELECT zeilen FROM kennzahlen) AS gelesen,\\n' +\r\n  '    (SELECT neu FROM kennzahlen) AS neu,\\n' +\r\n  '    (SELECT geaendert FROM kennzahlen) AS geaendert,\\n' +\r\n  '    (SELECT count(*) FROM geschrieben) AS gespeichert' +\r\n  (loeschungen ? ',\\n    (SELECT count(*) FROM fehlend) AS geloescht' : '') +\r\n  ';';\r\n\r\nreturn [{\r\n  json: {\r\n    kennung: k.kennung,\r\n    run_id: runId,\r\n    endpunkt: k.endpunkt,\r\n    zieltabelle: k.zieltabelle,\r\n    gemeldet_total: total,\r\n    gelesen: saetze.length,\r\n    abrufe,\r\n    vollstaendig: total !== null ? saetze.length === total : null,\r\n    loeschungen,\r\n    upsertSql: sql,\r\n    datenJson,\r\n  },\r\n}];\r\n"
+      },
+      "id": "p90-0004-holen",
+      "name": "P90 Ressource holen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.upsertSql }}",
+        "options": {}
+      },
+      "id": "p90-0005-speichern",
+      "name": "P90 Ressource speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// P90 - Zaehlwerte ausgeben\r\n// Fuehrt die Ergebniszahlen aus dem Speichern-Node und dem Holen-Node zusammen.\r\n// Grundlage fuer sync_run und die Qualitaetskontrolle P04.\r\n\r\nconst speichern = $('P90 Ressource speichern').first().json;\r\nconst holen = $('P90 Ressource holen').first().json;\r\n\r\nfunction z(w) {\r\n  const n = Number(w);\r\n  return Number.isFinite(n) ? n : 0;\r\n}\r\n\r\nreturn [{\r\n  json: {\r\n    kennung: holen.kennung,\r\n    run_id: holen.run_id,\r\n    endpunkt: holen.endpunkt,\r\n    zieltabelle: holen.zieltabelle,\r\n    api_aufrufe: z(holen.abrufe),\r\n    gemeldet_total: holen.gemeldet_total !== undefined ? holen.gemeldet_total : null,\r\n    gelesen: z(speichern.gelesen ?? holen.gelesen),\r\n    neu: z(speichern.neu),\r\n    geaendert: z(speichern.geaendert),\r\n    gespeichert: z(speichern.gespeichert),\r\n    geloescht: z(speichern.geloescht),\r\n    vollstaendig: holen.vollstaendig,\r\n  },\r\n}];\r\n"
+      },
+      "id": "p90-0006-zaehlwerte",
+      "name": "P90 Zaehlwerte ausgeben",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "p90-0007-fehlertrigger",
+      "name": "P90 Fehler auffangen",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// P90 - Fehlertext aufbereiten (Eingang des Fehlerpfads)\r\n// Extrahiert Fehlermeldung und ggf. run_id und uebergibt sie parametrisiert\r\n// (jsonb) an die Fehlerprotokollierung.\r\n\r\nconst fehler = $input.first().json;\r\nconst meldung = fehler.message ?? fehler.error?.message ?? fehler.error ?? 'Unbekannter Fehler in P90';\r\nconst rohRunId = fehler.run_id ?? fehler.runId ?? null;\r\nconst runId = (rohRunId === null || rohRunId === '' || rohRunId === undefined)\r\n  ? null\r\n  : Number(rohRunId);\r\n\r\nconst fehlerText = String(meldung).slice(0, 2000);\r\n\r\nreturn [{\r\n  json: {\r\n    fehler_text: fehlerText,\r\n    run_id: runId,\r\n    fehlerJson: JSON.stringify([{ fehler_text: fehlerText, run_id: runId }]),\r\n  },\r\n}];\r\n"
+      },
+      "id": "p90-0008-fehlertext",
+      "name": "P90 Fehlertext aufbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH f AS (\n    SELECT fehler_text, run_id\n    FROM jsonb_to_recordset($p90err${{ $json.fehlerJson }}$p90err$::jsonb)\n         AS x(fehler_text text, run_id bigint)\n)\nUPDATE edoobox_raw.sync_run AS r\nSET status      = 'fehler',\n    finished_at = now(),\n    error_text  = f.fehler_text\nFROM f\nWHERE r.status = 'laeuft'\n  AND (f.run_id IS NULL OR r.run_id = f.run_id)\nRETURNING r.run_id, r.status;",
+        "options": {}
+      },
+      "id": "p90-0009-fehlerlog",
+      "name": "P90 Fehler protokollieren",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        680,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "P90 Eingang": {
+      "main": [
+        [
+          {
+            "node": "P90 Konfiguration aufloesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P90 Konfiguration aufloesen": {
+      "main": [
+        [
+          {
+            "node": "P90 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P90 Token holen": {
+      "main": [
+        [
+          {
+            "node": "P90 Ressource holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P90 Ressource holen": {
+      "main": [
+        [
+          {
+            "node": "P90 Ressource speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P90 Ressource speichern": {
+      "main": [
+        [
+          {
+            "node": "P90 Zaehlwerte ausgeben",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P90 Fehler auffangen": {
+      "main": [
+        [
+          {
+            "node": "P90 Fehlertext aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P90 Fehlertext aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "P90 Fehler protokollieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}

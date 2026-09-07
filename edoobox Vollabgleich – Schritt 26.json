@@ -1,0 +1,129 @@
+{
+  "name": "S26 Rechnungen spiegeln",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "26000000-0000-4000-8000-000000002601",
+      "name": "S26 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 8 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "26000000-0000-4000-8000-000000002602",
+      "name": "S26 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Spiegelt alle Rechnungen samt Detailabruf. Ausgabe in Paketen,\n// je Paket fuenf flache Listen: Kopf, Posten, Zeilen, Zahlungen, Belege.\n\nconst auth = $('S26 Token holen').first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nasync function abruf(pfad, qs) {\n  return await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://app1.edoobox.com/v2${pfad}`,\n    headers,\n    qs,\n    json: true,\n    returnFullResponse: true,\n    timeout: 120000,\n    ignoreHttpStatusErrors: true,\n  });\n}\n\nconst hole = abruf.bind(this);\n\nfunction liste(h) {\n  if (!h || typeof h !== 'object') return [];\n  const d = h.data;\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') return Object.values(d);\n  return [];\n}\n\nfunction zahl(w) {\n  if (w === null || w === undefined || w === '' || w === false || w === true) return null;\n  const n = Number(String(w).replace(',', '.'));\n  return Number.isFinite(n) ? n : null;\n}\n\nfunction zeitpunkt(w) {\n  return typeof w === 'string' && /^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(w) ? w : null;\n}\n\nfunction text(w, max) {\n  if (w === null || w === undefined || typeof w === 'object') return null;\n  const t = String(w);\n  if (t === '' || t === 'false') return null;\n  return max ? t.slice(0, max) : t;\n}\n\nfunction eintraege(w) {\n  // Die Schnittstelle liefert Sammlungen entweder als Liste oder als Objekt.\n  // Beides wird zu Paaren aus Schluessel und Wert vereinheitlicht.\n  if (Array.isArray(w)) return w.map((v, i) => [String(i), v]);\n  if (w && typeof w === 'object') return Object.entries(w);\n  return [];\n}\n\nconst statusText = { 1: 'offen', 2: 'bezahlt', 3: 'storniert' };\n\n// 1. Rechnungsliste vollstaendig einlesen\nconst kopfroh = [];\nlet start = 0;\nfor (let i = 0; i < 20; i += 1) {\n  const a = await hole('/invoice/list', { 'limit[start]': start, 'limit[reply]': 2000 });\n  if (a.statusCode !== 200) throw new Error(`invoice/list Status ${a.statusCode}`);\n  const d = liste(a.body);\n  kopfroh.push(...d);\n  if (d.length < 2000) break;\n  start += 2000;\n}\n\nconst kennungen = kopfroh.filter((r) => r && r.id).map((r) => String(r.id));\nconst ausListe = new Map(kopfroh.filter((r) => r && r.id).map((r) => [String(r.id), r]));\n\n// 2. Detailabruf je Rechnung\nasync function detail(kennung) {\n  const a = await hole(`/invoice/${encodeURIComponent(kennung)}/data`, {});\n  if (a.statusCode !== 200) return { kennung, fehler: `Status ${a.statusCode}` };\n  const r0 = a.body?.data;\n  const r = Array.isArray(r0) ? r0[0] : r0;\n  return { kennung, satz: r && typeof r === 'object' ? r : null };\n}\n\nconst holeDetail = detail.bind(this);\n\nconst koepfe = [];\nconst posten = [];\nconst zeilen = [];\nconst zahlungen = [];\nconst belege = [];\nconst fehler = [];\n\nfunction verarbeiten(kennung, r) {\n  const l = ausListe.get(kennung) ?? {};\n  const id = r?.invoice_data && typeof r.invoice_data === 'object' ? r.invoice_data : {};\n  const c = id.counts && typeof id.counts === 'object' ? id.counts : {};\n  const adr = id.address && typeof id.address === 'object' ? id.address : {};\n  const st = zahl(l.status ?? r?.status);\n\n  koepfe.push({\n    invoice_id: kennung,\n    invoice_number: text(l.number ?? r?.number ?? id.number, 40),\n    user_ref_roh: text(l.user ?? r?.user, 60),\n    status: st,\n    status_text: statusText[st] ?? null,\n    currency: (text(l.currency ?? id.currency, 3) ?? 'EUR').toUpperCase(),\n    amount: zahl(l.amount ?? r?.amount),\n    amount_pay: zahl(r?.amount_pay),\n    line_total: zahl(c.lineTotalAmount),\n    tax_basis_total: zahl(c.taxBasisTotalAmount),\n    tax_total: zahl(c.taxTotalAmount),\n    grand_total: zahl(c.grandTotalAmount),\n    due_payable: zahl(c.duePayableAmount),\n    prepaid_total: zahl(c.totalPrepaidAmount),\n    allowance_total: zahl(c.allowanceTotalAmount),\n    charge_total: zahl(c.chargeTotalAmount),\n    date_create: zeitpunkt(l.date_create ?? r?.date_create),\n    date_pay: zeitpunkt(l.date_pay ?? r?.date_pay),\n    date_payuntil: zeitpunkt(l.date_payuntil ?? r?.date_payuntil),\n    date_cancelled: zeitpunkt(l.date_cancelled ?? r?.date_cancelled),\n    offer_start_date: zeitpunkt(l.offer_start_date ?? r?.offer_start_date),\n    address_country: text(adr.country, 8),\n    address_postcode: text(adr.postcode, 16),\n    buyer_reference: text(adr.buyer_reference, 80),\n    language: text(id.language, 8),\n  });\n\n  // Posten aus items.contained\n  const enthalten = r?.items && typeof r.items === 'object' ? r.items.contained : null;\n  for (const [schluessel, w] of eintraege(enthalten)) {\n    if (!w || typeof w !== 'object') continue;\n    const k = String(w.id ?? schluessel);\n    const pro = w.promotion && typeof w.promotion === 'object' && !Array.isArray(w.promotion) ? w.promotion : {};\n    posten.push({\n      invoice_id: kennung,\n      item_key: k,\n      item_type: text(w.type, 40),\n      transaction_id: text(w.transaction, 60),\n      transaction_number: text(w.number, 40),\n      description: text(w.description, 300),\n      amount: zahl(w.amount),\n      vat_percent: zahl(w.vat_percent),\n      vat_ref: text(w.vat, 60),\n      promotion_name: text(pro.name, 120),\n      promotion_amount: zahl(pro.amount),\n      promotion_vat_percent: zahl(pro.vat_percent),\n      pricecategory_count: Array.isArray(w.pricecategory)\n        ? w.pricecategory.length\n        : (w.pricecategory && typeof w.pricecategory === 'object' ? Object.keys(w.pricecategory).length : null),\n    });\n  }\n\n  // Gedruckte Zeilen aus invoice_data.items\n  const gedruckt = Array.isArray(id.items) ? id.items : (id.items && typeof id.items === 'object' ? Object.values(id.items) : []);\n  let laufend = 0;\n  for (const z of gedruckt) {\n    if (!z || typeof z !== 'object') continue;\n    laufend += 1;\n    const preis = z.price && typeof z.price === 'object' ? z.price : {};\n    const mwst = z.vat && typeof z.vat === 'object' ? z.vat : {};\n    zeilen.push({\n      invoice_id: kennung,\n      position: zahl(z.position) ?? laufend,\n      quantity: zahl(z.quantity),\n      price_net: zahl(preis.net),\n      price_net_summation: zahl(preis.net_summation),\n      vat_type: text(mwst.type, 40),\n      vat_percent: zahl(mwst.percent),\n      transaction_number: text(z.transaction_number, 40),\n      details: text(z.details, 400),\n    });\n  }\n\n  // Zahlungen\n  for (const [schluessel, w] of eintraege(r?.pay)) {\n    if (!w || typeof w !== 'object') continue;\n    const pid = text(w.id, 60) ?? String(schluessel);\n    if (!pid) continue;\n    zahlungen.push({\n      pay_id: pid,\n      invoice_id: kennung,\n      amount: zahl(w.amount),\n      currency: (text(w.currency, 3) ?? 'EUR').toUpperCase(),\n      status: zahl(w.status),\n      date_pay: zeitpunkt(w.date_pay),\n      system: text(w.system, 40),\n      system_id: text(w.system_id, 40),\n    });\n  }\n\n  // Belege\n  for (const [schluessel, w] of eintraege(r?.receipt)) {\n    if (!w || typeof w !== 'object') continue;\n    const rid = text(w.id, 60) ?? String(schluessel);\n    if (!rid) continue;\n    belege.push({\n      receipt_id: rid,\n      invoice_id: kennung,\n      receipt_number: text(w.number, 40),\n      amount: zahl(w.amount),\n      currency: (text(w.currency, 3) ?? 'EUR').toUpperCase(),\n      date_create: zeitpunkt(w.date_create),\n    });\n  }\n}\n\nconst gleichzeitig = 8;\nfor (let i = 0; i < kennungen.length; i += gleichzeitig) {\n  const gruppe = kennungen.slice(i, i + gleichzeitig);\n  const ergebnisse = await Promise.all(gruppe.map((k) => holeDetail(k)));\n  for (const e of ergebnisse) {\n    if (e.fehler) { fehler.push(`${e.kennung}: ${e.fehler}`); continue; }\n    if (!e.satz) { fehler.push(`${e.kennung}: leere Antwort`); continue; }\n    verarbeiten(e.kennung, e.satz);\n  }\n}\n\n// 3. In Pakete zerlegen. Kinder folgen ihrem Kopf.\nconst paketgroesse = 300;\nconst pakete = [];\n\nfor (let i = 0; i < koepfe.length; i += paketgroesse) {\n  const kopfpaket = koepfe.slice(i, i + paketgroesse);\n  const menge = new Set(kopfpaket.map((k) => k.invoice_id));\n  pakete.push({\n    json: {\n      schritt: 'S26',\n      paket: pakete.length + 1,\n      koepfe: kopfpaket.length,\n      fehlerhaft_gesamt: fehler.length,\n      fehlerliste: fehler.slice(0, 10),\n      kopfJson: JSON.stringify(kopfpaket),\n      postenJson: JSON.stringify(posten.filter((p) => menge.has(p.invoice_id))),\n      zeilenJson: JSON.stringify(zeilen.filter((z) => menge.has(z.invoice_id))),\n      zahlungJson: JSON.stringify(zahlungen.filter((z) => menge.has(z.invoice_id))),\n      belegJson: JSON.stringify(belege.filter((b) => menge.has(b.invoice_id))),\n    },\n  });\n}\n\nreturn pakete;\n"
+      },
+      "id": "26000000-0000-4000-8000-000000002603",
+      "name": "S26 Rechnungen holen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Spiegelt ein Paket Rechnungen samt Posten, Zeilen, Zahlungen und Belegen.\n-- Die Kindeintraege verbinden sich mit kopf_geschrieben, damit PostgreSQL\n-- den Kopf zwingend vor den Kindern schreibt und der Fremdschluessel haelt.\nWITH kopf_eingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoKopf${{ $json.kopfJson }}$edoKopf$::jsonb)\n         AS t(\n            invoice_id       text,\n            invoice_number   text,\n            user_ref_roh     text,\n            status           integer,\n            status_text      text,\n            currency         text,\n            amount           numeric,\n            amount_pay       numeric,\n            line_total       numeric,\n            tax_basis_total  numeric,\n            tax_total        numeric,\n            grand_total      numeric,\n            due_payable      numeric,\n            prepaid_total    numeric,\n            allowance_total  numeric,\n            charge_total     numeric,\n            date_create      text,\n            date_pay         text,\n            date_payuntil    text,\n            date_cancelled   text,\n            offer_start_date text,\n            address_country  text,\n            address_postcode text,\n            buyer_reference  text,\n            language         text\n         )\n),\nkopf_neu AS (\n    SELECT\n        e.invoice_id,\n        e.invoice_number,\n        CASE WHEN e.user_ref_roh IS NULL THEN NULL ELSE md5(e.user_ref_roh) END AS user_ref,\n        e.status,\n        e.status_text,\n        upper(coalesce(nullif(e.currency, ''), 'EUR'))::char(3) AS currency,\n        e.amount, e.amount_pay, e.line_total, e.tax_basis_total, e.tax_total,\n        e.grand_total, e.due_payable, e.prepaid_total, e.allowance_total, e.charge_total,\n        e.date_create::timestamptz      AS date_create,\n        e.date_pay::timestamptz        AS date_pay,\n        e.date_payuntil::timestamptz   AS date_payuntil,\n        e.date_cancelled::timestamptz  AS date_cancelled,\n        e.offer_start_date::timestamptz AS offer_start_date,\n        e.address_country, e.address_postcode, e.buyer_reference, e.language,\n        md5(concat_ws('|', e.invoice_number, e.status::text, e.amount::text,\n                      e.amount_pay::text, e.tax_total::text, e.grand_total::text,\n                      e.date_pay, e.date_cancelled)) AS payload_hash\n    FROM kopf_eingang e\n    WHERE e.invoice_id IS NOT NULL\n),\nkopf_vorher AS (\n    SELECT n.invoice_id, a.payload_hash AS alt\n    FROM kopf_neu n\n    LEFT JOIN edoobox_raw.invoice a ON a.invoice_id = n.invoice_id\n),\nkopf_geschrieben AS (\n    INSERT INTO edoobox_raw.invoice AS z (\n        invoice_id, invoice_number, user_ref, status, status_text, currency,\n        amount, amount_pay, line_total, tax_basis_total, tax_total,\n        grand_total, due_payable, prepaid_total, allowance_total, charge_total,\n        date_create, date_pay, date_payuntil, date_cancelled, offer_start_date,\n        address_country, address_postcode, buyer_reference, language,\n        payload_hash, last_synced_at, last_changed_at, is_deleted\n    )\n    SELECT\n        n.invoice_id, n.invoice_number, n.user_ref, n.status, n.status_text, n.currency,\n        n.amount, n.amount_pay, n.line_total, n.tax_basis_total, n.tax_total,\n        n.grand_total, n.due_payable, n.prepaid_total, n.allowance_total, n.charge_total,\n        n.date_create, n.date_pay, n.date_payuntil, n.date_cancelled, n.offer_start_date,\n        n.address_country, n.address_postcode, n.buyer_reference, n.language,\n        n.payload_hash, now(), now(), false\n    FROM kopf_neu n\n    ON CONFLICT (invoice_id) DO UPDATE SET\n        invoice_number   = EXCLUDED.invoice_number,\n        user_ref         = EXCLUDED.user_ref,\n        status           = EXCLUDED.status,\n        status_text      = EXCLUDED.status_text,\n        currency         = EXCLUDED.currency,\n        amount           = EXCLUDED.amount,\n        amount_pay       = EXCLUDED.amount_pay,\n        line_total       = EXCLUDED.line_total,\n        tax_basis_total  = EXCLUDED.tax_basis_total,\n        tax_total        = EXCLUDED.tax_total,\n        grand_total      = EXCLUDED.grand_total,\n        due_payable      = EXCLUDED.due_payable,\n        prepaid_total    = EXCLUDED.prepaid_total,\n        allowance_total  = EXCLUDED.allowance_total,\n        charge_total     = EXCLUDED.charge_total,\n        date_create      = EXCLUDED.date_create,\n        date_pay         = EXCLUDED.date_pay,\n        date_payuntil    = EXCLUDED.date_payuntil,\n        date_cancelled   = EXCLUDED.date_cancelled,\n        offer_start_date = EXCLUDED.offer_start_date,\n        address_country  = EXCLUDED.address_country,\n        address_postcode = EXCLUDED.address_postcode,\n        buyer_reference  = EXCLUDED.buyer_reference,\n        language         = EXCLUDED.language,\n        payload_hash     = EXCLUDED.payload_hash,\n        last_synced_at   = now(),\n        last_changed_at  = CASE WHEN z.payload_hash IS DISTINCT FROM EXCLUDED.payload_hash\n                                THEN now() ELSE z.last_changed_at END,\n        is_deleted       = false\n    RETURNING z.invoice_id\n),\nposten_eingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoPosten${{ $json.postenJson }}$edoPosten$::jsonb)\n         AS t(\n            invoice_id            text,\n            item_key              text,\n            item_type             text,\n            transaction_id        text,\n            transaction_number    text,\n            description           text,\n            amount                numeric,\n            vat_percent           numeric,\n            vat_ref               text,\n            promotion_name        text,\n            promotion_amount      numeric,\n            promotion_vat_percent numeric,\n            pricecategory_count   integer\n         )\n),\nposten_geschrieben AS (\n    INSERT INTO edoobox_raw.invoice_item AS z (\n        invoice_id, item_key, item_type, transaction_id, transaction_number,\n        description, amount, vat_percent, vat_ref,\n        promotion_name, promotion_amount, promotion_vat_percent,\n        pricecategory_count, last_synced_at\n    )\n    SELECT DISTINCT ON (p.invoice_id, p.item_key)\n        p.invoice_id, p.item_key, p.item_type, p.transaction_id, p.transaction_number,\n        p.description, p.amount, p.vat_percent, p.vat_ref,\n        p.promotion_name, p.promotion_amount, p.promotion_vat_percent,\n        p.pricecategory_count, now()\n    FROM posten_eingang p\n    JOIN kopf_geschrieben k ON k.invoice_id = p.invoice_id\n    WHERE p.item_key IS NOT NULL\n    ON CONFLICT (invoice_id, item_key) DO UPDATE SET\n        item_type             = EXCLUDED.item_type,\n        transaction_id        = EXCLUDED.transaction_id,\n        transaction_number    = EXCLUDED.transaction_number,\n        description           = EXCLUDED.description,\n        amount                = EXCLUDED.amount,\n        vat_percent           = EXCLUDED.vat_percent,\n        vat_ref               = EXCLUDED.vat_ref,\n        promotion_name        = EXCLUDED.promotion_name,\n        promotion_amount      = EXCLUDED.promotion_amount,\n        promotion_vat_percent = EXCLUDED.promotion_vat_percent,\n        pricecategory_count   = EXCLUDED.pricecategory_count,\n        last_synced_at        = now()\n    RETURNING 1\n),\nzeilen_eingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoZeilen${{ $json.zeilenJson }}$edoZeilen$::jsonb)\n         AS t(\n            invoice_id          text,\n            position            integer,\n            quantity            numeric,\n            price_net           numeric,\n            price_net_summation numeric,\n            vat_type            text,\n            vat_percent         numeric,\n            transaction_number  text,\n            details             text\n         )\n),\nzeilen_geschrieben AS (\n    INSERT INTO edoobox_raw.invoice_line AS z (\n        invoice_id, position, quantity, price_net, price_net_summation,\n        vat_type, vat_percent, transaction_number, details, last_synced_at\n    )\n    SELECT DISTINCT ON (l.invoice_id, l.position)\n        l.invoice_id, l.position, l.quantity, l.price_net, l.price_net_summation,\n        l.vat_type, l.vat_percent, l.transaction_number, l.details, now()\n    FROM zeilen_eingang l\n    JOIN kopf_geschrieben k ON k.invoice_id = l.invoice_id\n    WHERE l.position IS NOT NULL\n    ON CONFLICT (invoice_id, position) DO UPDATE SET\n        quantity            = EXCLUDED.quantity,\n        price_net           = EXCLUDED.price_net,\n        price_net_summation = EXCLUDED.price_net_summation,\n        vat_type            = EXCLUDED.vat_type,\n        vat_percent         = EXCLUDED.vat_percent,\n        transaction_number  = EXCLUDED.transaction_number,\n        details             = EXCLUDED.details,\n        last_synced_at      = now()\n    RETURNING 1\n),\nzahlung_eingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoZahlung${{ $json.zahlungJson }}$edoZahlung$::jsonb)\n         AS t(\n            pay_id     text,\n            invoice_id text,\n            amount     numeric,\n            currency   text,\n            status     integer,\n            date_pay   text,\n            system     text,\n            system_id  text\n         )\n),\nzahlung_geschrieben AS (\n    INSERT INTO edoobox_raw.invoice_payment AS z (\n        pay_id, invoice_id, amount, currency, status, date_pay, system, system_id, last_synced_at\n    )\n    SELECT DISTINCT ON (p.pay_id)\n        p.pay_id, p.invoice_id, p.amount,\n        upper(coalesce(nullif(p.currency, ''), 'EUR'))::char(3),\n        p.status, p.date_pay::timestamptz, p.system, p.system_id, now()\n    FROM zahlung_eingang p\n    JOIN kopf_geschrieben k ON k.invoice_id = p.invoice_id\n    WHERE p.pay_id IS NOT NULL\n    ON CONFLICT (pay_id) DO UPDATE SET\n        invoice_id     = EXCLUDED.invoice_id,\n        amount         = EXCLUDED.amount,\n        currency       = EXCLUDED.currency,\n        status         = EXCLUDED.status,\n        date_pay       = EXCLUDED.date_pay,\n        system         = EXCLUDED.system,\n        system_id      = EXCLUDED.system_id,\n        last_synced_at = now()\n    RETURNING 1\n),\nbeleg_eingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoBeleg${{ $json.belegJson }}$edoBeleg$::jsonb)\n         AS t(\n            receipt_id     text,\n            invoice_id     text,\n            receipt_number text,\n            amount         numeric,\n            currency       text,\n            date_create    text\n         )\n),\nbeleg_geschrieben AS (\n    INSERT INTO edoobox_raw.invoice_receipt AS z (\n        receipt_id, invoice_id, receipt_number, amount, currency, date_create, last_synced_at\n    )\n    SELECT DISTINCT ON (b.receipt_id)\n        b.receipt_id, b.invoice_id, b.receipt_number, b.amount,\n        upper(coalesce(nullif(b.currency, ''), 'EUR'))::char(3),\n        b.date_create::timestamptz, now()\n    FROM beleg_eingang b\n    JOIN kopf_geschrieben k ON k.invoice_id = b.invoice_id\n    WHERE b.receipt_id IS NOT NULL\n    ON CONFLICT (receipt_id) DO UPDATE SET\n        invoice_id     = EXCLUDED.invoice_id,\n        receipt_number = EXCLUDED.receipt_number,\n        amount         = EXCLUDED.amount,\n        currency       = EXCLUDED.currency,\n        date_create    = EXCLUDED.date_create,\n        last_synced_at = now()\n    RETURNING 1\n)\nSELECT\n    (SELECT count(*) FROM kopf_geschrieben)                                     AS koepfe,\n    (SELECT count(*) FROM kopf_vorher WHERE alt IS NULL)                        AS neu,\n    (SELECT count(*) FROM posten_geschrieben)                                   AS posten,\n    (SELECT count(*) FROM zeilen_geschrieben)                                   AS zeilen,\n    (SELECT count(*) FROM zahlung_geschrieben)                                  AS zahlungen,\n    (SELECT count(*) FROM beleg_geschrieben)                                    AS belege,\n    (SELECT count(*) FROM posten_eingang WHERE transaction_id IS NOT NULL)      AS posten_mit_vorgang;",
+        "options": {}
+      },
+      "id": "26000000-0000-4000-8000-000000002604",
+      "name": "S26 Rechnungen speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1000,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S26 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S26 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S26 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S26 Rechnungen holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S26 Rechnungen holen": {
+      "main": [
+        [
+          {
+            "node": "S26 Rechnungen speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "executionTimeout": 3600
+  },
+  "active": false,
+  "tags": []
+}

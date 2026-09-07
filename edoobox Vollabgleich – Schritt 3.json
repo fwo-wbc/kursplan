@@ -1,0 +1,127 @@
+{
+  "name": "edoobox 04 - Vollabgleich - Schritt 3",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "821ec2bb-188a-4b49-b0bc-81e93ce338c3",
+      "name": "Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH vorherige_laeufe AS (\n    UPDATE edoobox_raw.sync_run\n    SET\n        status = 'abgebrochen',\n        finished_at = now(),\n        error_text = 'Durch neuen manuellen Vollabgleich ersetzt'\n    WHERE run_type = 'vollabgleich'\n      AND status = 'laeuft'\n)\nINSERT INTO edoobox_raw.sync_run (\n    run_type,\n    status\n)\nVALUES (\n    'vollabgleich',\n    'laeuft'\n)\nRETURNING\n    run_id,\n    started_at,\n    status;",
+        "options": {}
+      },
+      "id": "caf52e41-b723-47f6-8873-fd3931cc9e36",
+      "name": "Vollabgleich starten",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app2.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 24 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f4962864-c25f-4e8c-bde7-1fc971cd9457",
+      "name": "Kurzlebigen edoobox-Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function beschreibe(wert, schluessel = '') {\n  if (/token|secret|authorization|cookie/i.test(schluessel)) {\n    return '[ausgeblendet]';\n  }\n  if (Array.isArray(wert)) {\n    return {\n      typ: 'array',\n      anzahl: wert.length,\n      erstes_element: wert.length ? beschreibe(wert[0]) : null,\n    };\n  }\n  if (wert !== null && typeof wert === 'object') {\n    return Object.fromEntries(\n      Object.entries(wert).map(([k, v]) => [k, beschreibe(v, k)])\n    );\n  }\n  return { typ: wert === null ? 'null' : typeof wert };\n}\n\nreturn [{\n  json: {\n    hinweis: 'Nur Feldnamen und Datentypen; Zugangswerte wurden ausgeblendet.',\n    antwortstruktur: beschreibe($input.first().json),\n    run_id: $('Vollabgleich starten').first().json.run_id\n  }\n}];"
+      },
+      "id": "26b2e8e0-dc4d-4ed5-ae6f-ae8bb0f8f5d6",
+      "name": "Antwortstruktur ohne Geheimnisse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "Vollabgleich starten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vollabgleich starten": {
+      "main": [
+        [
+          {
+            "node": "Kurzlebigen edoobox-Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kurzlebigen edoobox-Token holen": {
+      "main": [
+        [
+          {
+            "node": "Antwortstruktur ohne Geheimnisse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

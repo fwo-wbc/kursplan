@@ -1,0 +1,37 @@
+{
+  "name": "S47 Terminstatus und Dauer pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "47000000-0000-4000-8000-000000004701",
+      "name": "S47 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Prueft Terminstatus und Zeitdauer fuer die Kostenlogik. Nur lesend.\nWITH basis AS (\n    SELECT v.*,\n           CASE WHEN date_start IS NOT NULL AND date_end IS NOT NULL\n                THEN round((extract(epoch FROM (date_end - date_start)) / 3600.0)::numeric, 2) END AS dauer_stunden\n    FROM kursplan.v_termin_erloes_produktiv v\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Status ab 2023' AS bereich,\n           coalesce(termin_status, '(leer)') AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('mit Buchung ', count(*) FILTER (WHERE buchungen_gebucht > 0),\n                  ' / ohne Buchung ', count(*) FILTER (WHERE buchungen_gebucht = 0),\n                  ' / netto ', round(sum(coalesce(netto_gebucht, 0)), 2)) AS hinweis\n    FROM basis\n    WHERE date_start >= timestamp '2023-01-01'\n    GROUP BY 3\n\n    UNION ALL SELECT 20, 'B Dauer produktiv',\n           concat(dauer_stunden, ' Stunden'), count(*)::numeric,\n           concat('mit Buchung ', count(*) FILTER (WHERE buchungen_gebucht > 0),\n                  ' / netto ', round(sum(coalesce(netto_gebucht, 0)), 2))\n    FROM basis\n    WHERE date_start >= timestamp '2023-01-01' AND dauer_stunden IS NOT NULL\n    GROUP BY 3\n    HAVING count(*) >= 3\n\n    UNION ALL SELECT 30, 'C Zeitproblem',\n           CASE WHEN date_start IS NULL THEN 'Start fehlt'\n                WHEN date_end IS NULL THEN 'Ende fehlt'\n                WHEN date_end <= date_start THEN 'Ende nicht nach Start'\n                WHEN dauer_stunden > 12 THEN 'Dauer ueber 12 Stunden'\n                ELSE 'sonstig' END,\n           count(*)::numeric,\n           concat('mit Buchung ', count(*) FILTER (WHERE buchungen_gebucht > 0),\n                  ' / netto ', round(sum(coalesce(netto_gebucht, 0)), 2))\n    FROM basis\n    WHERE date_start IS NULL OR date_end IS NULL OR date_end <= date_start OR dauer_stunden > 12\n    GROUP BY 3\n\n    UNION ALL SELECT 40, 'D Status mit Buchung',\n           coalesce(termin_status, '(leer)'), count(*)::numeric,\n           concat('plaetze ', sum(plaetze_gebucht), ' / netto ', round(sum(coalesce(netto_gebucht, 0)), 2))\n    FROM basis\n    WHERE date_start >= timestamp '2023-01-01' AND buchungen_gebucht > 0\n    GROUP BY 3\n)\nSELECT 'S47' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, wert DESC, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "47000000-0000-4000-8000-000000004702",
+      "name": "S47 ERGEBNIS Status und Dauer",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S47 Manuell starten": {
+      "main": [[{"node": "S47 ERGEBNIS Status und Dauer", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

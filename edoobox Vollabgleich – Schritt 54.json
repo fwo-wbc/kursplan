@@ -1,0 +1,85 @@
+{
+  "name": "S54 Trainer und Termine spiegeln",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "54000000-0000-4000-8000-000000005401",
+      "name": "S54 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "grant-type", "value": "password"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {"name": "expire", "value": "={{ $now.plus({ hours: 2 }).toISO() }}"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "54000000-0000-4000-8000-000000005402",
+      "name": "S54 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Liest /admin/list und /date/list vollstaendig und gibt ausschliesslich\n// die fuer Trainerzuordnung erforderlichen, datenschutzarmen Felder weiter.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\nif (!token || !edid) throw new Error('Token oder edid fehlt.');\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\nconst basis = 'https://app1.edoobox.com/v2';\n\nfunction rowsAus(body) {\n  const d = body?.data;\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') return Object.values(d);\n  return [];\n}\n\nasync function holeAlle(pfad) {\n  const alle = [];\n  const reply = 2000;\n  let start = 0;\n  let total = null;\n  for (let seite = 1; seite <= 20; seite += 1) {\n    const a = await this.helpers.httpRequest({\n      method: 'GET', url: basis + pfad, headers,\n      qs: { 'limit[start]': start, 'limit[reply]': reply },\n      json: true, returnFullResponse: true, timeout: 60000,\n      ignoreHttpStatusErrors: true,\n    });\n    if (!(a.statusCode >= 200 && a.statusCode < 300)) throw new Error(`${pfad}: HTTP ${a.statusCode}`);\n    const rows = rowsAus(a.body);\n    if (total === null && a.body?.limit?.total !== undefined) total = Number(a.body.limit.total);\n    alle.push(...rows);\n    start += rows.length;\n    if (rows.length === 0 || rows.length < reply || (total !== null && start >= total)) break;\n  }\n  if (total !== null && alle.length !== total) throw new Error(`${pfad}: gemeldet ${total}, gelesen ${alle.length}`);\n  return alle;\n}\n\nconst adminRoh = await holeAlle.call(this, '/admin/list');\nconst dateRoh = await holeAlle.call(this, '/date/list');\n\nconst admins = adminRoh.map(a => ({\n  admin_id: String(a.id),\n  shortcut: a.shortcut || null,\n  permission: a.permission || null,\n  is_active: a.status === true,\n}));\n\nconst dates = dateRoh.map(d => ({\n  date_id: String(d.id),\n  offer_id: String(d.offer),\n  date_start: d.date_start || null,\n  date_end: d.date_end || null,\n  place_ref: d.place || null,\n  room_ref: d.room || null,\n  leaders: [...new Set((Array.isArray(d.leader) ? d.leader : []).filter(Boolean).map(String))],\n}));\n\nreturn [{ json: {\n  schritt: 'S54',\n  adminsJson: JSON.stringify(admins),\n  datesJson: JSON.stringify(dates),\n  admins: admins.length,\n  dates: dates.length,\n  leaders: dates.reduce((s, d) => s + d.leaders.length, 0),\n} }];"
+      },
+      "id": "54000000-0000-4000-8000-000000005403",
+      "name": "S54 Daten holen und minimieren",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "BEGIN;\n\nWITH eingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoAdmins${{ $json.adminsJson }}$edoAdmins$::jsonb) AS x(\n        admin_id text,\n        shortcut text,\n        permission text,\n        is_active boolean\n    )\n)\nINSERT INTO edoobox_raw.trainer_admin AS a\n    (admin_id, shortcut, permission, is_active, last_synced_at, is_deleted)\nSELECT admin_id, shortcut, permission, is_active, now(), false\nFROM eingang\nON CONFLICT (admin_id) DO UPDATE SET\n    shortcut       = EXCLUDED.shortcut,\n    permission     = EXCLUDED.permission,\n    is_active      = EXCLUDED.is_active,\n    last_synced_at = now(),\n    is_deleted     = false;\n\nUPDATE edoobox_raw.trainer_admin\nSET is_deleted = true,\n    last_synced_at = now()\nWHERE admin_id NOT IN (\n    SELECT x.admin_id\n    FROM jsonb_to_recordset($edoAdmins${{ $json.adminsJson }}$edoAdmins$::jsonb)\n         AS x(admin_id text, shortcut text, permission text, is_active boolean)\n);\n\nWITH eingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoDates${{ $json.datesJson }}$edoDates$::jsonb) AS x(\n        date_id text,\n        offer_id text,\n        date_start timestamptz,\n        date_end timestamptz,\n        place_ref text,\n        room_ref text,\n        leaders jsonb\n    )\n)\nINSERT INTO edoobox_raw.offer_date AS d\n    (date_id, offer_id, date_start, date_end, place_ref, room_ref, last_synced_at, is_deleted)\nSELECT date_id, offer_id, date_start, date_end, place_ref, room_ref, now(), false\nFROM eingang\nON CONFLICT (date_id) DO UPDATE SET\n    offer_id       = EXCLUDED.offer_id,\n    date_start     = EXCLUDED.date_start,\n    date_end       = EXCLUDED.date_end,\n    place_ref      = EXCLUDED.place_ref,\n    room_ref       = EXCLUDED.room_ref,\n    last_synced_at = now(),\n    is_deleted     = false;\n\nUPDATE edoobox_raw.offer_date\nSET is_deleted = true,\n    last_synced_at = now()\nWHERE date_id NOT IN (\n    SELECT x.date_id\n    FROM jsonb_to_recordset($edoDates${{ $json.datesJson }}$edoDates$::jsonb)\n         AS x(date_id text, offer_id text, date_start timestamptz, date_end timestamptz,\n              place_ref text, room_ref text, leaders jsonb)\n);\n\nDELETE FROM edoobox_raw.date_leader;\n\nWITH eingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoDates${{ $json.datesJson }}$edoDates$::jsonb) AS x(\n        date_id text,\n        offer_id text,\n        date_start timestamptz,\n        date_end timestamptz,\n        place_ref text,\n        room_ref text,\n        leaders jsonb\n    )\n)\nINSERT INTO edoobox_raw.date_leader (date_id, admin_id, last_synced_at)\nSELECT e.date_id, l.admin_id, now()\nFROM eingang e\nCROSS JOIN LATERAL jsonb_array_elements_text(e.leaders) AS l(admin_id)\nON CONFLICT (date_id, admin_id) DO UPDATE SET last_synced_at = now();\n\nCOMMIT;\n\nSELECT\n    'S54' AS schritt,\n    (SELECT count(*) FROM edoobox_raw.trainer_admin WHERE NOT is_deleted) AS admins_aktiv,\n    (SELECT count(*) FROM edoobox_raw.offer_date WHERE NOT is_deleted) AS datumszeilen_aktiv,\n    (SELECT count(*) FROM edoobox_raw.date_leader) AS trainerzuordnungen,\n    (SELECT count(*) FROM kursplan.v_angebot_trainer WHERE zuordnungsstatus = 'offen') AS angebote_ohne_trainer,\n    (SELECT count(*) FROM kursplan.v_angebot_trainer WHERE zuordnungsstatus = 'eindeutig') AS angebote_eindeutig,\n    (SELECT count(*) FROM kursplan.v_angebot_trainer WHERE zuordnungsstatus = 'mehrfach') AS angebote_mehrfach,\n    (SELECT count(*) FROM kursplan.v_angebot_trainer WHERE historische_trainer_anzahl > 0) AS angebote_historischer_trainer;"
+      },
+      "id": "54000000-0000-4000-8000-000000005404",
+      "name": "S54 Trainer und Termine speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "S54 Manuell starten": {
+      "main": [[{"node": "S54 Token holen", "type": "main", "index": 0}]]
+    },
+    "S54 Token holen": {
+      "main": [[{"node": "S54 Daten holen und minimieren", "type": "main", "index": 0}]]
+    },
+    "S54 Daten holen und minimieren": {
+      "main": [[{"node": "S54 Trainer und Termine speichern", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "54000000-0000-4000-8000-000000005499",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

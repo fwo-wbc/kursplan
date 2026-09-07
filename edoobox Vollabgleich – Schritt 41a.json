@@ -1,0 +1,37 @@
+{
+  "name": "S41a Terminsicht mit finaler Platzregel",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "41100000-0000-4000-8000-000000004101",
+      "name": "S41a Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Verwaltungsschritt: ersetzt nur kursplan.v_termin_erloes.\n-- Hierfuer das Verwaltungscredential verwenden.\nCREATE OR REPLACE VIEW kursplan.v_termin_erloes AS\nWITH pos AS (\n    SELECT p.booking_id,\n           coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)') AS kat,\n           coalesce(p.quantity, 0) AS menge,\n           CASE WHEN p.pricecategory_name ~* '(bis zu|max\\\\.?|f\\\\.|fuer|für)[^0-9]{0,12}[0-9]+[[:space:]]*person'\n                THEN (substring(p.pricecategory_name from '(?i)(?:bis zu|max\\\\.?|f\\\\.|fuer|für)[^0-9]{0,12}([0-9]+)[[:space:]]*person'))::int END AS basis_n,\n           CASE WHEN p.pricecategory_name ~* '[0-9]+[[:space:]]*(personen|person|teiln|teilnehmer)'\n                THEN (substring(p.pricecategory_name from '(?i)([0-9]+)[[:space:]]*(?:personen|person|teiln|teilnehmer)'))::int END AS text_n,\n           (p.pricecategory_name ~* '(jede|je|pro)[[:space:]]+weitere|preis[^a-zA-ZäöüÄÖÜß]*für[^a-zA-ZäöüÄÖÜß]*jede[^a-zA-ZäöüÄÖÜß]*weitere') AS ist_zusatz\n    FROM edoobox_raw.booking_position p\n),\nje_buchung AS (\n    SELECT b.booking_id, b.offer_id, b.status,\n           coalesce(s.netto, 0) AS netto,\n           coalesce(s.brutto, 0) AS brutto,\n           max(pos.basis_n) AS basis_n,\n           max(pos.text_n) AS text_n,\n           coalesce(sum(pos.menge) FILTER (WHERE pos.ist_zusatz), 0) AS zusatz_n,\n           coalesce(sum(pos.menge) FILTER (WHERE pos.kat = 'Inklusive'), 0) AS inklusive_n,\n           coalesce(bool_or(pos.kat = 'Inklusive'), false) AS hat_inklusive\n    FROM edoobox_raw.booking b\n    LEFT JOIN kursplan.v_buchung_steuer s ON s.booking_id = b.booking_id\n    LEFT JOIN pos ON pos.booking_id = b.booking_id\n    WHERE b.is_deleted IS NOT TRUE\n    GROUP BY b.booking_id, b.offer_id, b.status, s.netto, s.brutto\n),\nkopf AS (\n    SELECT j.*,\n           CASE WHEN basis_n IS NOT NULL THEN basis_n + zusatz_n\n                WHEN text_n IS NOT NULL THEN text_n\n                WHEN hat_inklusive THEN 1 + inklusive_n + zusatz_n\n                ELSE 1 END AS abgeleitet\n    FROM je_buchung j\n),\nje_termin AS (\n    SELECT o.offer_id,\n           count(*) FILTER (WHERE k.status = 'gebucht') AS buchungen_gebucht,\n           count(*) FILTER (WHERE k.status = 'storniert') AS buchungen_storniert,\n           count(*) FILTER (WHERE k.status = 'warteliste') AS buchungen_warteliste,\n           greatest(\n               count(*) FILTER (WHERE k.status = 'gebucht'),\n               coalesce(sum(k.abgeleitet) FILTER (WHERE k.status = 'gebucht' AND k.netto <> 0), 0),\n               coalesce(max(k.abgeleitet) FILTER (WHERE k.status = 'gebucht' AND k.netto = 0), 0)\n           )::numeric AS plaetze_gebucht,\n           round(coalesce(sum(k.netto) FILTER (WHERE k.status = 'gebucht'), 0), 2) AS netto,\n           round(coalesce(sum(k.brutto) FILTER (WHERE k.status = 'gebucht'), 0), 2) AS brutto\n    FROM edoobox_raw.offer o\n    LEFT JOIN kopf k ON k.offer_id = o.offer_id\n    WHERE o.is_deleted IS NOT TRUE\n    GROUP BY o.offer_id\n)\nSELECT o.offer_id,\n       o.offer_number,\n       o.name,\n       o.offerdef_ref,\n       o.date_start,\n       o.date_end,\n       o.user_minimal,\n       o.user_maximum,\n       o.status AS termin_status,\n       t.buchungen_gebucht,\n       t.buchungen_storniert,\n       t.buchungen_warteliste,\n       t.plaetze_gebucht,\n       CASE WHEN o.date_start >= timestamp '2023-01-01' THEN t.netto ELSE NULL::numeric END AS netto_gebucht,\n       CASE WHEN o.date_start >= timestamp '2023-01-01' THEN t.brutto ELSE NULL::numeric END AS brutto_gebucht,\n       CASE WHEN o.user_maximum > 0\n            THEN round(100.0 * t.plaetze_gebucht / o.user_maximum, 1) END AS auslastung_prozent,\n       CASE WHEN o.date_start >= timestamp '2023-01-01'\n            THEN (SELECT count(DISTINCT vr.invoice_id)\n                    FROM kursplan.v_buchung_rechnung vr\n                    JOIN edoobox_raw.booking bb ON bb.booking_id = vr.booking_id\n                   WHERE bb.offer_id = o.offer_id)\n            ELSE NULL::bigint END AS rechnungen\nFROM edoobox_raw.offer o\nJOIN je_termin t ON t.offer_id = o.offer_id\nWHERE o.is_deleted IS NOT TRUE;\n\nCOMMENT ON VIEW kursplan.v_termin_erloes IS\n'Auslastung aus Buchungsanzahl, bezahlten Gruppengroessen und groesster kostenloser Gruppe. Erloes und Rechnungszahl werden nur fuer Termine ab 2023 ausgewiesen.';\n\nGRANT SELECT ON kursplan.v_termin_erloes TO n8n_writer;\n\nWITH roh AS (\n    SELECT 10 AS ordnung, 'A Sicht' AS bereich, 'zeilen' AS kennzahl,\n           count(*)::numeric AS wert, 'erwartet Anzahl nicht geloeschter Angebote' AS hinweis\n    FROM kursplan.v_termin_erloes\n    UNION ALL SELECT 20, 'B Erloeszeitraum', 'termine vor 2023 ohne netto',\n           count(*)::numeric, 'netto_gebucht muss NULL sein'\n    FROM kursplan.v_termin_erloes\n    WHERE date_start < timestamp '2023-01-01' AND netto_gebucht IS NULL\n    UNION ALL SELECT 30, 'C Erloeszeitraum', 'netto ab 2023',\n           round(coalesce(sum(netto_gebucht), 0), 2), 'nur gebuchte Buchungen nach Termindatum'\n    FROM kursplan.v_termin_erloes\n    WHERE date_start >= timestamp '2023-01-01'\n    UNION ALL SELECT 40, 'D Auslastung', 'termine ueber 100 prozent ab 2023',\n           count(*)::numeric, 'erwartet 11'\n    FROM kursplan.v_termin_erloes\n    WHERE date_start >= timestamp '2023-01-01' AND auslastung_prozent > 100\n)\nSELECT 'S41a' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), hinweis),\n                  chr(10) ORDER BY ordnung) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "41100000-0000-4000-8000-000000004102",
+      "name": "S41a ADMIN Terminsicht",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S41a Manuell starten": {
+      "main": [[{"node": "S41a ADMIN Terminsicht", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

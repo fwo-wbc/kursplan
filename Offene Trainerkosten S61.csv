@@ -1,0 +1,19 @@
+offer_id;datum;trainer;kurscode;kursbezeichnung;netto;trainerkosten;bemerkung
+offer_ddebca578c31_7739529635;14.06.2023;UH;proj-fg-coach;MS Project - Fortgeschritten (Coaching);569;370;Coaching individuell
+offer_7b25c63764f6_7769455625;26.06.2023;UH;proj-gl-l1-coach;MS Project Grundlagen - Level I (Coaching);300;250;Coaching individuell
+offer_53f52e5fa9bb_8458225815;13.03.2024;PB;pb-pm-gl-coach;Projektmanagement - Grundlagen (Coaching);849;800;Coaching individuell
+offer_faab2a0dac45_8463040865;25.03.2024;JR;jr-xls-db-coach;MS Excel - Dashboards (Coaching);198;170;Coaching individuell
+offer_f11583b82c93_8821407775;08.10.2024;DM;sql-gl-l2-komp;SQL Grundlagen - Level II (kompakt);645,3;340;Preis nach Absprache
+offer_15f16d0c689c_8577039445;04.11.2024;DM;sql-gl-l1-komp;SQL Grundlagen - Level 1;1804,45;340;Preis nach Absprache
+offer_a5d791dcfc54_8577048530;06.11.2024;DM;sql-gl-l2-komp;SQL Grundlagen - Level 2;406,3;340;Preis nach Absprache
+offer_ba2aa0ca1537_8967558170;25.11.2024;UH;proj-ab-coach;MS Project Aufbau (Coaching);198;150;Coaching individuell
+offer_a7427a89d3a8_8958491340;14.02.2025;DM;sql-gl-l3;SQL Grundlagen - Level 3;370;250;Preis nach Absprache
+offer_1195f454006a_9315531840;07.03.2025;DM;sql-gl-coach;SQL Grundlagen (Coaching);360;240;Preis nach Absprache und Coaching
+offer_9ab42b0dd1c4_8958500425;10.03.2025;DM;sql-gl-l1;SQL Grundlagen - Level 1;1207,5;300;Preis nach Absprache
+offer_98180f3757b1_9315568180;07.04.2025;DM;sql-gl;SQL Grundlagen;0;0;Preis nach Absprache
+offer_3c7050ac4089_9315595435;12.05.2025;DM;sql-gl;SQL Grundlagen;749;750;Preis nach Absprache
+offer_553f1c836253_9315622690;22.09.2025;DM;sql-gl;SQL Grundlagen;749;780;Preis nach Absprache
+offer_04d4e3819dea_9804586475;12.11.2025;MS;proj-coach;MS Project Coaching;560;560;Coaching individuell
+offer_52bc723bf214_9391691395;24.11.2025;DM;sql-gl;SQL Grundlagen;1498;900;Preis nach Absprache
+offer_b5d8b6c5d0ac_9739065455;19.01.2026;DM;sql-gl;SQL Grundlagen;749;700;Preis nach Absprache
+offer_b589b28b1922_10150625040;21.04.2026;FK;acc-gl-coach;Access Grundlagen - Coaching;792;252;Coaching individuell

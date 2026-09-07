@@ -1,0 +1,51 @@
+{
+  "name": "S27 Rechnungsbruecke pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "27000000-0000-4000-8000-000000002701",
+      "name": "S27 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Prueft die Bruecke Rechnung zu Buchung ueber invoice_item.transaction_id.\n-- Nur lesend. Ausgabe als Kennzahlenliste.\nWITH bruecke AS (\n    SELECT\n        i.item_key,\n        i.invoice_id,\n        i.item_type,\n        i.vat_percent,\n        i.amount,\n        t.transaction_id,\n        t.booking_id\n    FROM edoobox_raw.invoice_item i\n    LEFT JOIN edoobox_raw.booking_transaction t\n           ON t.transaction_id = i.transaction_id\n),\nje_rechnung AS (\n    SELECT invoice_id, count(DISTINCT booking_id) AS buchungen\n    FROM bruecke\n    WHERE booking_id IS NOT NULL\n    GROUP BY invoice_id\n),\nje_buchung AS (\n    SELECT booking_id, count(DISTINCT invoice_id) AS rechnungen\n    FROM bruecke\n    WHERE booking_id IS NOT NULL\n    GROUP BY booking_id\n),\nabdeckung AS (\n    SELECT\n        extract(year FROM r.date_create)::int AS jahr,\n        count(*)                                                        AS rechnungen,\n        count(r.tax_total)                                              AS mit_counts,\n        count(*) FILTER (WHERE l.anzahl > 0)                            AS mit_zeilen,\n        count(*) FILTER (WHERE p.anzahl > 0)                            AS mit_zahlung\n    FROM edoobox_raw.invoice r\n    LEFT JOIN (SELECT invoice_id, count(*) AS anzahl FROM edoobox_raw.invoice_line    GROUP BY 1) l ON l.invoice_id = r.invoice_id\n    LEFT JOIN (SELECT invoice_id, count(*) AS anzahl FROM edoobox_raw.invoice_payment GROUP BY 1) p ON p.invoice_id = r.invoice_id\n    GROUP BY 1\n)\nSELECT * FROM (\n    -- A. Grundzahlen der Brücke\n    SELECT 10 AS ordnung, 'A Bruecke' AS bereich, 'posten gesamt' AS kennzahl,\n           count(*)::numeric AS wert, NULL::text AS hinweis FROM bruecke\n    UNION ALL SELECT 11, 'A Bruecke', 'posten mit vorgangskennung',\n           count(transaction_id)::numeric, NULL FROM bruecke\n    UNION ALL SELECT 12, 'A Bruecke', 'posten mit treffer in booking_transaction',\n           count(booking_id)::numeric, NULL FROM bruecke\n    UNION ALL SELECT 13, 'A Bruecke', 'posten mit kennung aber ohne treffer',\n           count(*) FILTER (WHERE transaction_id IS NOT NULL AND booking_id IS NULL)::numeric,\n           'verweist auf gelöschte oder fremde Buchung' FROM bruecke\n    UNION ALL SELECT 14, 'A Bruecke', 'posten ganz ohne kennung',\n           count(*) FILTER (WHERE transaction_id IS NULL)::numeric,\n           (SELECT string_agg(DISTINCT item_type, ', ') FROM bruecke WHERE transaction_id IS NULL)\n           FROM bruecke\n\n    -- B. Reichweite\n    UNION ALL SELECT 20, 'B Reichweite', 'rechnungen gesamt',\n           count(*)::numeric, NULL FROM edoobox_raw.invoice\n    UNION ALL SELECT 21, 'B Reichweite', 'rechnungen mit mindestens einer buchung',\n           count(*)::numeric, NULL FROM je_rechnung\n    UNION ALL SELECT 22, 'B Reichweite', 'rechnungen ohne jede buchung',\n           (SELECT count(*) FROM edoobox_raw.invoice r\n             WHERE NOT EXISTS (SELECT 1 FROM je_rechnung j WHERE j.invoice_id = r.invoice_id))::numeric,\n           NULL\n    UNION ALL SELECT 23, 'B Reichweite', 'buchungen erreicht',\n           count(*)::numeric, NULL FROM je_buchung\n    UNION ALL SELECT 24, 'B Reichweite', 'buchungen gesamt',\n           count(*)::numeric, NULL FROM edoobox_raw.booking\n    UNION ALL SELECT 25, 'B Reichweite', 'buchungen ohne rechnung',\n           (SELECT count(*) FROM edoobox_raw.booking b\n             WHERE NOT EXISTS (SELECT 1 FROM je_buchung j WHERE j.booking_id = b.booking_id))::numeric,\n           NULL\n    UNION ALL SELECT 26, 'B Reichweite', 'davon storniert oder warteliste',\n           (SELECT count(*) FROM edoobox_raw.booking b\n             WHERE NOT EXISTS (SELECT 1 FROM je_buchung j WHERE j.booking_id = b.booking_id)\n               AND b.status <> 'gebucht')::numeric,\n           NULL\n\n    -- C. Buchungen je Rechnung\n    UNION ALL SELECT 30, 'C Buchungen je Rechnung', 'genau eine',\n           count(*) FILTER (WHERE buchungen = 1)::numeric, 'eindeutig' FROM je_rechnung\n    UNION ALL SELECT 31, 'C Buchungen je Rechnung', 'zwei bis fuenf',\n           count(*) FILTER (WHERE buchungen BETWEEN 2 AND 5)::numeric, 'geschlossener Kurs' FROM je_rechnung\n    UNION ALL SELECT 32, 'C Buchungen je Rechnung', 'sechs und mehr',\n           count(*) FILTER (WHERE buchungen >= 6)::numeric, 'Sammelrechnung' FROM je_rechnung\n    UNION ALL SELECT 33, 'C Buchungen je Rechnung', 'hoechstwert',\n           max(buchungen)::numeric, NULL FROM je_rechnung\n\n    -- D. Rechnungen je Buchung\n    UNION ALL SELECT 40, 'D Rechnungen je Buchung', 'genau eine',\n           count(*) FILTER (WHERE rechnungen = 1)::numeric, NULL FROM je_buchung\n    UNION ALL SELECT 41, 'D Rechnungen je Buchung', 'zwei und mehr',\n           count(*) FILTER (WHERE rechnungen >= 2)::numeric,\n           'Teilzahlung, Storno mit Neuausstellung' FROM je_buchung\n    UNION ALL SELECT 42, 'D Rechnungen je Buchung', 'hoechstwert',\n           max(rechnungen)::numeric, NULL FROM je_buchung\n\n    -- E. Postenart\n    UNION ALL SELECT 50, 'E Postenart', coalesce(item_type, 'ohne angabe'),\n           count(*)::numeric, NULL FROM bruecke GROUP BY item_type\n\n    -- F. Steuersatz aus der Rechnung gegen B2B-Kennzeichen der Buchung\n    UNION ALL SELECT 60, 'F Steuersatz', concat(coalesce(b.vat_percent::text, 'ohne'), ' Prozent'),\n           count(*)::numeric,\n           concat('b2b ', count(*) FILTER (WHERE k.is_b2b), ' / nicht b2b ',\n                  count(*) FILTER (WHERE k.is_b2b IS NOT TRUE))\n           FROM bruecke b\n           LEFT JOIN edoobox_raw.booking k ON k.booking_id = b.booking_id\n           GROUP BY b.vat_percent\n\n    -- G. Betragsabgleich\n    UNION ALL SELECT 70, 'G Betraege', 'summe posten brutto',\n           round(sum(amount), 2), NULL FROM bruecke\n    UNION ALL SELECT 71, 'G Betraege', 'summe rechnungsbetrag',\n           (SELECT round(sum(amount), 2) FROM edoobox_raw.invoice)::numeric, NULL\n    UNION ALL SELECT 72, 'G Betraege', 'summe steuer aus counts',\n           (SELECT round(sum(tax_total), 2) FROM edoobox_raw.invoice)::numeric,\n           'nur neuere Rechnungen'\n    UNION ALL SELECT 73, 'G Betraege', 'summe belege',\n           (SELECT round(sum(amount), 2) FROM edoobox_raw.invoice_receipt)::numeric, NULL\n    UNION ALL SELECT 74, 'G Betraege', 'summe zahlungen',\n           (SELECT round(sum(amount), 2) FROM edoobox_raw.invoice_payment)::numeric, NULL\n\n    -- H. Abdeckung der Detailstruktur je Jahr\n    UNION ALL SELECT 80, 'H Abdeckung je Jahr', coalesce(jahr::text, 'ohne datum'),\n           rechnungen::numeric,\n           concat('counts ', mit_counts, ' / zeilen ', mit_zeilen, ' / zahlung ', mit_zahlung)\n           FROM abdeckung\n) x\nORDER BY ordnung, kennzahl;",
+        "options": {}
+      },
+      "id": "27000000-0000-4000-8000-000000002702",
+      "name": "S27 ERGEBNIS Bruecke pruefen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S27 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S27 ERGEBNIS Bruecke pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

@@ -1,0 +1,168 @@
+{
+  "name": "S21 Preisformel und Rechnungsanschrift",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "11000000-0000-4000-8000-000000001001",
+      "name": "S21 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Verhaeltnis zwischen gemeldetem Bruttobetrag und eigener Nettorechnung.\n-- Keine Annahme ueber den Steuersatz. Zwei Formeln werden gegenuebergestellt:\n--   netto_mal_menge  = summe(amount_net * quantity)\n--   netto_ohne_menge = summe(amount_net)\nWITH je_buchung AS (\n    SELECT\n        b.booking_id,\n        b.is_b2b,\n        (SELECT round(sum(p.amount_net * p.quantity), 2)\n           FROM edoobox_raw.booking_position p\n          WHERE p.booking_id = b.booking_id) AS netto_mal_menge,\n        (SELECT round(sum(p.amount_net), 2)\n           FROM edoobox_raw.booking_position p\n          WHERE p.booking_id = b.booking_id) AS netto_ohne_menge,\n        (SELECT round(sum(t.amount), 2)\n           FROM edoobox_raw.booking_transaction t\n          WHERE t.booking_id = b.booking_id) AS brutto_gemeldet\n    FROM edoobox_raw.booking b\n    WHERE b.is_deleted = false\n),\nbewertet AS (\n    SELECT\n        is_b2b,\n        CASE WHEN netto_mal_menge  > 0 THEN round(brutto_gemeldet / netto_mal_menge,  3) END AS faktor_mit_menge,\n        CASE WHEN netto_ohne_menge > 0 THEN round(brutto_gemeldet / netto_ohne_menge, 3) END AS faktor_ohne_menge\n    FROM je_buchung\n    WHERE brutto_gemeldet > 0\n      AND netto_mal_menge > 0\n)\nSELECT\n    CASE WHEN is_b2b THEN 'B2B' ELSE 'nicht B2B' END       AS gruppe,\n    faktor_mit_menge                                        AS faktor_mit_menge,\n    faktor_ohne_menge                                       AS faktor_ohne_menge,\n    count(*)                                                AS buchungen\nFROM bewertet\nGROUP BY 1, 2, 3\nORDER BY buchungen DESC\nLIMIT 40;",
+        "options": {}
+      },
+      "id": "11000000-0000-4000-8000-000000001002",
+      "name": "S21 ERGEBNIS Faktorverteilung",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        520,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Buchungen mit mehr als einem Platz. Liegt der Faktor bei einer\n-- ganzen Zahl nahe der Menge, waere amount_net bereits die Zeilensumme.\nSELECT\n    right(b.booking_id, 12)              AS buchung_kurz,\n    b.is_b2b,\n    b.status,\n    p.pricecategory_name                 AS preiskategorie,\n    p.quantity                           AS menge,\n    p.amount_net                         AS preis_netto,\n    round(p.amount_net * p.quantity, 2)  AS netto_mal_menge,\n    (SELECT round(sum(t.amount), 2)\n       FROM edoobox_raw.booking_transaction t\n      WHERE t.booking_id = b.booking_id) AS brutto_gemeldet\nFROM edoobox_raw.booking b\nJOIN edoobox_raw.booking_position p ON p.booking_id = b.booking_id\nWHERE b.is_deleted = false\n  AND p.quantity > 1\n  AND p.amount_net > 0\nORDER BY p.quantity DESC, p.amount_net DESC\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "11000000-0000-4000-8000-000000001003",
+      "name": "S21 ERGEBNIS Beispiele",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        520,
+        410
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 8 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11000000-0000-4000-8000-000000001004",
+      "name": "S21 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        620
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Zwoelf moeglichst unterschiedliche Buchungen als Probe.\n(SELECT booking_id FROM edoobox_raw.booking\n  WHERE is_deleted = false AND is_b2b = true\n  ORDER BY booking_time DESC LIMIT 6)\nUNION ALL\n(SELECT booking_id FROM edoobox_raw.booking\n  WHERE is_deleted = false AND coalesce(is_b2b, false) = false\n  ORDER BY booking_time DESC LIMIT 6);",
+        "options": {}
+      },
+      "id": "11000000-0000-4000-8000-000000001005",
+      "name": "S21 Probe auswaehlen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        760,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Liest die Rechnungsanschrift von zwoelf Buchungen und meldet nur\n// die Feldnamen und Werttypen. Keine Klardaten, keine Namen, keine Anschriften.\n\nconst auth = $('S21 Token holen').first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst kennungen = $input.all().map((z) => z.json.booking_id).filter(Boolean);\n\nasync function einzeln(kennung) {\n  const antwort = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://app1.edoobox.com/v2/booking/${encodeURIComponent(kennung)}/data`,\n    headers,\n    json: true,\n    returnFullResponse: true,\n    timeout: 60000,\n    ignoreHttpStatusErrors: true,\n  });\n  if (antwort.statusCode !== 200) return null;\n  const roh = antwort.body?.data;\n  return Array.isArray(roh) ? roh[0] : roh;\n}\n\nconst holen = einzeln.bind(this);\nconst saetze = (await Promise.all(kennungen.map((k) => holen(k)))).filter(Boolean);\n\nfunction art(wert) {\n  if (wert === null) return 'null';\n  if (Array.isArray(wert)) return `liste[${wert.length}]`;\n  if (typeof wert === 'object') return `objekt{${Object.keys(wert).join(',')}}`;\n  if (typeof wert === 'boolean') return `wahrheitswert:${wert}`;\n  if (typeof wert === 'string') return wert === '' ? 'text:leer' : `text:gefuellt(${wert.length})`;\n  return typeof wert;\n}\n\n// Nur bei Feldern, die erkennbar Land oder Steuerkennung betreffen,\n// werden die tatsaechlichen Werte gezeigt. Alles andere bleibt verdeckt.\nconst offen = /land|country|vat|ust|tax|steuer|b2b|company|firma|zip|plz/i;\n\nconst uebersicht = new Map();\n\nfor (const b of saetze) {\n  const a = b?.invoice_address;\n  if (!a || typeof a !== 'object') continue;\n  for (const [feld, wert] of Object.entries(a)) {\n    if (!uebersicht.has(feld)) uebersicht.set(feld, { feld, arten: new Set(), werte: new Set() });\n    const e = uebersicht.get(feld);\n    e.arten.add(art(wert));\n    if (offen.test(feld) && (typeof wert === 'string' || typeof wert === 'boolean' || typeof wert === 'number')) {\n      const t = String(wert);\n      e.werte.add(t.length > 24 ? t.slice(0, 24) + '…' : t);\n    }\n  }\n}\n\nconst zeilen = [...uebersicht.values()]\n  .sort((a, b) => a.feld.localeCompare(b.feld))\n  .map((e) => ({\n    json: {\n      schritt: 'S21',\n      feld: e.feld,\n      arten: [...e.arten].slice(0, 4).join(' | '),\n      beispielwerte: [...e.werte].slice(0, 6).join(' | '),\n    },\n  }));\n\nzeilen.unshift({\n  json: {\n    schritt: 'S21',\n    feld: '(Probe)',\n    arten: `${saetze.length} von ${kennungen.length} Buchungen gelesen`,\n    beispielwerte: '',\n  },\n});\n\nreturn zeilen;\n"
+      },
+      "id": "11000000-0000-4000-8000-000000001006",
+      "name": "S21 ERGEBNIS Anschriftfelder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        620
+      ]
+    }
+  ],
+  "connections": {
+    "S21 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S21 ERGEBNIS Faktorverteilung",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "S21 ERGEBNIS Beispiele",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "S21 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S21 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S21 Probe auswaehlen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S21 Probe auswaehlen": {
+      "main": [
+        [
+          {
+            "node": "S21 ERGEBNIS Anschriftfelder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

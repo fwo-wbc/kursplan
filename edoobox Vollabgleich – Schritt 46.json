@@ -1,0 +1,37 @@
+{
+  "name": "S46 Kurscode aus Angebotsnummer pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "46000000-0000-4000-8000-000000004601",
+      "name": "S46 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Prueft einen eigenen Kurscode aus offer_number. Nur lesend.\nWITH codes AS (\n    SELECT v.*,\n           nullif(regexp_replace(\n               regexp_replace(lower(v.offer_number), '^[0-9]+-', ''),\n               '-[0-9]{4}(-[0-9]+)?$', ''\n           ), '') AS kurscode\n    FROM kursplan.v_termin_erloes_produktiv v\n),\nje_code AS (\n    SELECT kurscode, count(*) AS termine, count(DISTINCT name) AS namen,\n           min(name) AS beispielname,\n           round(sum(coalesce(netto_gebucht, 0)), 2) AS netto,\n           sum(plaetze_gebucht) AS plaetze\n    FROM codes\n    GROUP BY kurscode\n),\nje_name AS (\n    SELECT name, count(DISTINCT kurscode) AS codes,\n           string_agg(DISTINCT kurscode, ' / ' ORDER BY kurscode) AS codeliste\n    FROM codes\n    WHERE kurscode IS NOT NULL\n    GROUP BY name\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Kurscode' AS bereich, 'verschiedene Kurscodes' AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('termine ', sum(termine), ' / namen ', sum(namen)) AS hinweis\n    FROM je_code\n    WHERE kurscode IS NOT NULL\n\n    UNION ALL SELECT 20, 'B Groesste Kursgruppen',\n           concat(left(kurscode, 28), ' / ', left(beispielname, 34)),\n           termine::numeric,\n           concat('namen ', namen, ' / plaetze ', plaetze, ' / netto ab 2023 ', netto)\n    FROM je_code\n    WHERE kurscode IS NOT NULL AND termine >= 5\n),\nroh2 AS (\n    SELECT * FROM roh\n    UNION ALL SELECT 30, 'C Code mit mehreren Namen',\n           concat(left(kurscode, 32), ' / ', left(beispielname, 35)),\n           namen::numeric,\n           concat('termine ', termine, ' / netto ', netto)\n    FROM je_code\n    WHERE namen > 1\n\n    UNION ALL SELECT 40, 'D Name mit mehreren Codes',\n           left(name, 45), codes::numeric, left(codeliste, 150)\n    FROM je_name\n    WHERE codes > 1\n\n    UNION ALL SELECT 50, 'E Fehlender Kurscode',\n           coalesce(left(name, 45), '(ohne name)'), count(*)::numeric,\n           'offer_number ist leer oder nicht auswertbar'\n    FROM codes\n    WHERE kurscode IS NULL\n    GROUP BY 3\n)\nSELECT 'S46' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, wert DESC, kennzahl) AS bericht\nFROM roh2;",
+        "options": {}
+      },
+      "id": "46000000-0000-4000-8000-000000004602",
+      "name": "S46 ERGEBNIS Kurscode",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S46 Manuell starten": {
+      "main": [[{"node": "S46 ERGEBNIS Kurscode", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

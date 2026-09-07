@@ -1,0 +1,71 @@
+{
+  "name": "S18 Erste Auswertung",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "dd000000-0000-4000-8000-00000000d001",
+      "name": "S18 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Wie vollstaendig ist die Datengrundlage inzwischen?\nSELECT 'Buchungen gesamt' AS kennzahl,\n       count(*)::text AS wert\n  FROM edoobox_raw.booking WHERE is_deleted = false\nUNION ALL\nSELECT 'davon mit Detailstand',\n       count(*)::text FROM edoobox_raw.booking\n WHERE is_deleted = false AND detail_synced_at IS NOT NULL\nUNION ALL\nSELECT 'davon ohne passendes Angebot',\n       count(*)::text FROM edoobox_raw.booking b\n WHERE b.is_deleted = false\n   AND NOT EXISTS (SELECT 1 FROM edoobox_raw.offer o WHERE o.offer_id = b.offer_id)\nUNION ALL\nSELECT 'Zeitraum dieser Buchungen',\n       coalesce(to_char(min(b.booking_time), 'YYYY-MM-DD') || ' bis ' ||\n                to_char(max(b.booking_time), 'YYYY-MM-DD'), 'keine')\n  FROM edoobox_raw.booking b\n WHERE b.is_deleted = false\n   AND NOT EXISTS (SELECT 1 FROM edoobox_raw.offer o WHERE o.offer_id = b.offer_id)\nUNION ALL\nSELECT 'Angebote gesamt', count(*)::text FROM edoobox_raw.offer WHERE is_deleted = false\nUNION ALL\nSELECT 'davon mit Buchung',\n       count(DISTINCT o.offer_id)::text\n  FROM edoobox_raw.offer o\n  JOIN edoobox_raw.booking b ON b.offer_id = o.offer_id AND b.is_deleted = false\nUNION ALL\nSELECT 'Positionszeilen', count(*)::text FROM edoobox_raw.booking_position\nUNION ALL\nSELECT 'Zahlungsvorgaenge', count(*)::text FROM edoobox_raw.booking_transaction\nUNION ALL\nSELECT 'Nettoerloes aller Positionen',\n       to_char(coalesce(sum(amount_net * quantity), 0), 'FM999G999G990D00')\n  FROM edoobox_raw.booking_position;",
+        "options": {}
+      },
+      "id": "dd000000-0000-4000-8000-00000000d002",
+      "name": "S18 ERGEBNIS Abdeckung",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        520,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Erste Auswertung: die 25 umsatzstaerksten Kurstermine.\n-- Stornierte Buchungen bleiben aussen vor.\nSELECT\n    o.offer_number                                   AS kursnummer,\n    o.name                                           AS kurs,\n    to_char(o.date_start, 'YYYY-MM-DD HH24:MI')      AS beginn,\n    o.user_minimal                                   AS min_tn,\n    o.user_maximum                                   AS max_tn,\n    count(DISTINCT b.booking_id)                     AS buchungen,\n    coalesce(sum(p.quantity), 0)                     AS teilnehmer,\n    CASE WHEN o.user_maximum > 0\n         THEN round(100.0 * coalesce(sum(p.quantity), 0) / o.user_maximum, 1)\n    END                                              AS auslastung_prozent,\n    round(coalesce(sum(p.amount_net * p.quantity), 0), 2) AS erloes_netto\nFROM edoobox_raw.offer o\nJOIN edoobox_raw.booking b\n     ON b.offer_id = o.offer_id\n    AND b.is_deleted = false\n    AND b.status = 'gebucht'\nLEFT JOIN edoobox_raw.booking_position p\n     ON p.booking_id = b.booking_id\nWHERE o.is_deleted = false\n  AND o.is_trash   = false\nGROUP BY o.offer_id, o.offer_number, o.name, o.date_start, o.user_minimal, o.user_maximum\nORDER BY erloes_netto DESC\nLIMIT 25;",
+        "options": {}
+      },
+      "id": "dd000000-0000-4000-8000-00000000d003",
+      "name": "S18 ERGEBNIS Erloes je Termin",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        520,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "S18 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S18 ERGEBNIS Abdeckung",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "S18 ERGEBNIS Erloes je Termin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

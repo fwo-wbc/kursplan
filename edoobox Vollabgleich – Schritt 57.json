@@ -1,0 +1,45 @@
+{
+  "name": "S57 Produktive Angebote ohne Trainer",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "57000000-0000-4000-8000-000000005701",
+      "name": "S57 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Rein lesende Einzelliste der echten Kursangebote ohne Trainerzuordnung.\n-- Bestaetigte Nichtkurstermine werden bereits fuer diese Pruefung ausgeblendet.\nWITH kandidaten AS (\n    SELECT\n        t.offer_id,\n        t.offer_number,\n        t.date_start,\n        t.date_end,\n        t.kurscode,\n        t.kursbezeichnung,\n        t.termin_status,\n        t.buchungen_gebucht,\n        t.buchungen_storniert,\n        t.plaetze_gebucht,\n        t.user_maximum,\n        coalesce(t.netto_gebucht, 0)::numeric AS netto_gebucht,\n        CASE\n            WHEN t.date_start::date > current_date THEN 'zukuenftig'\n            ELSE 'vergangen'\n        END::text AS zeitlage\n    FROM kursplan.v_kursart_termin t\n    WHERE t.date_start >= timestamptz '2023-01-01 00:00:00 Europe/Berlin'\n      AND t.kurscode !~ '^ft-'\n      AND t.kurscode NOT IN ('kontingent-10', 'gebuehren')\n      AND NOT EXISTS (\n          SELECT 1\n          FROM edoobox_raw.offer_date d\n          JOIN edoobox_raw.date_leader dl ON dl.date_id = d.date_id\n          WHERE d.offer_id = t.offer_id\n            AND d.is_deleted = false\n      )\n)\nSELECT\n    'S57'::text AS schritt,\n    row_number() OVER (\n        ORDER BY (netto_gebucht > 0) DESC, netto_gebucht DESC, date_start, offer_id\n    ) AS nr,\n    offer_id,\n    offer_number,\n    date_start,\n    date_end,\n    kurscode,\n    kursbezeichnung,\n    termin_status,\n    zeitlage,\n    buchungen_gebucht,\n    buchungen_storniert,\n    plaetze_gebucht,\n    user_maximum,\n    round(netto_gebucht, 2) AS netto_gebucht,\n    count(*) OVER () AS angebote_ohne_trainer,\n    round(sum(netto_gebucht) OVER (), 2) AS netto_gesamt\nFROM kandidaten\nORDER BY nr;"
+      },
+      "id": "57000000-0000-4000-8000-000000005702",
+      "name": "S57 ERGEBNIS Angebote ohne Trainer",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [580, 300]
+    }
+  ],
+  "connections": {
+    "S57 Manuell starten": {
+      "main": [[
+        {
+          "node": "S57 ERGEBNIS Angebote ohne Trainer",
+          "type": "main",
+          "index": 0
+        }
+      ]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "57000000-0000-4000-8000-000000005799",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

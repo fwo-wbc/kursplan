@@ -1,0 +1,45 @@
+{
+  "name": "S58a Dauerhafte Ausschlussregeln",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "58a00000-0000-4000-8000-000000005801",
+      "name": "S58a Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Verwaltungsschritt: dauerhafte Regeln fuer Nichtkurstermine.\n-- Hierfuer das Admin-Credential verwenden.\n\nCREATE TABLE IF NOT EXISTS kursplan.angebot_ausschlussregel (\n    regel_id text PRIMARY KEY,\n    offer_number_muster text NOT NULL,\n    grund text NOT NULL,\n    ist_aktiv boolean NOT NULL DEFAULT true,\n    geaendert_am timestamptz NOT NULL DEFAULT now()\n);\n\nCOMMENT ON TABLE kursplan.angebot_ausschlussregel IS\n'Dauerhafte Musterregeln fuer Angebote, die keine produktiven Kurstermine sind. Die Muster werden auf die kleingeschriebene offer_number angewendet.';\n\nINSERT INTO kursplan.angebot_ausschlussregel\n    (regel_id, offer_number_muster, grund, ist_aktiv, geaendert_am)\nVALUES\n    ('feiertage', '^ft-',\n     'Feiertagseintrag, kein produktiver Kurstermin', true, now()),\n    ('kontingent-10', '^kontingent-10($|-)',\n     'Kontingentkauf, kein Kurstermin', true, now()),\n    ('bearbeitungsgebuehr', '^gebuehren($|-)',\n     'Bearbeitungsgebuehr, vollstaendig aus Terminsicht und DB I ausgeschlossen', true, now())\nON CONFLICT (regel_id) DO UPDATE SET\n    offer_number_muster = EXCLUDED.offer_number_muster,\n    grund = EXCLUDED.grund,\n    ist_aktiv = EXCLUDED.ist_aktiv,\n    geaendert_am = now();\n\nCREATE OR REPLACE VIEW kursplan.v_termin_erloes_produktiv AS\nSELECT v.*\nFROM kursplan.v_termin_erloes v\nLEFT JOIN kursplan.termin_ausnahme a ON a.offer_id = v.offer_id\nWHERE coalesce(a.auswertung_ausschliessen, false) IS FALSE\n  AND NOT EXISTS (\n      SELECT 1\n      FROM kursplan.angebot_ausschlussregel r\n      WHERE r.ist_aktiv\n        AND lower(coalesce(v.offer_number, '')) ~ r.offer_number_muster\n  );\n\nCOMMENT ON VIEW kursplan.v_termin_erloes_produktiv IS\n'Produktive Teilmenge von v_termin_erloes ohne manuelle Terminausnahmen und dauerhaft definierte Nichtkurstermine.';\n\nGRANT SELECT ON kursplan.angebot_ausschlussregel TO n8n_writer;\nGRANT SELECT ON kursplan.v_termin_erloes_produktiv TO n8n_writer;\n\nWITH regeltreffer AS (\n    SELECT\n        r.regel_id,\n        r.grund,\n        count(v.offer_id) AS angebote,\n        round(coalesce(sum(v.netto_gebucht) FILTER (\n            WHERE v.date_start >= timestamp '2023-01-01'\n        ), 0), 2) AS netto_ab_2023\n    FROM kursplan.angebot_ausschlussregel r\n    LEFT JOIN kursplan.v_termin_erloes v\n      ON lower(coalesce(v.offer_number, '')) ~ r.offer_number_muster\n    WHERE r.ist_aktiv\n    GROUP BY r.regel_id, r.grund\n),\nroh AS (\n    SELECT 10 AS ordnung,\n           'A Regel'::text AS bereich,\n           regel_id AS kennzahl,\n           angebote::numeric AS wert,\n           concat(grund, ' / netto ab 2023 ', netto_ab_2023) AS hinweis\n    FROM regeltreffer\n\n    UNION ALL\n\n    SELECT 20, 'B Kontrolle', 'aktive dauerhafte Regeln',\n           count(*)::numeric,\n           'erwartet 3'\n    FROM kursplan.angebot_ausschlussregel\n    WHERE ist_aktiv\n\n    UNION ALL\n\n    SELECT 30, 'C Produktive Sicht', 'Termine',\n           count(*)::numeric,\n           'nach manuellen und dauerhaften Ausschluessen'\n    FROM kursplan.v_termin_erloes_produktiv\n\n    UNION ALL\n\n    SELECT 40, 'D Produktive Sicht', 'Netto ab 2023',\n           round(coalesce(sum(netto_gebucht), 0), 2),\n           'ohne Feiertage, kontingent-10 und gebuehren'\n    FROM kursplan.v_termin_erloes_produktiv\n    WHERE date_start >= timestamp '2023-01-01'\n)\nSELECT\n    'S58a' AS schritt,\n    count(*) AS zeilen,\n    string_agg(\n        concat_ws(' | ', bereich, kennzahl,\n                  trim(to_char(wert, '99999999990.99')), hinweis),\n        chr(10) ORDER BY ordnung, kennzahl\n    ) AS bericht\nFROM roh;"
+      },
+      "id": "58a00000-0000-4000-8000-000000005802",
+      "name": "S58a ADMIN Ausschlussregeln speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "S58a Manuell starten": {
+      "main": [[
+        {
+          "node": "S58a ADMIN Ausschlussregeln speichern",
+          "type": "main",
+          "index": 0
+        }
+      ]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "58a00000-0000-4000-8000-000000005899",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

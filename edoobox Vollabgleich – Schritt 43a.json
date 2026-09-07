@@ -1,0 +1,37 @@
+{
+  "name": "S43a Einstufung und Rechte korrigieren",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "43100000-0000-4000-8000-000000004301",
+      "name": "S43a Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Verwaltungsschritt: Betragsvorrang, Zusatzregeln und Rechte fuer n8n_writer.\nINSERT INTO kursplan.preiskategorie_regel\n    (regel_id, reihenfolge, muster, bezeichnung, ist_erloes, ist_teilnehmer, ist_aktiv, bemerkung)\nVALUES\n    (15, 15, '^storno|kursumbuchung differenz nach storno',\n     'Storno oder Umbuchungsdifferenz', true, false, true, 'Erloes ohne Teilnehmerplatz.'),\n    (65, 65, 'nicht anwesend',\n     'Gebucht, nicht anwesend', true, true, true, 'Fuer geplante Auslastung als belegter Platz behandelt.'),\n    (115, 115, 'rabatt|kombi|paketpreis|angebotspreis|sonderpreis|spezialpreis|special|aktionspreis|early bird|folgebuchung|behordentarif|studenten',\n     'Weitere Rabatt- oder Sonderpreise', true, true, true, 'Sammelt historische Schreibvarianten.'),\n    (125, 125, 'coaching|unterrichtseinheiten|videokonferenz',\n     'Coaching oder Zeiteinheit', true, true, true, NULL),\n    (135, 135, 'grundpreis|listenpreis|sondertarif|testtarif|pilotphase|temporar|^neu$',\n     'Weitere Preisbezeichnung', true, true, true, NULL)\nON CONFLICT (regel_id) DO UPDATE SET\n    reihenfolge = EXCLUDED.reihenfolge,\n    muster = EXCLUDED.muster,\n    bezeichnung = EXCLUDED.bezeichnung,\n    ist_erloes = EXCLUDED.ist_erloes,\n    ist_teilnehmer = EXCLUDED.ist_teilnehmer,\n    ist_aktiv = EXCLUDED.ist_aktiv,\n    bemerkung = EXCLUDED.bemerkung;\n\nCREATE OR REPLACE FUNCTION kursplan.einstufung(\n    bezeichnung text,\n    betrag numeric\n)\nRETURNS TABLE (ist_erloes boolean, ist_teilnehmer boolean, quelle text)\nLANGUAGE sql\nSTABLE\nAS $$\n    WITH n AS (\n        SELECT kursplan.normalisiere(coalesce(bezeichnung, '')) AS wert\n    ),\n    treffer AS (\n        SELECT r.ist_erloes, r.ist_teilnehmer, r.bezeichnung\n        FROM kursplan.preiskategorie_regel r, n\n        WHERE r.ist_aktiv\n          AND n.wert <> ''\n          AND n.wert ~ r.muster\n        ORDER BY r.reihenfolge\n        LIMIT 1\n    )\n    SELECT CASE WHEN betrag IS NOT NULL AND betrag <> 0 THEN true ELSE t.ist_erloes END,\n           t.ist_teilnehmer,\n           'regel: ' || t.bezeichnung\n    FROM treffer t\n    UNION ALL\n    SELECT true, true, 'betrag ungleich null'\n    WHERE NOT EXISTS (SELECT 1 FROM treffer)\n      AND betrag IS NOT NULL AND betrag <> 0\n    UNION ALL\n    SELECT false, true, 'betrag ist null'\n    WHERE NOT EXISTS (SELECT 1 FROM treffer)\n      AND betrag IS NOT NULL AND betrag = 0\n    UNION ALL\n    SELECT NULL, NULL, 'ungeklaert'\n    WHERE NOT EXISTS (SELECT 1 FROM treffer)\n      AND betrag IS NULL;\n$$;\n\nGRANT USAGE ON SCHEMA kursplan TO n8n_writer;\nGRANT SELECT ON kursplan.preiskategorie_regel, kursplan.preiskategorie_ausnahme TO n8n_writer;\nGRANT EXECUTE ON FUNCTION kursplan.normalisiere(text) TO n8n_writer;\nGRANT EXECUTE ON FUNCTION kursplan.einstufung(text, numeric) TO n8n_writer;\n\nWITH eingestuft AS (\n    SELECT p.position_id, p.pricecategory_name, p.amount_net,\n           e.ist_erloes, e.ist_teilnehmer, e.quelle\n    FROM edoobox_raw.booking_position p\n    CROSS JOIN LATERAL kursplan.einstufung(p.pricecategory_name, p.amount_net) e\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Regeln' AS bereich, 'aktive Regeln' AS kennzahl,\n           count(*)::numeric AS wert, 'erwartet 18' AS hinweis\n    FROM kursplan.preiskategorie_regel WHERE ist_aktiv\n    UNION ALL SELECT 20, 'B Einstufung', quelle, count(*)::numeric,\n           concat('netto ', round(sum(coalesce(amount_net, 0)), 2))\n    FROM eingestuft GROUP BY 3\n    UNION ALL SELECT 30, 'C Kontrolle', 'positive Betraege ohne Erloeskennzeichen',\n           count(*)::numeric, concat('netto ', round(sum(coalesce(amount_net, 0)), 2))\n    FROM eingestuft\n    WHERE coalesce(amount_net, 0) <> 0 AND ist_erloes IS DISTINCT FROM true\n    UNION ALL SELECT 40, 'D Kontrolle', 'ungeklaerte Positionen',\n           count(*)::numeric, 'erwartet 0, sofern amount_net nie NULL ist'\n    FROM eingestuft WHERE ist_erloes IS NULL OR ist_teilnehmer IS NULL\n)\nSELECT 'S43a' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, wert DESC, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "43100000-0000-4000-8000-000000004302",
+      "name": "S43a ADMIN Einstufung",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S43a Manuell starten": {
+      "main": [[{"node": "S43a ADMIN Einstufung", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

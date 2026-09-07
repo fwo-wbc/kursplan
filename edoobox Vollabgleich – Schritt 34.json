@@ -1,0 +1,51 @@
+{
+  "name": "S34 Platzmodell pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "34000000-0000-4000-8000-000000003401",
+      "name": "S34 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Prueft, ob die Summe der Mengen die Teilnehmerzahl ist.\n-- Grundlage fuer die Auslastung. Nur lesend.\nWITH pos AS (\n    SELECT\n        p.booking_id,\n        coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)') AS kat,\n        coalesce(p.quantity, 0)   AS menge,\n        coalesce(p.amount_net, 0) AS betrag\n    FROM edoobox_raw.booking_position p\n),\nje_buchung AS (\n    SELECT\n        b.booking_id, b.offer_id, s.status,\n        extract(year FROM s.booking_time)::int AS jahr,\n        coalesce(s.netto, 0) AS netto,\n        count(*)                                                    AS zeilen,\n        sum(pos.menge)                                              AS plaetze,\n        sum(pos.menge) FILTER (WHERE pos.kat = 'Inklusive')          AS inklusive,\n        sum(pos.menge) FILTER (WHERE pos.kat ~ 'weitere[ns]? Person') AS weitere,\n        max((substring(pos.kat from '([0-9]+) Person'))::int)\n            FILTER (WHERE pos.kat !~ 'weitere[ns]? Person')          AS basis_n\n    FROM edoobox_raw.booking b\n    JOIN kursplan.v_buchung_steuer s ON s.booking_id = b.booking_id\n    JOIN pos ON pos.booking_id = b.booking_id\n    GROUP BY b.booking_id, b.offer_id, s.status, 4, 5\n),\nje_termin AS (\n    SELECT\n        o.offer_id, o.name, o.date_start, o.user_maximum,\n        count(*) FILTER (WHERE j.status = 'gebucht')                       AS buchungen,\n        coalesce(sum(j.plaetze) FILTER (WHERE j.status = 'gebucht'), 0)    AS plaetze,\n        round(coalesce(sum(j.netto) FILTER (WHERE j.status = 'gebucht'), 0), 2) AS netto\n    FROM edoobox_raw.offer o\n    JOIN je_buchung j ON j.offer_id = o.offer_id\n    WHERE o.is_deleted IS NOT TRUE\n    GROUP BY o.offer_id, o.name, o.date_start, o.user_maximum\n),\nroh AS (\n    -- A. Plaetze je Buchung\n    SELECT 10 AS ordnung, 'A Plaetze je Buchung' AS bereich,\n           concat(coalesce(plaetze::text, 'leer'), ' plaetze') AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('zeilen im schnitt ', round(avg(zeilen), 2),\n                  ' / netto ', round(sum(netto), 2)) AS hinweis\n    FROM je_buchung WHERE status = 'gebucht'\n    GROUP BY 3\n\n    -- B. Paketmodell: Basiszahl gegen eins plus inklusive\n    UNION ALL SELECT 20, 'B Paketmodell',\n           CASE\n               WHEN basis_n IS NULL THEN 'keine basiszahl im namen'\n               WHEN coalesce(inklusive, 0) = 0 THEN 'basiszahl ohne inklusive'\n               WHEN basis_n = 1 + inklusive THEN 'basiszahl gleich eins plus inklusive'\n               ELSE concat('abweichung basis ', basis_n, ' gegen ', 1 + inklusive)\n           END,\n           count(*)::numeric,\n           concat('plaetze im schnitt ', round(avg(plaetze), 2),\n                  ' / weitere im schnitt ', round(avg(coalesce(weitere, 0)), 2))\n    FROM je_buchung WHERE status = 'gebucht'\n    GROUP BY 3\n\n    -- C. Auslastung in Klassen, nur Termine ab 2023\n    UNION ALL SELECT 30, 'C Auslastung ab 2023',\n           CASE\n               WHEN user_maximum IS NULL OR user_maximum = 0 THEN 'ohne hoechstzahl'\n               WHEN plaetze::numeric / user_maximum > 1 THEN 'ueber 100 prozent'\n               WHEN plaetze::numeric / user_maximum >= 0.75 THEN '75 bis 100 prozent'\n               WHEN plaetze::numeric / user_maximum >= 0.5 THEN '50 bis 75 prozent'\n               WHEN plaetze::numeric / user_maximum >= 0.25 THEN '25 bis 50 prozent'\n               ELSE 'unter 25 prozent'\n           END,\n           count(*)::numeric,\n           concat('plaetze ', sum(plaetze), ' / netto ', round(sum(netto), 2))\n    FROM je_termin\n    WHERE date_start >= '2023-01-01' AND buchungen > 0\n    GROUP BY 3\n\n    -- D. Die Termine ueber 100 Prozent einzeln\n    UNION ALL SELECT 40, 'D Ueberbuchung',\n           concat(coalesce(to_char(date_start, 'YYYY-MM-DD'), 'ohne datum'), ' ',\n                  left(coalesce(name, 'ohne name'), 42)),\n           plaetze::numeric,\n           concat('hoechstzahl ', user_maximum,\n                  ' / buchungen ', buchungen,\n                  ' / netto ', netto)\n    FROM je_termin\n    WHERE user_maximum > 0 AND plaetze > user_maximum AND buchungen > 0\n\n    -- E. Zeilen je Buchung gegen Plaetze\n    UNION ALL SELECT 50, 'E Zeilen gegen Plaetze',\n           concat(zeilen, ' zeilen'), count(*)::numeric,\n           concat('plaetze ', sum(plaetze),\n                  ' / mit inklusive ', count(*) FILTER (WHERE coalesce(inklusive, 0) > 0),\n                  ' / mit weiterer person ', count(*) FILTER (WHERE coalesce(weitere, 0) > 0))\n    FROM je_buchung WHERE status = 'gebucht'\n    GROUP BY 3\n)\nSELECT\n    'S34' AS schritt,\n    count(*) AS zeilen,\n    string_agg(\n        concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')),\n                  coalesce(hinweis, '-')),\n        chr(10) ORDER BY ordnung, wert DESC, kennzahl\n    ) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "34000000-0000-4000-8000-000000003402",
+      "name": "S34 ERGEBNIS Platzmodell",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S34 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S34 ERGEBNIS Platzmodell",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

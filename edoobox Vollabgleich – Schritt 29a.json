@@ -1,0 +1,51 @@
+{
+  "name": "S29a Sichten anlegen (Administration)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "29a00000-0000-4000-8000-00000029a001",
+      "name": "S29a Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Sichten fuer Zuordnung und Steuer. Version 1.0\n-- Auszufuehren mit dem Verwaltungskonto kursplan_user.\n-- Sichten statt Tabellen, damit die Zuordnung nicht veralten kann.\n\n-- ---------------------------------------------------------------\n-- 1. Zuordnung Buchung zu Rechnung\n-- Grundlage ist invoice_item.transaction_id, also der harte Verweis.\n-- ---------------------------------------------------------------\nCREATE OR REPLACE VIEW kursplan.v_buchung_rechnung AS\nWITH paar AS (\n    SELECT DISTINCT\n        t.booking_id,\n        i.invoice_id\n    FROM edoobox_raw.invoice_item i\n    JOIN edoobox_raw.booking_transaction t\n      ON t.transaction_id = i.transaction_id\n),\nje_rechnung AS (\n    SELECT invoice_id, count(*) AS buchungen FROM paar GROUP BY invoice_id\n),\nje_buchung AS (\n    SELECT booking_id, count(*) AS rechnungen FROM paar GROUP BY booking_id\n)\nSELECT\n    p.booking_id,\n    p.invoice_id,\n    r.buchungen        AS buchungen_der_rechnung,\n    b.rechnungen       AS rechnungen_der_buchung,\n    CASE\n        WHEN r.buchungen = 1 THEN 'eindeutig'\n        WHEN r.buchungen BETWEEN 2 AND 5 THEN 'geschlossener_kurs'\n        ELSE 'sammelrechnung'\n    END::text          AS zuordnungsgrad,\n    (b.rechnungen > 1) AS mehrere_rechnungen\nFROM paar p\nJOIN je_rechnung r ON r.invoice_id = p.invoice_id\nJOIN je_buchung  b ON b.booking_id = p.booking_id;\n\nCOMMENT ON VIEW kursplan.v_buchung_rechnung IS\n'Zuordnung ueber invoice_item.transaction_id. zuordnungsgrad unterscheidet Einzel-, Kurs- und Sammelrechnung.';\n\n-- ---------------------------------------------------------------\n-- 2. Steuer und Erloes je Buchung\n-- Der gemessene Faktor brutto zu netto ist die Wahrheit,\n-- der Nominalsatz aus der Rechnung nur Einordnung.\n-- ---------------------------------------------------------------\nCREATE OR REPLACE VIEW kursplan.v_buchung_steuer AS\nWITH netto AS (\n    SELECT\n        booking_id,\n        sum(amount_net * coalesce(quantity, 1)) AS netto,\n        sum(coalesce(quantity, 1))              AS plaetze,\n        count(*)                                AS positionen\n    FROM edoobox_raw.booking_position\n    GROUP BY booking_id\n),\nbrutto AS (\n    SELECT\n        booking_id,\n        sum(amount)      AS brutto,\n        count(*)         AS vorgaenge,\n        min(currency)    AS waehrung\n    FROM edoobox_raw.booking_transaction\n    GROUP BY booking_id\n),\nnominal AS (\n    SELECT\n        t.booking_id,\n        max(i.vat_percent) AS nominalsatz,\n        bool_or(i.item_type = 't_manualtrans') AS hat_manuellen_posten\n    FROM edoobox_raw.booking_transaction t\n    JOIN edoobox_raw.invoice_item i ON i.transaction_id = t.transaction_id\n    GROUP BY t.booking_id\n)\nSELECT\n    b.booking_id,\n    b.offer_id,\n    b.status,\n    b.booking_time,\n    b.is_b2b,\n    coalesce(br.waehrung, 'EUR')::char(3) AS waehrung,\n    n.netto,\n    n.plaetze,\n    n.positionen,\n    br.brutto,\n    br.vorgaenge,\n    nm.nominalsatz,\n    CASE WHEN n.netto > 0 AND br.brutto IS NOT NULL\n         THEN round(br.brutto / n.netto, 3) END AS faktor,\n    CASE WHEN n.netto > 0 AND br.brutto IS NOT NULL\n         THEN round((br.brutto / n.netto - 1) * 100, 2) END AS satz_gemessen,\n    CASE WHEN br.brutto IS NOT NULL AND n.netto IS NOT NULL\n         THEN round(br.brutto - n.netto, 2) END AS steuerbetrag,\n    -- Einordnung des gemessenen Satzes\n    CASE\n        WHEN n.netto IS NULL OR n.netto <= 0 OR br.brutto IS NULL THEN 'unbestimmt'\n        WHEN abs(br.brutto / n.netto - 1.000) <= 0.002 THEN 'ohne_steuer'\n        WHEN abs(br.brutto / n.netto - 1.250) <= 0.002 THEN 'dk_25'\n        WHEN abs(br.brutto / n.netto - 1.190) <= 0.002 THEN 'de_19'\n        WHEN abs(br.brutto / n.netto - 1.160) <= 0.002 THEN 'de_16'\n        WHEN abs(br.brutto / n.netto - 1.200) <= 0.002 THEN 'at_20'\n        WHEN abs(br.brutto / n.netto - 1.081) <= 0.002 THEN 'ch_81'\n        WHEN abs(br.brutto / n.netto - 1.077) <= 0.002 THEN 'ch_77'\n        ELSE 'abweichend'\n    END::text AS steuerfall,\n    nm.hat_manuellen_posten\nFROM edoobox_raw.booking b\nLEFT JOIN netto   n  ON n.booking_id  = b.booking_id\nLEFT JOIN brutto  br ON br.booking_id = b.booking_id\nLEFT JOIN nominal nm ON nm.booking_id = b.booking_id\nWHERE b.is_deleted IS NOT TRUE;\n\nCOMMENT ON VIEW kursplan.v_buchung_steuer IS\n'Netto aus booking_position, brutto aus booking_transaction. satz_gemessen ist die abgerechnete Steuer, nominalsatz nur der hinterlegte Satz der Preiskategorie.';\nCOMMENT ON COLUMN kursplan.v_buchung_steuer.steuerfall IS\n'ohne_steuer entspricht Reverse Charge oder Nullsatz. abweichend deutet auf Teilzahlung oder Gutschrift.';\n\n-- ---------------------------------------------------------------\n-- 3. Erloes je Kurstermin\n-- ---------------------------------------------------------------\nCREATE OR REPLACE VIEW kursplan.v_termin_erloes AS\nSELECT\n    o.offer_id,\n    o.offer_number,\n    o.name,\n    o.offerdef_ref,\n    o.date_start,\n    o.date_end,\n    o.user_minimal,\n    o.user_maximum,\n    o.status                                                   AS termin_status,\n    count(*) FILTER (WHERE s.status = 'gebucht')               AS buchungen_gebucht,\n    count(*) FILTER (WHERE s.status = 'storniert')             AS buchungen_storniert,\n    count(*) FILTER (WHERE s.status = 'warteliste')            AS buchungen_warteliste,\n    coalesce(sum(s.plaetze) FILTER (WHERE s.status = 'gebucht'), 0)      AS plaetze_gebucht,\n    round(coalesce(sum(s.netto)  FILTER (WHERE s.status = 'gebucht'), 0), 2) AS netto_gebucht,\n    round(coalesce(sum(s.brutto) FILTER (WHERE s.status = 'gebucht'), 0), 2) AS brutto_gebucht,\n    CASE WHEN o.user_maximum > 0\n         THEN round(100.0 * coalesce(sum(s.plaetze) FILTER (WHERE s.status = 'gebucht'), 0)\n                    / o.user_maximum, 1) END                   AS auslastung_prozent,\n    (SELECT count(DISTINCT vr.invoice_id)\n       FROM kursplan.v_buchung_rechnung vr\n       JOIN edoobox_raw.booking bb ON bb.booking_id = vr.booking_id\n      WHERE bb.offer_id = o.offer_id)                          AS rechnungen\nFROM edoobox_raw.offer o\nLEFT JOIN kursplan.v_buchung_steuer s ON s.offer_id = o.offer_id\nWHERE o.is_deleted IS NOT TRUE\nGROUP BY o.offer_id, o.offer_number, o.name, o.offerdef_ref,\n         o.date_start, o.date_end, o.user_minimal, o.user_maximum, o.status;\n\nCOMMENT ON VIEW kursplan.v_termin_erloes IS\n'Erloes und Auslastung je Kurstermin. Grundlage fuer die Deckungsbeitragsrechnung.';\n\n-- ---------------------------------------------------------------\n-- 4. Rechte\n-- ---------------------------------------------------------------\nGRANT SELECT ON\n    kursplan.v_buchung_rechnung,\n    kursplan.v_buchung_steuer,\n    kursplan.v_termin_erloes\nTO n8n_writer;\n\n-- Kontrolle\nSELECT\n    (SELECT count(*) FROM information_schema.views\n      WHERE table_schema = 'kursplan'\n        AND table_name IN ('v_buchung_rechnung','v_buchung_steuer','v_termin_erloes')) AS sichten,\n    (SELECT count(*) FROM kursplan.v_buchung_rechnung)  AS zuordnungen,\n    (SELECT count(*) FROM kursplan.v_buchung_steuer)    AS buchungen,\n    (SELECT count(*) FROM kursplan.v_termin_erloes)     AS termine;\n",
+        "options": {}
+      },
+      "id": "29a00000-0000-4000-8000-00000029a002",
+      "name": "S29a ERGEBNIS Sichten anlegen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S29a Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S29a ERGEBNIS Sichten anlegen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

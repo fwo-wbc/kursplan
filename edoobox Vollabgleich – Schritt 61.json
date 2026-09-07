@@ -1,0 +1,53 @@
+{
+  "name": "S61 Fremdtrainertarife anwenden und DB I aktualisieren",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "61000000-0000-4000-8000-000000006101",
+      "name": "S61 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- S61: bestaetigte Fremdtrainerregeln eintragen und DB I neu auswerten.\n-- Coachings und DM bleiben bewusst je Gesamtangebot offen.\n\nUPDATE kursplan.trainer_kostenprofil_admin\nSET tarif_1 = 340.00,\n    tarif_2 = NULL,\n    standard_tarif = NULL,\n    bemerkung = '340 EUR je Gesamtangebot; Coachings individuell',\n    geaendert_am = now()\nWHERE admin_id = 'admin_5e36a8d9b6f0_238626575';\n\nUPDATE kursplan.trainer_kostenprofil_admin\nSET trainer_code = 'WW',\n    tarif_1 = 300.00,\n    tarif_2 = NULL,\n    standard_tarif = NULL,\n    bemerkung = '300 EUR je Gesamtangebot; Coachings individuell',\n    geaendert_am = now()\nWHERE admin_id = 'admin_b0cee0fbd81a_419145525';\n\nUPDATE kursplan.trainer_kostenprofil_admin\nSET standard_tarif = NULL,\n    bemerkung = CASE\n        WHEN trainer_code = 'DM'\n            THEN 'SQL nach Absprache; je Gesamtangebot individuell'\n        ELSE bemerkung\n    END,\n    geaendert_am = now()\nWHERE kostenrolle = 'fremd';\n\nWITH offene_kombinationen AS (\n    SELECT DISTINCT admin_id, kurscode\n    FROM kursplan.v_angebot_trainerkosten\n    WHERE date_start >= timestamp '2023-01-01'\n      AND kosten_aktiv\n      AND kostenrolle = 'fremd'\n      AND kurscode !~* '(coach|coaching)'\n      AND admin_id <> 'admin_b67c6ac2e907_387357110'\n),\nregeln AS (\n    SELECT\n        o.admin_id,\n        o.kurscode,\n        CASE\n            -- UH und JE: Project 370 EUR, uebrige Themen im Zweifel 270 EUR.\n            WHEN o.admin_id IN (\n                'admin_bf7d1a24a322_264000980',\n                'admin_edcd28a2900c_408715945'\n            ) AND o.kurscode ~* '^proj'\n                THEN 'tarif_2'\n\n            -- MS und FK: Teams, SharePoint, OneDrive und M365 370 EUR.\n            WHEN o.admin_id IN (\n                'admin_8d26f6655a4b_294635600',\n                'admin_0d94965c4440_350035930'\n            ) AND o.kurscode ~* '^(teams|spt|sharepoint|onedrive|ms365)'\n                THEN 'tarif_2'\n\n            -- JR (340), WW (300) sowie sonstige relevante Trainer:\n            -- jeweils der im Kostenprofil hinterlegte Tarif 1.\n            ELSE 'tarif_1'\n        END::text AS tarif,\n        CASE\n            WHEN o.admin_id IN (\n                'admin_bf7d1a24a322_264000980',\n                'admin_edcd28a2900c_408715945'\n            ) THEN 'UH/JE: Project 370 EUR, sonst 270 EUR'\n            WHEN o.admin_id IN (\n                'admin_8d26f6655a4b_294635600',\n                'admin_0d94965c4440_350035930'\n            ) THEN 'MS/FK: M365-Zusammenarbeit 370 EUR, sonst 270 EUR'\n            WHEN o.admin_id = 'admin_5e36a8d9b6f0_238626575'\n                THEN 'JR: 340 EUR'\n            WHEN o.admin_id = 'admin_b0cee0fbd81a_419145525'\n                THEN 'WW: 300 EUR'\n            ELSE 'Im Zweifel 270 EUR'\n        END::text AS bemerkung\n    FROM offene_kombinationen o\n)\nINSERT INTO kursplan.trainer_kurs_tarifregel\n    (admin_id, kurscode, tarif, trainerkosten_override,\n     ist_aktiv, bemerkung, geaendert_am)\nSELECT\n    admin_id,\n    kurscode,\n    tarif,\n    NULL,\n    true,\n    bemerkung,\n    now()\nFROM regeln\nON CONFLICT (admin_id, kurscode) DO UPDATE\nSET tarif = EXCLUDED.tarif,\n    trainerkosten_override = NULL,\n    ist_aktiv = true,\n    bemerkung = EXCLUDED.bemerkung,\n    geaendert_am = now();\n\nWITH regelstand AS (\n    SELECT\n        p.trainer_code,\n        r.tarif,\n        count(*) AS kurscodes\n    FROM kursplan.trainer_kurs_tarifregel r\n    JOIN kursplan.trainer_kostenprofil_admin p\n      ON p.admin_id = r.admin_id\n    WHERE r.ist_aktiv\n    GROUP BY p.trainer_code, r.tarif\n),\noffen AS (\n    SELECT\n        k.offer_id,\n        k.trainer_code,\n        k.admin_id,\n        k.kurscode,\n        k.kursbezeichnung,\n        k.date_start,\n        k.kostenphase,\n        k.netto_gebucht\n    FROM kursplan.v_angebot_trainerkosten k\n    WHERE k.date_start >= timestamp '2023-01-01'\n      AND k.kosten_aktiv\n      AND k.kostenkonfiguration_fehlt\n),\ndb AS (\n    SELECT\n        count(*) FILTER (WHERE NOT kostenkonfiguration_fehlt) AS berechenbar,\n        count(*) FILTER (WHERE kostenkonfiguration_fehlt) AS offen,\n        round(sum(netto_gebucht) FILTER (\n            WHERE NOT kostenkonfiguration_fehlt\n        ), 2) AS netto_berechenbar,\n        round(sum(direkte_kosten) FILTER (\n            WHERE NOT kostenkonfiguration_fehlt\n        ), 2) AS direkte_kosten,\n        round(sum(db1) FILTER (\n            WHERE NOT kostenkonfiguration_fehlt\n        ), 2) AS db1,\n        round(sum(netto_gebucht), 2) AS netto_gesamt\n    FROM kursplan.v_termin_db1\n    WHERE date_start >= timestamp '2023-01-01'\n)\nSELECT\n    'S61'::text AS schritt,\n    'A Regelstand'::text AS bereich,\n    r.trainer_code AS trainer,\n    NULL::text AS offer_id,\n    NULL::timestamptz AS date_start,\n    NULL::text AS kostenphase,\n    NULL::text AS kurscode,\n    NULL::text AS kursbezeichnung,\n    r.tarif,\n    r.kurscodes::numeric AS wert,\n    NULL::numeric AS netto,\n    'Anzahl dauerhaft konfigurierter Trainer-Kurs-Regeln'::text AS hinweis\nFROM regelstand r\n\nUNION ALL\n\nSELECT\n    'S61',\n    'B Individuell offen',\n    o.trainer_code,\n    o.offer_id,\n    o.date_start,\n    o.kostenphase,\n    o.kurscode,\n    o.kursbezeichnung,\n    NULL,\n    1,\n    round(o.netto_gebucht, 2),\n    CASE\n        WHEN o.trainer_code = 'DM' THEN 'DM: Preis nach Absprache'\n        WHEN o.kurscode ~* '(coach|coaching)' THEN 'Coaching: individueller Preis'\n        ELSE 'Unerwartet offen; pruefen'\n    END\nFROM offen o\n\nUNION ALL\n\nSELECT\n    'S61',\n    'C DB I',\n    '(gesamt)',\n    NULL,\n    NULL,\n    NULL,\n    NULL,\n    NULL,\n    NULL,\n    d.berechenbar,\n    d.netto_berechenbar,\n    concat(\n        'DB I ', d.db1,\n        ' / direkte Kosten ', d.direkte_kosten,\n        ' / noch offen ', d.offen,\n        ' / Gesamt-Netto ', d.netto_gesamt\n    )\nFROM db d\n\nORDER BY\n    bereich,\n    trainer,\n    date_start NULLS LAST,\n    kurscode NULLS LAST;\n"
+      },
+      "id": "61000000-0000-4000-8000-000000006102",
+      "name": "S61 ADMIN Tarife anwenden",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        610,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S61 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S61 ADMIN Tarife anwenden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "61000000-0000-4000-8000-000000006100",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

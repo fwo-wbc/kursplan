@@ -1,0 +1,71 @@
+{
+  "name": "S55 Trainerprofile und Einsatzbestand",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "55000000-0000-4000-8000-000000005501",
+      "name": "S55 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "grant-type", "value": "password"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {"name": "expire", "value": "={{ $now.plus({ hours: 2 }).toISO() }}"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "55000000-0000-4000-8000-000000005502",
+      "name": "S55 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Zeigt die Trainerprofile mit Einsatzmengen. Aus der Admin-Ressource\n// werden nur Name und Kurzzeichen ausgegeben, keine Kontakt- oder Adressdaten.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\nif (!token || !edid) throw new Error('Token oder edid fehlt.');\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\nconst basis = 'https://app1.edoobox.com/v2';\n\nfunction rowsAus(body) {\n  const d = body?.data;\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') return Object.values(d);\n  return [];\n}\n\nasync function holeAlle(pfad) {\n  const alle = [];\n  const reply = 2000;\n  let start = 0;\n  let total = null;\n  for (let seite = 1; seite <= 20; seite += 1) {\n    const a = await this.helpers.httpRequest({\n      method: 'GET', url: basis + pfad, headers,\n      qs: { 'limit[start]': start, 'limit[reply]': reply },\n      json: true, returnFullResponse: true, timeout: 60000,\n      ignoreHttpStatusErrors: true,\n    });\n    if (!(a.statusCode >= 200 && a.statusCode < 300)) throw new Error(`${pfad}: HTTP ${a.statusCode}`);\n    const rows = rowsAus(a.body);\n    if (total === null && a.body?.limit?.total !== undefined) total = Number(a.body.limit.total);\n    alle.push(...rows);\n    start += rows.length;\n    if (rows.length === 0 || rows.length < reply || (total !== null && start >= total)) break;\n  }\n  if (total !== null && alle.length !== total) throw new Error(`${pfad}: gemeldet ${total}, gelesen ${alle.length}`);\n  return alle;\n}\n\nconst admins = await holeAlle.call(this, '/admin/list');\nconst dates = await holeAlle.call(this, '/date/list');\nconst adminMap = new Map(admins.map(a => [String(a.id), a]));\nconst statistik = new Map();\n\nfor (const d of dates) {\n  const leaders = [...new Set((Array.isArray(d.leader) ? d.leader : []).filter(Boolean).map(String))];\n  for (const id of leaders) {\n    const s = statistik.get(id) ?? {\n      datumszeilen: 0,\n      angebote: new Set(),\n      erster: null,\n      letzter: null,\n    };\n    s.datumszeilen += 1;\n    if (d.offer) s.angebote.add(String(d.offer));\n    const start = d.date_start ? String(d.date_start) : null;\n    if (start && (!s.erster || start < s.erster)) s.erster = start;\n    if (start && (!s.letzter || start > s.letzter)) s.letzter = start;\n    statistik.set(id, s);\n  }\n}\n\nconst ids = new Set([...adminMap.keys(), ...statistik.keys()]);\nconst ausgabe = [...ids].map(id => {\n  const a = adminMap.get(id);\n  const s = statistik.get(id);\n  const name = a ? [a.first_name, a.last_name].filter(Boolean).join(' ').trim() : '(historisches Profil)';\n  return {\n    json: {\n      schritt: 'S55',\n      admin_id: id,\n      trainer: name || '(ohne Namen)',\n      kuerzel: a?.shortcut || '-',\n      admin_aktiv: a?.status === true,\n      datumszeilen: s?.datumszeilen ?? 0,\n      angebote: s?.angebote.size ?? 0,\n      erster_einsatz: s?.erster ?? '-',\n      letzter_einsatz: s?.letzter ?? '-',\n      kostenrolle: 'noch festzulegen',\n    },\n  };\n});\n\nausgabe.sort((x, y) => y.json.angebote - x.json.angebote || x.json.trainer.localeCompare(y.json.trainer));\nreturn ausgabe;"
+      },
+      "id": "55000000-0000-4000-8000-000000005503",
+      "name": "S55 ERGEBNIS Trainerprofile",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300]
+    }
+  ],
+  "connections": {
+    "S55 Manuell starten": {
+      "main": [[{"node": "S55 Token holen", "type": "main", "index": 0}]]
+    },
+    "S55 Token holen": {
+      "main": [[{"node": "S55 ERGEBNIS Trainerprofile", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "55000000-0000-4000-8000-000000005599",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

@@ -1,0 +1,101 @@
+{
+  "name": "S10 Klammern und Sortierung",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a6b5f3c7-6e73-4f80-8b66-7fc5d0c26001",
+      "name": "S10 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a6b5f3c7-6e73-4f80-8b66-7fc5d0c26002",
+      "name": "S10 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Letzte offene Fragen:\n//  1. Wirken eckige Klammern ohne den Parameter order?\n//  2. Laesst sich die Sortierung umkehren?\n// Angezeigt werden Zeitstempel und Kurzform der ersten Kennung zum Vergleich.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst basis = 'https://app1.edoobox.com/v2/booking/list';\n\nfunction auswerten(body) {\n  const roh = body?.data;\n  const liste = roh && typeof roh === 'object' && !Array.isArray(roh) ? Object.entries(roh) : [];\n  const eintraege = liste.map(([k, v]) => (v && typeof v === 'object' ? v : { id: k }));\n  const l = body?.limit ?? {};\n  const erste = eintraege[0] ?? {};\n  const letzte = eintraege[eintraege.length - 1] ?? {};\n  return {\n    anzahl: liste.length,\n    gemeldet_start: l.start ?? '-',\n    gemeldet_reply: l.reply ?? '-',\n    gemeldet_total: l.total ?? '-',\n    erste_id: erste.id ?? null,\n    erste_zeit: erste.time ?? '-',\n    letzte_zeit: letzte.time ?? '-',\n  };\n}\n\nasync function abruf(bezeichnung, qs) {\n  try {\n    const antwort = await this.helpers.httpRequest({\n      method: 'GET',\n      url: basis,\n      headers,\n      qs,\n      json: true,\n      returnFullResponse: true,\n      timeout: 60000,\n    });\n    return { variante: bezeichnung, status: antwort.statusCode, ...auswerten(antwort.body) };\n  } catch (fehler) {\n    return {\n      variante: bezeichnung,\n      status: fehler?.response?.status ?? fehler?.httpCode ?? 'kein Status',\n      anzahl: 0,\n      fehlermeldung: String(fehler?.message ?? fehler).slice(0, 160),\n    };\n  }\n}\n\nconst hole = abruf.bind(this);\n\nconst varianten = [\n  ['A Vergleich', { limit: 5 }],\n  ['B limit Klammer start', { 'limit[start]': 100 }],\n  ['C limit Klammer beides', { 'limit[start]': 100, 'limit[reply]': 5 }],\n  ['D limit Klammer nur reply', { 'limit[reply]': 5 }],\n  ['E order Klammer ASC', { limit: 5, 'order[time]': 'ASC' }],\n  ['F order flach ASC', { limit: 5, order: 'ASC' }],\n  ['G order time ASC', { limit: 5, order: 'time', direction: 'ASC' }],\n  ['H sort und dir', { limit: 5, sort: 'time', dir: 'asc' }],\n  ['I order Punkt ASC', { limit: 5, 'order.time': 'ASC' }],\n  ['J order Pfeil ASC', { limit: 5, 'order>time': 'ASC' }],\n  ['K desc aus', { limit: 5, desc: 0 }],\n  ['L Hoechstwert pruefen', { limit: 4038 }],\n];\n\nconst ergebnisse = [];\nfor (const [bezeichnung, qs] of varianten) {\n  ergebnisse.push(await hole(bezeichnung, qs));\n}\n\nconst vergleich = ergebnisse[0];\n\nreturn ergebnisse.map((e) => ({\n  json: {\n    schritt: 'S10',\n    variante: e.variante,\n    status: e.status,\n    anzahl: e.anzahl,\n    gemeldet_start: e.gemeldet_start ?? '-',\n    gemeldet_reply: e.gemeldet_reply ?? '-',\n    andere_erste_buchung:\n      e.erste_id && vergleich?.erste_id ? (e.erste_id !== vergleich.erste_id ? 'JA' : 'nein') : '-',\n    erste_zeit: e.erste_zeit ?? '-',\n    letzte_zeit: e.letzte_zeit ?? '-',\n    fehlermeldung: e.fehlermeldung ?? '-',\n  },\n}));\n"
+      },
+      "id": "a6b5f3c7-6e73-4f80-8b66-7fc5d0c26003",
+      "name": "S10 ERGEBNIS Klammern und Sortierung",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S10 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S10 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S10 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S10 ERGEBNIS Klammern und Sortierung",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

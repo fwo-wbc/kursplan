@@ -1,0 +1,51 @@
+{
+  "name": "S36 Restfaelle klaeren",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "36000000-0000-4000-8000-000000003601",
+      "name": "S36 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Klaert die verbleibenden Ueberbuchungen, die Inklusive-Mengen,\n-- die Dubletten und die Testtermine. Nur lesend.\nWITH pos AS (\n    SELECT\n        p.booking_id,\n        coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)') AS kat,\n        coalesce(p.quantity, 0)   AS menge,\n        coalesce(p.amount_net, 0) AS betrag\n    FROM edoobox_raw.booking_position p\n),\nje_buchung AS (\n    SELECT\n        b.booking_id, b.offer_id, s.status,\n        coalesce(s.netto, 0) AS netto,\n        sum(pos.menge) AS menge_summe,\n        bool_or(pos.kat = 'Inklusive' OR pos.kat ~ 'weitere[ns]? Person') AS ist_paket,\n        string_agg(\n            concat(left(pos.kat, 30), ' x', pos.menge, ' @', round(pos.betrag, 2)),\n            ' + ' ORDER BY pos.betrag DESC, pos.kat\n        ) AS zeilen_text\n    FROM edoobox_raw.booking b\n    JOIN kursplan.v_buchung_steuer s ON s.booking_id = b.booking_id\n    JOIN pos ON pos.booking_id = b.booking_id\n    GROUP BY b.booking_id, b.offer_id, s.status, 4\n),\nmit_plaetzen AS (\n    SELECT j.*,\n           CASE WHEN j.ist_paket THEN greatest(j.menge_summe, 1) ELSE 1 END AS plaetze\n    FROM je_buchung j\n),\nje_termin AS (\n    SELECT\n        o.offer_id, o.name, o.date_start, o.user_maximum, o.offerdef_ref, o.offer_number,\n        count(*) FILTER (WHERE m.status = 'gebucht')                    AS buchungen,\n        coalesce(sum(m.plaetze) FILTER (WHERE m.status = 'gebucht'), 0) AS plaetze,\n        round(coalesce(sum(m.netto) FILTER (WHERE m.status = 'gebucht'), 0), 2) AS netto\n    FROM edoobox_raw.offer o\n    JOIN mit_plaetzen m ON m.offer_id = o.offer_id\n    WHERE o.is_deleted IS NOT TRUE\n    GROUP BY o.offer_id, o.name, o.date_start, o.user_maximum, o.offerdef_ref, o.offer_number\n),\nueber AS (\n    SELECT * FROM je_termin\n    WHERE user_maximum > 0 AND plaetze > user_maximum AND buchungen > 0\n),\ndubletten AS (\n    SELECT o.name, o.date_start, count(*) AS saetze,\n           string_agg(o.offer_number, ' / ' ORDER BY o.offer_number) AS nummern\n    FROM edoobox_raw.offer o\n    WHERE o.is_deleted IS NOT TRUE AND o.date_start IS NOT NULL\n    GROUP BY o.name, o.date_start\n    HAVING count(*) > 1\n),\nroh AS (\n    -- A. Positionszeilen der Buchungen auf ueberbuchten Terminen\n    SELECT 10 AS ordnung, 'A Zeilen Ueberbuchung' AS bereich,\n           concat(to_char(u.date_start, 'YYYY-MM-DD'), ' ', left(u.name, 24),\n                  ' b', right(m.booking_id::text, 5)) AS kennzahl,\n           m.plaetze::numeric AS wert,\n           left(m.zeilen_text, 170) AS hinweis\n    FROM ueber u\n    JOIN mit_plaetzen m ON m.offer_id = u.offer_id AND m.status = 'gebucht'\n\n    -- B. Inklusive-Menge gegen den Rest der Buchung\n    UNION ALL SELECT 20, 'B Inklusive Muster',\n           concat('inklusive x', i.menge),\n           count(*)::numeric,\n           concat('plaetze im schnitt ', round(avg(m.plaetze), 2),\n                  ' / netto im schnitt ', round(avg(m.netto), 2),\n                  ' / hoechste plaetze ', max(m.plaetze))\n    FROM mit_plaetzen m\n    JOIN pos i ON i.booking_id = m.booking_id AND i.kat = 'Inklusive'\n    WHERE m.status = 'gebucht'\n    GROUP BY 3\n\n    -- C. Dubletten einzeln\n    UNION ALL SELECT 30, 'C Dublette',\n           concat(to_char(date_start, 'YYYY-MM-DD'), ' ', left(name, 34)),\n           saetze::numeric,\n           left(nummern, 120)\n    FROM dubletten\n\n    -- D. Verdaechtige Termine\n    UNION ALL SELECT 40, 'D Verdaechtig',\n           concat(to_char(date_start, 'YYYY-MM-DD'), ' ', left(name, 34)),\n           user_maximum::numeric,\n           concat('buchungen ', buchungen, ' / plaetze ', plaetze,\n                  ' / netto ', netto, ' / nummer ', left(coalesce(offer_number, '-'), 26))\n    FROM je_termin\n    WHERE user_maximum > 60 OR date_start >= '2027-01-01'\n\n    -- E. Kursgruppen ab 2023, die groessten nach Netto\n    UNION ALL SELECT 50, 'E Kursgruppe ab 2023',\n           left(coalesce(min(name), 'ohne name'), 40),\n           round(sum(netto), 2),\n           concat('termine ', count(*),\n                  ' / plaetze ', sum(plaetze),\n                  ' / auslastung ', round(avg(plaetze::numeric / user_maximum) * 100, 1),\n                  ' / gruppe ', left(coalesce(offerdef_ref, '-'), 12))\n    FROM je_termin\n    WHERE date_start >= '2023-01-01' AND user_maximum > 0 AND user_maximum <= 60\n          AND buchungen > 0 AND offerdef_ref IS NOT NULL\n    GROUP BY offerdef_ref\n    HAVING sum(netto) >= 4000\n)\nSELECT\n    'S36' AS schritt,\n    count(*) AS zeilen,\n    string_agg(\n        concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')),\n                  coalesce(hinweis, '-')),\n        chr(10) ORDER BY ordnung, wert DESC, kennzahl\n    ) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "36000000-0000-4000-8000-000000003602",
+      "name": "S36 ERGEBNIS Restfaelle",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S36 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S36 ERGEBNIS Restfaelle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

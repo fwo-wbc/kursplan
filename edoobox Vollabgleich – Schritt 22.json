@@ -1,0 +1,103 @@
+{
+  "name": "S22 Rechnungsliste erkunden",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "22000000-0000-4000-8000-000000002001",
+      "name": "S22 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 8 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "22000000-0000-4000-8000-000000002002",
+      "name": "S22 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Erkundet /v2/invoice/list: Statuscode, Satzzahl, Huellenfelder und\n// Feldbestand je Rechnung. Zeigt Klarwerte nur bei steuerlich\n// bedeutsamen Feldern, sonst nur Werttypen.\n\nconst auth = $('S22 Token holen').first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nasync function abrufen(qs) {\n  return await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'https://app1.edoobox.com/v2/invoice/list',\n    headers,\n    qs,\n    json: true,\n    returnFullResponse: true,\n    timeout: 120000,\n    ignoreHttpStatusErrors: true,\n  });\n}\n\nconst hole = abrufen.bind(this);\n\n// Erste Seite als Probe. 500 Saetze genuegen fuer den Feldbestand.\nconst erste = await hole({ 'limit[start]': 0, 'limit[reply]': 500 });\n\nconst zeilen = [];\n\nzeilen.push({\n  json: {\n    schritt: 'S22',\n    bereich: 'Antwort',\n    feld: 'statuscode',\n    arten: String(erste.statusCode),\n    beispielwerte: '',\n  },\n});\n\nif (erste.statusCode !== 200) {\n  zeilen.push({\n    json: {\n      schritt: 'S22',\n      bereich: 'Antwort',\n      feld: 'fehlertext',\n      arten: String(erste.body && typeof erste.body === 'object'\n        ? JSON.stringify(erste.body).slice(0, 300)\n        : String(erste.body).slice(0, 300)),\n      beispielwerte: '',\n    },\n  });\n  return zeilen;\n}\n\nconst huelle = erste.body && typeof erste.body === 'object' ? erste.body : {};\n\nzeilen.push({\n  json: {\n    schritt: 'S22',\n    bereich: 'Antwort',\n    feld: 'huellenfelder',\n    arten: Object.keys(huelle).join(', '),\n    beispielwerte: '',\n  },\n});\n\n// Satzzahl aus allen plausiblen Stellen einsammeln.\nfor (const kandidat of ['total', 'count', 'amount', 'records', 'result', 'meta']) {\n  if (huelle[kandidat] !== undefined && typeof huelle[kandidat] !== 'object') {\n    zeilen.push({\n      json: {\n        schritt: 'S22',\n        bereich: 'Antwort',\n        feld: `huelle.${kandidat}`,\n        arten: String(huelle[kandidat]),\n        beispielwerte: '',\n      },\n    });\n  }\n}\n\nconst daten = Array.isArray(huelle.data)\n  ? huelle.data\n  : huelle.data && typeof huelle.data === 'object'\n    ? Object.values(huelle.data)\n    : [];\n\nzeilen.push({\n  json: {\n    schritt: 'S22',\n    bereich: 'Antwort',\n    feld: 'saetze auf erster seite',\n    arten: String(daten.length),\n    beispielwerte: '',\n  },\n});\n\nfunction art(wert) {\n  if (wert === null) return 'null';\n  if (Array.isArray(wert)) return `liste[${wert.length}]`;\n  if (typeof wert === 'object') return `objekt{${Object.keys(wert).slice(0, 12).join(',')}}`;\n  if (typeof wert === 'boolean') return `wahrheitswert:${wert}`;\n  if (typeof wert === 'number') return 'zahl';\n  if (typeof wert === 'string') {\n    if (wert === '') return 'text:leer';\n    if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(wert)) return 'text:zeitpunkt';\n    if (/^-?[0-9]+([.,][0-9]+)?$/.test(wert)) return 'text:zahl';\n    return `text(${wert.length})`;\n  }\n  return typeof wert;\n}\n\n// Bei diesen Feldnamen sind Klarwerte unbedenklich und aufschlussreich.\nconst offen = /vat|ust|tax|steuer|mwst|currency|waehrung|status|type|art|country|land|state|paid|open|number|nummer|amount|betrag|total|net|gross|brutto|netto|date|datum|time|rate|satz|b2b|booking|offer|reverse|charge/i;\n\nconst uebersicht = new Map();\n\nfor (const r of daten) {\n  if (!r || typeof r !== 'object') continue;\n  for (const [feld, wert] of Object.entries(r)) {\n    if (!uebersicht.has(feld)) uebersicht.set(feld, { feld, arten: new Set(), werte: new Set(), gefuellt: 0 });\n    const e = uebersicht.get(feld);\n    e.arten.add(art(wert));\n    if (wert !== null && wert !== '' && wert !== false) e.gefuellt += 1;\n    if (offen.test(feld) && (typeof wert !== 'object' || wert === null)) {\n      const t = String(wert);\n      if (t.length <= 28) e.werte.add(t);\n    }\n  }\n}\n\nfor (const e of [...uebersicht.values()].sort((a, b) => a.feld.localeCompare(b.feld))) {\n  zeilen.push({\n    json: {\n      schritt: 'S22',\n      bereich: 'Rechnung',\n      feld: e.feld,\n      arten: `${[...e.arten].slice(0, 4).join(' | ')}  (gefuellt ${e.gefuellt}/${daten.length})`,\n      beispielwerte: [...e.werte].slice(0, 8).join(' | '),\n    },\n  });\n}\n\n// Gesamtzahl durch Blaettern bestimmen, falls die Huelle sie nicht nennt.\nlet gesamt = daten.length;\nlet abrufe = 1;\n\nif (daten.length === 500) {\n  let start = 500;\n  while (abrufe < 30) {\n    const w = await hole({ 'limit[start]': start, 'limit[reply]': 2000 });\n    abrufe += 1;\n    if (w.statusCode !== 200) break;\n    const h = w.body && typeof w.body === 'object' ? w.body : {};\n    const d = Array.isArray(h.data) ? h.data : h.data && typeof h.data === 'object' ? Object.values(h.data) : [];\n    gesamt += d.length;\n    if (d.length < 2000) break;\n    start += 2000;\n  }\n}\n\nzeilen.push({\n  json: {\n    schritt: 'S22',\n    bereich: 'Antwort',\n    feld: 'rechnungen gesamt',\n    arten: `${gesamt} bei ${abrufe} Abrufen`,\n    beispielwerte: '',\n  },\n});\n\nreturn zeilen;\n"
+      },
+      "id": "22000000-0000-4000-8000-000000002003",
+      "name": "S22 ERGEBNIS Rechnungsfelder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S22 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S22 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S22 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S22 ERGEBNIS Rechnungsfelder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "executionTimeout": 900
+  },
+  "active": false,
+  "tags": []
+}

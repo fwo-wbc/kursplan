@@ -1,0 +1,101 @@
+{
+  "name": "S7 Versatz und Seitengroesse",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "d3e2c0f4-3b40-4c5d-9e33-4c9a2a7f3001",
+      "name": "S7 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d3e2c0f4-3b40-4c5d-9e33-4c9a2a7f3002",
+      "name": "S7 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Findet heraus, mit welchem Parameternamen sich der Versatz setzen laesst.\n// Der Endpunkt spiegelt die verwendeten Werte im Huellenfeld limit zurueck,\n// daran ist sofort erkennbar, ob ein Parameter angenommen wurde.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst basis = 'https://app1.edoobox.com/v2/booking/list';\n\nfunction auswerten(body) {\n  const roh = body?.data;\n  const liste = roh && typeof roh === 'object' && !Array.isArray(roh) ? Object.entries(roh) : [];\n  const ids = liste.map(([k, v]) => (v && typeof v === 'object' ? v.id ?? k : k));\n  const l = body?.limit ?? {};\n  return {\n    anzahl: liste.length,\n    gemeldet_start: l.start ?? '-',\n    gemeldet_reply: l.reply ?? '-',\n    gemeldet_total: l.total ?? '-',\n    erste_id: ids[0] ?? null,\n  };\n}\n\nasync function abruf(bezeichnung, qs, url = basis) {\n  try {\n    const antwort = await this.helpers.httpRequest({\n      method: 'GET',\n      url,\n      headers,\n      qs,\n      json: true,\n      returnFullResponse: true,\n      timeout: 30000,\n    });\n    return { variante: bezeichnung, status: antwort.statusCode, ...auswerten(antwort.body) };\n  } catch (fehler) {\n    return {\n      variante: bezeichnung,\n      status: fehler?.response?.status ?? fehler?.httpCode ?? 'kein Status',\n      anzahl: 0,\n      fehlermeldung: String(fehler?.message ?? fehler).slice(0, 160),\n    };\n  }\n}\n\nconst hole = abruf.bind(this);\n\nconst varianten = [\n  ['A Grundabruf', {}],\n  ['B start reply flach', { start: 100, reply: 10 }],\n  ['C limit>start', { 'limit>start': 100, 'limit>reply': 10 }],\n  ['D limit-start', { 'limit-start': 100, 'limit-reply': 10 }],\n  ['E limit_start', { limit_start: 100, limit_reply: 10 }],\n  ['F offset limit', { offset: 100, limit: 10 }],\n  ['G page per_page', { page: 2, per_page: 10 }],\n  ['H limit als Text', { limit: '100,10' }],\n  ['I nur reply', { reply: 10 }],\n  ['J Pfadangabe', {}, `${basis}/100/10`],\n];\n\nconst ergebnisse = [];\nfor (const [bezeichnung, qs, url] of varianten) {\n  ergebnisse.push(await hole(bezeichnung, qs, url));\n}\n\nconst grund = ergebnisse[0];\n\nreturn ergebnisse.map((e) => ({\n  json: {\n    schritt: 'S7',\n    variante: e.variante,\n    status: e.status,\n    anzahl: e.anzahl,\n    gemeldet_start: e.gemeldet_start ?? '-',\n    gemeldet_reply: e.gemeldet_reply ?? '-',\n    gemeldet_total: e.gemeldet_total ?? '-',\n    parameter_wirkt:\n      e.erste_id && grund?.erste_id ? (e.erste_id !== grund.erste_id ? 'JA' : 'nein') : '-',\n    fehlermeldung: e.fehlermeldung ?? '-',\n  },\n}));\n"
+      },
+      "id": "d3e2c0f4-3b40-4c5d-9e33-4c9a2a7f3003",
+      "name": "S7 ERGEBNIS Versatz",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S7 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S7 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S7 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S7 ERGEBNIS Versatz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

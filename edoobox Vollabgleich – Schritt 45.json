@@ -1,0 +1,37 @@
+{
+  "name": "S45 Gebuchte Buchungen ohne Angebot klaeren",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "45000000-0000-4000-8000-000000004501",
+      "name": "S45 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Klaert die sechs gebuchten Buchungen ohne aktives Angebot. Nur lesend, ohne Klardaten.\nWITH kandidaten AS (\n    SELECT b.booking_id, b.offer_id, b.booking_time, b.status,\n           coalesce(s.netto, 0) AS netto,\n           o.offer_id AS vorhandenes_offer, o.is_deleted AS offer_geloescht,\n           string_agg(DISTINCT left(coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)'), 45), ' + ') AS kategorien\n    FROM edoobox_raw.booking b\n    LEFT JOIN kursplan.v_buchung_steuer s ON s.booking_id = b.booking_id\n    LEFT JOIN edoobox_raw.offer o ON o.offer_id = b.offer_id\n    LEFT JOIN edoobox_raw.booking_position p ON p.booking_id = b.booking_id\n    WHERE b.is_deleted IS NOT TRUE AND b.status = 'gebucht'\n      AND NOT EXISTS (\n          SELECT 1 FROM edoobox_raw.offer oa\n          WHERE oa.offer_id = b.offer_id AND oa.is_deleted IS NOT TRUE\n      )\n    GROUP BY b.booking_id, b.offer_id, b.booking_time, b.status, s.netto,\n             o.offer_id, o.is_deleted\n),\nrechnung AS (\n    SELECT vr.booking_id,\n           count(DISTINCT vr.invoice_id) AS rechnungen,\n           min(i.offer_start_date) AS erster_rechnungstermin,\n           max(i.offer_start_date) AS letzter_rechnungstermin,\n           round(sum(DISTINCT i.grand_total), 2) AS rechnungssumme\n    FROM kursplan.v_buchung_rechnung vr\n    JOIN edoobox_raw.invoice i ON i.invoice_id = vr.invoice_id\n    GROUP BY vr.booking_id\n),\ntermin_treffer AS (\n    SELECT k.booking_id, r.erster_rechnungstermin,\n           count(o.offer_id) AS angebote_am_datum,\n           string_agg(left(o.offer_number, 28), ' / ' ORDER BY o.offer_number) AS nummern\n    FROM kandidaten k\n    JOIN rechnung r ON r.booking_id = k.booking_id\n    LEFT JOIN edoobox_raw.offer o\n      ON o.is_deleted IS NOT TRUE\n     AND o.date_start::date = r.erster_rechnungstermin::date\n    GROUP BY k.booking_id, r.erster_rechnungstermin\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Buchung ohne Angebot' AS bereich,\n           concat(to_char(k.booking_time, 'YYYY-MM-DD'), ' b', right(k.booking_id::text, 5)) AS kennzahl,\n           k.netto::numeric AS wert,\n           concat('offer ', left(coalesce(k.offer_id, '-'), 24),\n                  ' / in Tabelle ', CASE WHEN k.vorhandenes_offer IS NULL THEN 'nein' ELSE 'ja' END,\n                  ' / geloescht ', coalesce(k.offer_geloescht::text, '-'),\n                  ' / ', left(coalesce(k.kategorien, '-'), 90)) AS hinweis\n    FROM kandidaten k\n\n    UNION ALL SELECT 20, 'B Rechnungsbezug',\n           concat('b', right(k.booking_id::text, 5)),\n           coalesce(r.rechnungen, 0)::numeric,\n           concat('termin ', coalesce(to_char(r.erster_rechnungstermin, 'YYYY-MM-DD'), '-'),\n                  ' / letzter ', coalesce(to_char(r.letzter_rechnungstermin, 'YYYY-MM-DD'), '-'),\n                  ' / rechnungssumme ', coalesce(r.rechnungssumme::text, '-'))\n    FROM kandidaten k\n    LEFT JOIN rechnung r ON r.booking_id = k.booking_id\n\n    UNION ALL SELECT 30, 'C Angebote am Rechnungsdatum',\n           concat('b', right(k.booking_id::text, 5)),\n           coalesce(t.angebote_am_datum, 0)::numeric,\n           concat('datum ', coalesce(to_char(t.erster_rechnungstermin, 'YYYY-MM-DD'), '-'),\n                  ' / nummern ', left(coalesce(t.nummern, '-'), 120))\n    FROM kandidaten k\n    LEFT JOIN termin_treffer t ON t.booking_id = k.booking_id\n)\nSELECT 'S45' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "45000000-0000-4000-8000-000000004502",
+      "name": "S45 ERGEBNIS Buchungen ohne Angebot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S45 Manuell starten": {
+      "main": [[{"node": "S45 ERGEBNIS Buchungen ohne Angebot", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

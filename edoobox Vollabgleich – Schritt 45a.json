@@ -1,0 +1,37 @@
+{
+  "name": "S45a Produktive Termine abgrenzen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "45100000-0000-4000-8000-000000004501",
+      "name": "S45a Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Verwaltungsschritt: pflegbare Terminausnahmen und produktive Sicht.\nCREATE TABLE IF NOT EXISTS kursplan.termin_ausnahme (\n    offer_id text PRIMARY KEY REFERENCES edoobox_raw.offer(offer_id),\n    auswertung_ausschliessen boolean NOT NULL DEFAULT true,\n    grund text NOT NULL,\n    erfasst_am timestamptz NOT NULL DEFAULT now()\n);\n\nINSERT INTO kursplan.termin_ausnahme (offer_id, auswertung_ausschliessen, grund)\nSELECT o.offer_id, true,\n       CASE WHEN o.offer_number LIKE 'test%' THEN 'Testtermin'\n            WHEN o.offer_number = 'office-5er-paket' THEN 'Kontingentkauf, kein Kurstermin'\n            ELSE 'Fehl- oder Testtermin laut manueller Pruefung' END\nFROM edoobox_raw.offer o\nWHERE o.is_deleted IS NOT TRUE\n  AND (o.offer_number LIKE 'test%'\n       OR o.offer_number = 'office-5er-paket'\n       OR (o.offer_number = 'ppt-am-0325' AND o.date_start::date = date '2027-03-27'))\nON CONFLICT (offer_id) DO UPDATE SET\n    auswertung_ausschliessen = EXCLUDED.auswertung_ausschliessen,\n    grund = EXCLUDED.grund;\n\nCREATE OR REPLACE VIEW kursplan.v_termin_erloes_produktiv AS\nSELECT v.*\nFROM kursplan.v_termin_erloes v\nLEFT JOIN kursplan.termin_ausnahme a ON a.offer_id = v.offer_id\nWHERE coalesce(a.auswertung_ausschliessen, false) IS FALSE;\n\nCOMMENT ON TABLE kursplan.termin_ausnahme IS\n'Manuell gepflegte Angebote, die keine produktiven Kurstermine sind. Rohdaten bleiben erhalten.';\nCOMMENT ON VIEW kursplan.v_termin_erloes_produktiv IS\n'Produktive Teilmenge von v_termin_erloes ohne Testtermine, Kontingentkaeufe und bestaetigte Fehleintraege.';\n\nGRANT SELECT ON kursplan.termin_ausnahme, kursplan.v_termin_erloes_produktiv TO n8n_writer;\n\nWITH roh AS (\n    SELECT 10 AS ordnung, 'A Ausnahme' AS bereich,\n           concat(to_char(v.date_start, 'YYYY-MM-DD'), ' ', left(v.name, 42)) AS kennzahl,\n           coalesce(v.netto_gebucht, 0)::numeric AS wert,\n           concat(a.grund, ' / nummer ', v.offer_number) AS hinweis\n    FROM kursplan.termin_ausnahme a\n    JOIN kursplan.v_termin_erloes v ON v.offer_id = a.offer_id\n    WHERE a.auswertung_ausschliessen\n\n    UNION ALL SELECT 20, 'B Kontrolle', 'ausgeschlossene Termine',\n           count(*)::numeric, concat('netto ', round(sum(coalesce(v.netto_gebucht, 0)), 2))\n    FROM kursplan.termin_ausnahme a\n    JOIN kursplan.v_termin_erloes v ON v.offer_id = a.offer_id\n    WHERE a.auswertung_ausschliessen\n\n    UNION ALL SELECT 30, 'C Produktive Sicht', 'Termine',\n           count(*)::numeric, 'vollstaendige Historie, Erloes erst ab 2023'\n    FROM kursplan.v_termin_erloes_produktiv\n\n    UNION ALL SELECT 40, 'D Produktive Sicht', 'Netto ab 2023',\n           round(coalesce(sum(netto_gebucht), 0), 2),\n           'ohne ausgeschlossene Test- und Sondertermine'\n    FROM kursplan.v_termin_erloes_produktiv\n    WHERE date_start >= timestamp '2023-01-01'\n)\nSELECT 'S45a' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "45100000-0000-4000-8000-000000004502",
+      "name": "S45a ADMIN Produktive Termine",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S45a Manuell starten": {
+      "main": [[{"node": "S45a ADMIN Produktive Termine", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

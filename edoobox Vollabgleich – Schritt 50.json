@@ -1,0 +1,92 @@
+{
+  "name": "S50 Dates und Admin Feldbestand",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "50000000-0000-4000-8000-000000005001",
+      "name": "S50 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT booking_id\nFROM (\n    SELECT DISTINCT ON (b.offer_id) b.booking_id, b.booking_time\n    FROM edoobox_raw.booking b\n    JOIN kursplan.v_termin_erloes_produktiv t ON t.offer_id = b.offer_id\n    WHERE b.is_deleted = false\n      AND b.status = 'gebucht'\n      AND t.date_start >= timestamp '2023-01-01'\n    ORDER BY b.offer_id, b.booking_time DESC NULLS LAST\n) x\nORDER BY booking_time DESC NULLS LAST\nLIMIT 5;",
+        "options": {}
+      },
+      "id": "50000000-0000-4000-8000-000000005002",
+      "name": "S50 Buchungen auswaehlen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "50000000-0000-4000-8000-000000005003",
+      "name": "S50 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\nif (!token || !edid) throw new Error('Token oder edid fehlt');\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\nconst ids = $('S50 Buchungen auswaehlen').all().map(x => x.json.booking_id).filter(Boolean);\nconst geheim = /name|mail|email|phone|telefon|address|adresse|street|strasse|city|ort|zip|plz|note|bemerkung|password|token/i;\n\nfunction eintraege(v) {\n  if (v == null) return [];\n  if (Array.isArray(v)) return v;\n  if (typeof v === 'object') {\n    const vals = Object.values(v);\n    if (vals.length && vals.every(x => x && typeof x === 'object')) return vals;\n    return [v];\n  }\n  return [v];\n}\nfunction feldbestand(obj) {\n  if (!obj || typeof obj !== 'object') return `Werttyp ${typeof obj}`;\n  return Object.entries(obj).map(([k,v]) => {\n    if (geheim.test(k)) return `${k}=unterdrueckt`;\n    if (v == null) return `${k}=leer`;\n    if (Array.isArray(v)) return `${k}=Liste(${v.length})`;\n    if (typeof v === 'object') return `${k}=Objekt(${Object.keys(v).length})`;\n    return `${k}=${String(v).slice(0,80)}`;\n  }).join(' | ');\n}\n\nconst out = [];\nfor (const id of ids) {\n  const r = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://app1.edoobox.com/v2/booking/${encodeURIComponent(id)}/data`,\n    headers,\n    json: true,\n    returnFullResponse: true,\n    timeout: 60000,\n  });\n  const raw = r.body?.data;\n  const b = Array.isArray(raw) ? raw[0] : raw;\n  if (!b || typeof b !== 'object') continue;\n\n  const dates = eintraege(b.dates);\n  out.push({json:{schritt:'S50', buchung:id, bereich:'dates', eintraege:dates.length,\n    felder: dates.length ? feldbestand(dates[0]) : '-'}});\n\n  const adminKeys = Object.keys(b).filter(k => /^admin/i.test(k));\n  if (!adminKeys.length) {\n    out.push({json:{schritt:'S50', buchung:id, bereich:'admin*', eintraege:0, felder:'kein Top-Level-Bereich'}});\n  }\n  for (const key of adminKeys) {\n    const rows = eintraege(b[key]);\n    out.push({json:{schritt:'S50', buchung:id, bereich:key, eintraege:rows.length,\n      felder: rows.length ? feldbestand(rows[0]) : '-'}});\n  }\n}\nout.push({json:{schritt:'S50', buchung:'KONTROLLE', bereich:'API-Abrufe', eintraege:ids.length,\n  felder:'Nur Feldstruktur; Namen und Kontaktdaten unterdrueckt'}});\nreturn out;"
+      },
+      "id": "50000000-0000-4000-8000-000000005004",
+      "name": "S50 ERGEBNIS Dates Admin",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "S50 Manuell starten": {
+      "main": [[{"node": "S50 Buchungen auswaehlen", "type": "main", "index": 0}]]
+    },
+    "S50 Buchungen auswaehlen": {
+      "main": [[{"node": "S50 Token holen", "type": "main", "index": 0}]]
+    },
+    "S50 Token holen": {
+      "main": [[{"node": "S50 ERGEBNIS Dates Admin", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

@@ -1,0 +1,37 @@
+{
+  "name": "S39 Plaetze je Zahlungsvorgang pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "39000000-0000-4000-8000-000000003901",
+      "name": "S39 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Prueft Teilnehmer je Zahlungsvorgang, damit Preis- und Teilnehmerbuchungen nicht doppelt zaehlen. Nur lesend.\nWITH pos AS (\n    SELECT p.booking_id,\n           coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)') AS kat,\n           coalesce(p.quantity, 0) AS menge,\n           CASE\n             WHEN p.pricecategory_name ~* '(bis zu|max\\\\.?|f\\\\.|fuer|für)[^0-9]{0,12}[0-9]+[[:space:]]*person'\n             THEN (substring(p.pricecategory_name from '(?i)(?:bis zu|max\\\\.?|f\\\\.|fuer|für)[^0-9]{0,12}([0-9]+)[[:space:]]*person'))::int\n           END AS basis_n,\n           CASE\n             WHEN p.pricecategory_name ~* '[0-9]+[[:space:]]*(personen|person|teiln|teilnehmer)'\n             THEN (substring(p.pricecategory_name from '(?i)([0-9]+)[[:space:]]*(?:personen|person|teiln|teilnehmer)'))::int\n           END AS text_n,\n           (p.pricecategory_name ~* '(jede|je|pro)[[:space:]]+weitere|preis[^a-zA-ZäöüÄÖÜß]*für[^a-zA-ZäöüÄÖÜß]*jede[^a-zA-ZäöüÄÖÜß]*weitere') AS ist_zusatz\n    FROM edoobox_raw.booking_position p\n),\nje_buchung AS (\n    SELECT b.booking_id, b.offer_id, s.status, coalesce(s.netto, 0) AS netto,\n           max(pos.basis_n) AS basis_n,\n           max(pos.text_n) AS text_n,\n           coalesce(sum(pos.menge) FILTER (WHERE pos.ist_zusatz), 0) AS zusatz_n,\n           coalesce(sum(pos.menge) FILTER (WHERE pos.kat = 'Inklusive'), 0) AS inklusive_n,\n           bool_or(pos.kat = 'Inklusive') AS hat_inklusive\n    FROM edoobox_raw.booking b\n    JOIN kursplan.v_buchung_steuer s ON s.booking_id = b.booking_id\n    LEFT JOIN pos ON pos.booking_id = b.booking_id\n    GROUP BY b.booking_id, b.offer_id, s.status, 4\n),\nkopf AS (\n    SELECT j.*,\n           CASE\n             WHEN basis_n IS NOT NULL THEN basis_n + zusatz_n\n             WHEN text_n IS NOT NULL THEN text_n\n             WHEN hat_inklusive THEN 1 + inklusive_n + zusatz_n\n             ELSE 1\n           END AS gruppengroesse\n    FROM je_buchung j\n),\nbuchung_vorgang AS (\n    SELECT k.*,\n           coalesce(min(t.transaction_number), 'B:' || k.booking_id::text) AS vorgang\n    FROM kopf k\n    LEFT JOIN edoobox_raw.booking_transaction t ON t.booking_id = k.booking_id\n    GROUP BY k.booking_id, k.offer_id, k.status, k.netto, k.basis_n, k.text_n,\n             k.zusatz_n, k.inklusive_n, k.hat_inklusive, k.gruppengroesse\n),\nje_vorgang AS (\n    SELECT offer_id, vorgang,\n           count(*) FILTER (WHERE status = 'gebucht') AS buchungen,\n           coalesce(max(gruppengroesse) FILTER (WHERE status = 'gebucht'), 0) AS gruppengroesse,\n           greatest(count(*) FILTER (WHERE status = 'gebucht'),\n                    coalesce(max(gruppengroesse) FILTER (WHERE status = 'gebucht'), 0)) AS plaetze,\n           round(coalesce(sum(netto) FILTER (WHERE status = 'gebucht'), 0), 2) AS netto\n    FROM buchung_vorgang\n    GROUP BY offer_id, vorgang\n),\nje_termin AS (\n    SELECT o.offer_id, o.name, o.date_start, o.user_maximum,\n           sum(v.buchungen) AS buchungen,\n           sum(v.plaetze) AS plaetze,\n           round(sum(v.netto), 2) AS netto,\n           count(*) AS vorgaenge\n    FROM edoobox_raw.offer o\n    JOIN je_vorgang v ON v.offer_id = o.offer_id\n    WHERE o.is_deleted IS NOT TRUE\n    GROUP BY o.offer_id, o.name, o.date_start, o.user_maximum\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Vorgangsgroesse' AS bereich,\n           CASE\n             WHEN buchungen > 1 AND gruppengroesse > buchungen THEN 'gruppe groesser als buchungszahl'\n             WHEN buchungen > 1 AND gruppengroesse = buchungen THEN 'gruppe gleich buchungszahl'\n             WHEN buchungen > 1 THEN 'buchungszahl groesser als gruppe'\n             WHEN gruppengroesse > 1 THEN 'eine sammelbuchung'\n             ELSE 'eine einzelbuchung'\n           END AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('buchungen ', sum(buchungen), ' / plaetze ', sum(plaetze), ' / netto ', round(sum(netto), 2)) AS hinweis\n    FROM je_vorgang\n    WHERE buchungen > 0\n    GROUP BY 3\n\n    UNION ALL SELECT 20, 'B Ueberbuchung Vorgangsregel',\n           concat(to_char(date_start, 'YYYY-MM-DD'), ' ', left(name, 38)),\n           plaetze::numeric,\n           concat('hoechstzahl ', user_maximum, ' / buchungen ', buchungen,\n                  ' / vorgaenge ', vorgaenge, ' / netto ', netto)\n    FROM je_termin\n    WHERE user_maximum > 0 AND plaetze > user_maximum\n\n    UNION ALL SELECT 30, 'C Auslastung ab 2023',\n           CASE\n             WHEN user_maximum IS NULL OR user_maximum = 0 THEN 'ohne hoechstzahl'\n             WHEN plaetze::numeric / user_maximum > 1 THEN 'ueber 100 prozent'\n             WHEN plaetze::numeric / user_maximum >= 0.75 THEN '75 bis 100 prozent'\n             WHEN plaetze::numeric / user_maximum >= 0.5 THEN '50 bis 75 prozent'\n             WHEN plaetze::numeric / user_maximum >= 0.25 THEN '25 bis 50 prozent'\n             ELSE 'unter 25 prozent'\n           END,\n           count(*)::numeric,\n           concat('plaetze ', sum(plaetze), ' / netto ', round(sum(netto), 2))\n    FROM je_termin\n    WHERE date_start >= '2023-01-01' AND buchungen > 0\n    GROUP BY 3\n\n    UNION ALL SELECT 40, 'D Jahresmittel',\n           concat('jahr ', extract(year FROM date_start)::int),\n           round(avg(plaetze::numeric / user_maximum) * 100, 1),\n           concat('termine ', count(*), ' / plaetze ', sum(plaetze),\n                  ' / hoechstzahl ', sum(user_maximum), ' / netto ', round(sum(netto), 2))\n    FROM je_termin\n    WHERE user_maximum > 0 AND buchungen > 0\n    GROUP BY 3\n\n    UNION ALL SELECT 50, 'E Kontrolltermin',\n           concat(to_char(date_start, 'YYYY-MM-DD'), ' ', left(name, 38)),\n           plaetze::numeric,\n           concat('hoechstzahl ', user_maximum, ' / buchungen ', buchungen,\n                  ' / vorgaenge ', vorgaenge, ' / netto ', netto)\n    FROM je_termin\n    WHERE date_start IN ('2022-11-21', '2022-11-22', '2022-11-28', '2022-12-01',\n                         '2023-07-19', '2024-02-02', '2024-11-05', '2026-05-21')\n)\nSELECT 'S39' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, wert DESC, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "39000000-0000-4000-8000-000000003902",
+      "name": "S39 ERGEBNIS Vorgangsregel",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S39 Manuell starten": {
+      "main": [[{"node": "S39 ERGEBNIS Vorgangsregel", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

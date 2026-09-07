@@ -1,0 +1,193 @@
+{
+  "name": "S14 Detailabruf aller Buchungen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e0f9d7a1-a2b7-4dd4-af00-1da4b3a6a001",
+      "name": "S14 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Nur lesen. Die Spalte detail_synced_at wird vorher einmalig\n-- mit dem Verwaltungskonto ueber S14a angelegt.\nSELECT\n    count(*)                                         AS buchungen,\n    count(*) FILTER (WHERE detail_synced_at IS NULL) AS noch_offen\nFROM edoobox_raw.booking\nWHERE is_deleted = false;",
+        "options": {}
+      },
+      "id": "e0f9d7a1-a2b7-4dd4-af00-1da4b3a6a002",
+      "name": "S14 Ausgangslage pruefen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 8 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e0f9d7a1-a2b7-4dd4-af00-1da4b3a6a003",
+      "name": "S14 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Naechster Stapel. Liefert die Abfrage keine Zeile, endet der Ablauf\n-- von selbst, weil n8n Knoten ohne Eingang ueberspringt.\nSELECT booking_id\nFROM edoobox_raw.booking\nWHERE is_deleted = false\n  AND detail_synced_at IS NULL\nORDER BY booking_time DESC NULLS LAST\nLIMIT 200;",
+        "options": {}
+      },
+      "id": "e0f9d7a1-a2b7-4dd4-af00-1da4b3a6a004",
+      "name": "S14 Offene auswaehlen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        820,
+        300
+      ],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// Holt die Detailangaben eines Stapels von Buchungen.\n// Der Token stammt aus dem einmalig ausgefuehrten Knoten davor,\n// die Kennungen aus der Datenbankabfrage.\n\nconst auth = $('S14 Token holen').first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst kennungen = $input.all().map((z) => z.json.booking_id).filter(Boolean);\n\nif (kennungen.length === 0) {\n  return [];\n}\n\nfunction zahl(wert) {\n  if (wert === null || wert === undefined || wert === '') return null;\n  const n = Number(String(wert).replace(',', '.'));\n  return Number.isFinite(n) ? n : null;\n}\n\nasync function einzeln(kennung) {\n  const antwort = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://app1.edoobox.com/v2/booking/${encodeURIComponent(kennung)}/data`,\n    headers,\n    json: true,\n    returnFullResponse: true,\n    timeout: 60000,\n  });\n\n  if (antwort.statusCode !== 200) {\n    return { booking_id: String(kennung), fehler: `Status ${antwort.statusCode}` };\n  }\n\n  const roh = antwort.body?.data;\n  const b = Array.isArray(roh) ? roh[0] : roh && typeof roh === 'object' ? roh : {};\n\n  const waehrung =\n    (Array.isArray(b.transactions) && b.transactions[0]?.currency) || 'EUR';\n\n  // Tatsaechliche Teilnehmerzahl je Preiskategorie aus der Teilnehmerliste.\n  const je_kategorie = {};\n  for (const u of Array.isArray(b.users) ? b.users : []) {\n    const k = u?.pricecategory ? String(u.pricecategory) : null;\n    if (!k) continue;\n    je_kategorie[k] = (je_kategorie[k] ?? 0) + 1;\n  }\n\n  const positionen = Object.entries(b.pricecategory ?? {}).map(([kategorieId, k]) => {\n    const id = String(k?.id ?? kategorieId);\n    const gemeldet = Number.isFinite(Number(k?.count)) ? Number(k.count) : null;\n    return {\n      pricecategory_id: id,\n      pricecategory_name: String(k?.name ?? 'ohne Bezeichnung'),\n      amount_net: zahl(k?.amount) ?? 0,\n      currency: String(waehrung).slice(0, 3).toUpperCase(),\n      quantity: je_kategorie[id] ?? gemeldet ?? 1,\n      is_default: k?.default === true,\n    };\n  });\n\n  const vorgaenge = (Array.isArray(b.transactions) ? b.transactions : [])\n    .filter((t) => t && t.id)\n    .map((t) => ({\n      transaction_id: String(t.id),\n      transaction_number: t.number ? String(t.number) : null,\n      amount: zahl(t.amount),\n      currency: String(t.currency ?? waehrung).slice(0, 3).toUpperCase(),\n    }));\n\n  return {\n    booking_id: String(kennung),\n    offer_id: b.offer ? String(b.offer) : null,\n    promotion_id: b.promotion ? String(b.promotion) : null,\n    is_b2b: b.invoice_address?.b2b === true,\n    is_multi_offer: b.multi_offer === true,\n    teilnehmer: Array.isArray(b.users) ? b.users.length : 0,\n    positionen,\n    vorgaenge,\n  };\n}\n\nconst holen = einzeln.bind(this);\n\n// In kleinen Gruppen parallel abrufen, damit der Stapel zuegig durchlaeuft,\n// ohne die Schnittstelle zu ueberfahren.\nconst gleichzeitig = 5;\nconst saetze = [];\nconst fehler = [];\n\nfor (let i = 0; i < kennungen.length; i += gleichzeitig) {\n  const gruppe = kennungen.slice(i, i + gleichzeitig);\n  const ergebnisse = await Promise.all(gruppe.map((k) => holen(k)));\n  for (const e of ergebnisse) {\n    if (e.fehler) fehler.push(`${e.booking_id}: ${e.fehler}`);\n    else saetze.push(e);\n  }\n}\n\nreturn [\n  {\n    json: {\n      schritt: 'S14',\n      stapel: kennungen.length,\n      erfolgreich: saetze.length,\n      fehlerhaft: fehler.length,\n      fehlerliste: fehler.slice(0, 10),\n      positionen_gesamt: saetze.reduce((s, x) => s + x.positionen.length, 0),\n      vorgaenge_gesamt: saetze.reduce((s, x) => s + x.vorgaenge.length, 0),\n      alleKennungenJson: JSON.stringify(kennungen.map((k) => ({ booking_id: String(k) }))),\n      datenJson: JSON.stringify(saetze),\n    },\n  },\n];\n"
+      },
+      "id": "e0f9d7a1-a2b7-4dd4-af00-1da4b3a6a005",
+      "name": "S14 Details holen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=WITH stapel AS (\n    SELECT booking_id\n    FROM jsonb_to_recordset($edoIds${{ $json.alleKennungenJson }}$edoIds$::jsonb)\n         AS s(booking_id text)\n),\neingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoJson${{ $json.datenJson }}$edoJson$::jsonb)\n         AS t(\n            booking_id     text,\n            offer_id       text,\n            promotion_id   text,\n            is_b2b         boolean,\n            is_multi_offer boolean,\n            teilnehmer     integer,\n            positionen     jsonb,\n            vorgaenge      jsonb\n         )\n),\nkopf AS (\n    UPDATE edoobox_raw.booking b\n    SET is_b2b         = e.is_b2b,\n        is_multi_offer = e.is_multi_offer,\n        offer_id       = coalesce(e.offer_id, b.offer_id),\n        last_synced_at = now()\n    FROM eingang e\n    WHERE b.booking_id = e.booking_id\n    RETURNING b.booking_id\n),\npositionen AS (\n    SELECT e.booking_id, p.*\n    FROM eingang e\n    CROSS JOIN LATERAL jsonb_to_recordset(e.positionen)\n         AS p(\n            pricecategory_id   text,\n            pricecategory_name text,\n            amount_net         numeric(12,2),\n            currency           char(3),\n            quantity           integer,\n            is_default         boolean\n         )\n),\npositionen_geschrieben AS (\n    INSERT INTO edoobox_raw.booking_position AS bp (\n        booking_id, pricecategory_id, pricecategory_name,\n        amount_net, currency, quantity, is_default, last_synced_at\n    )\n    SELECT booking_id, pricecategory_id, pricecategory_name,\n           amount_net, currency, quantity, is_default, now()\n    FROM positionen\n    ON CONFLICT (booking_id, pricecategory_id) DO UPDATE\n    SET pricecategory_name = EXCLUDED.pricecategory_name,\n        amount_net         = EXCLUDED.amount_net,\n        currency           = EXCLUDED.currency,\n        quantity           = EXCLUDED.quantity,\n        is_default         = EXCLUDED.is_default,\n        last_synced_at     = now()\n    RETURNING bp.position_id\n),\nvorgaenge AS (\n    SELECT e.booking_id, v.*\n    FROM eingang e\n    CROSS JOIN LATERAL jsonb_to_recordset(e.vorgaenge)\n         AS v(\n            transaction_id     text,\n            transaction_number text,\n            amount             numeric(12,2),\n            currency           char(3)\n         )\n),\nvorgaenge_geschrieben AS (\n    INSERT INTO edoobox_raw.booking_transaction AS bt (\n        transaction_id, booking_id, transaction_number,\n        amount, currency, last_synced_at\n    )\n    SELECT transaction_id, booking_id, transaction_number,\n           amount, currency, now()\n    FROM vorgaenge\n    ON CONFLICT (transaction_id) DO UPDATE\n    SET booking_id         = EXCLUDED.booking_id,\n        transaction_number = EXCLUDED.transaction_number,\n        amount             = EXCLUDED.amount,\n        currency           = EXCLUDED.currency,\n        last_synced_at     = now()\n    RETURNING bt.transaction_id\n),\n-- Der Merker wird fuer den gesamten Stapel gesetzt, auch fuer Buchungen\n-- ohne Preiskategorie. Sonst liefe die Schleife endlos.\nabgehakt AS (\n    UPDATE edoobox_raw.booking b\n    SET detail_synced_at = now()\n    FROM stapel s\n    WHERE b.booking_id = s.booking_id\n    RETURNING b.booking_id\n)\nSELECT\n    (SELECT count(*) FROM abgehakt)               AS stapel_abgehakt,\n    (SELECT count(*) FROM kopf)                   AS kopfsaetze,\n    (SELECT count(*) FROM positionen_geschrieben) AS positionen,\n    (SELECT count(*) FROM vorgaenge_geschrieben)  AS vorgaenge,\n    (SELECT count(*) FROM edoobox_raw.booking\n      WHERE is_deleted = false AND detail_synced_at IS NULL) AS noch_offen;",
+        "options": {}
+      },
+      "id": "e0f9d7a1-a2b7-4dd4-af00-1da4b3a6a006",
+      "name": "S14 Details speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1260,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S14 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S14 Ausgangslage pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S14 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S14 Offene auswaehlen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S14 Offene auswaehlen": {
+      "main": [
+        [
+          {
+            "node": "S14 Details holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S14 Details holen": {
+      "main": [
+        [
+          {
+            "node": "S14 Details speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S14 Details speichern": {
+      "main": [
+        [
+          {
+            "node": "S14 Offene auswaehlen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S14 Ausgangslage pruefen": {
+      "main": [
+        [
+          {
+            "node": "S14 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "executionTimeout": 3600
+  },
+  "active": false,
+  "tags": []
+}

@@ -1,0 +1,53 @@
+{
+  "name": "S62 Individuelle Trainerkosten und vollstaendiger DB I",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "62000000-0000-4000-8000-000000006201",
+      "name": "S62 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- S62: bestaetigte individuelle Trainerkosten je Gesamtangebot eintragen.\n-- Wiederholbar durch ON CONFLICT; jede Ausnahme bleibt nachtraeglich aenderbar.\n\nINSERT INTO kursplan.angebot_trainer_kostenausnahme\n    (offer_id, admin_id, ist_kostenrelevant, tarif,\n     trainerkosten_override, bemerkung, geaendert_am)\nVALUES\n    ('offer_ddebca578c31_7739529635', 'admin_bf7d1a24a322_264000980',\n     true, NULL, 370.00, 'Coaching individuell; bestaetigt S62', now()),\n    ('offer_7b25c63764f6_7769455625', 'admin_bf7d1a24a322_264000980',\n     true, NULL, 250.00, 'Coaching individuell; bestaetigt S62', now()),\n    ('offer_53f52e5fa9bb_8458225815', 'admin_651346162c10_232739495',\n     true, NULL, 800.00, 'Coaching individuell; bestaetigt S62', now()),\n    ('offer_faab2a0dac45_8463040865', 'admin_5e36a8d9b6f0_238626575',\n     true, NULL, 170.00, 'Coaching individuell; bestaetigt S62', now()),\n    ('offer_f11583b82c93_8821407775', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 340.00, 'DM Preis nach Absprache; bestaetigt S62', now()),\n    ('offer_15f16d0c689c_8577039445', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 340.00, 'DM Preis nach Absprache; bestaetigt S62', now()),\n    ('offer_a5d791dcfc54_8577048530', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 340.00, 'DM Preis nach Absprache; bestaetigt S62', now()),\n    ('offer_ba2aa0ca1537_8967558170', 'admin_bf7d1a24a322_264000980',\n     true, NULL, 150.00, 'Coaching individuell; bestaetigt S62', now()),\n    ('offer_a7427a89d3a8_8958491340', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 250.00, 'DM Preis nach Absprache; bestaetigt S62', now()),\n    ('offer_1195f454006a_9315531840', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 240.00, 'DM und Coaching individuell; bestaetigt S62', now()),\n    ('offer_9ab42b0dd1c4_8958500425', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 300.00, 'DM Preis nach Absprache; bestaetigt S62', now()),\n    ('offer_98180f3757b1_9315568180', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 0.00, 'DM Preis nach Absprache; bestaetigt S62', now()),\n    ('offer_3c7050ac4089_9315595435', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 750.00, 'DM Preis nach Absprache; bestaetigt S62', now()),\n    ('offer_553f1c836253_9315622690', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 780.00, 'DM Preis nach Absprache; bestaetigt S62', now()),\n    ('offer_04d4e3819dea_9804586475', 'admin_8d26f6655a4b_294635600',\n     true, NULL, 560.00, 'Coaching individuell; bestaetigt S62', now()),\n    ('offer_52bc723bf214_9391691395', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 900.00, 'DM Preis nach Absprache; bestaetigt S62', now()),\n    ('offer_b5d8b6c5d0ac_9739065455', 'admin_b67c6ac2e907_387357110',\n     true, NULL, 700.00, 'DM Preis nach Absprache; bestaetigt S62', now()),\n    ('offer_b589b28b1922_10150625040', 'admin_0d94965c4440_350035930',\n     true, NULL, 252.00, 'Coaching individuell; bestaetigt S62', now())\nON CONFLICT (offer_id, admin_id) DO UPDATE\nSET ist_kostenrelevant = EXCLUDED.ist_kostenrelevant,\n    tarif = NULL,\n    trainerkosten_override = EXCLUDED.trainerkosten_override,\n    bemerkung = EXCLUDED.bemerkung,\n    geaendert_am = now();\n\nWITH eingetragen AS (\n    SELECT\n        count(*) AS ausnahmen,\n        round(sum(trainerkosten_override), 2) AS trainerkosten\n    FROM kursplan.angebot_trainer_kostenausnahme\n    WHERE bemerkung LIKE '%bestaetigt S62%'\n),\noffen AS (\n    SELECT\n        count(*) AS angebote,\n        round(sum(coalesce(netto_gebucht, 0)), 2) AS netto\n    FROM kursplan.v_termin_db1\n    WHERE date_start >= timestamp '2023-01-01'\n      AND kosten_aktiv\n      AND kostenkonfiguration_fehlt\n),\ndb AS (\n    SELECT\n        count(*) AS angebote,\n        count(*) FILTER (WHERE kostenphase = 'ist') AS angebote_ist,\n        count(*) FILTER (WHERE kostenphase = 'prognose') AS angebote_prognose,\n        round(sum(netto_gebucht), 2) AS netto,\n        round(sum(trainerkosten), 2) AS trainerkosten,\n        round(sum(plattformkosten), 2) AS plattformkosten,\n        round(sum(vor_nachbereitungskosten), 2) AS vor_nachbereitungskosten,\n        round(sum(direkte_kosten), 2) AS direkte_kosten,\n        round(sum(db1), 2) AS db1\n    FROM kursplan.v_termin_db1\n    WHERE date_start >= timestamp '2023-01-01'\n      AND NOT kostenkonfiguration_fehlt\n)\nSELECT\n    'S62'::text AS schritt,\n    'A Ausnahmen'::text AS bereich,\n    'individuelle Trainerkosten'::text AS kennzahl,\n    e.ausnahmen::numeric AS wert,\n    concat('Trainerkosten ', e.trainerkosten) AS hinweis\nFROM eingetragen e\n\nUNION ALL\n\nSELECT\n    'S62',\n    'B Kontrolle',\n    'Kostenkonfiguration weiterhin offen',\n    o.angebote,\n    concat('Netto ', coalesce(o.netto, 0))\nFROM offen o\n\nUNION ALL\n\nSELECT\n    'S62',\n    'C DB I',\n    'vollstaendig berechenbare Angebote',\n    d.angebote,\n    concat(\n        'Ist ', d.angebote_ist,\n        ' / Prognose ', d.angebote_prognose,\n        ' / Netto ', d.netto,\n        ' / Trainer ', d.trainerkosten,\n        ' / Plattform ', d.plattformkosten,\n        ' / Vor-Nachbereitung ', d.vor_nachbereitungskosten,\n        ' / direkte Kosten ', d.direkte_kosten,\n        ' / DB I ', d.db1\n    )\nFROM db d\n\nORDER BY bereich;\n"
+      },
+      "id": "62000000-0000-4000-8000-000000006202",
+      "name": "S62 ADMIN Ausnahmen eintragen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        610,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S62 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S62 ADMIN Ausnahmen eintragen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "62000000-0000-4000-8000-000000006200",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

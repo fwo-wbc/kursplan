@@ -1,0 +1,51 @@
+{
+  "name": "S26a Rechnungstabellen anlegen (Administration)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "26a00000-0000-4000-8000-00000026a001",
+      "name": "S26a Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Rechnungsspiegelung fuer edoobox. Version 1.0\n-- Auszufuehren mit dem Verwaltungskonto kursplan_user.\n-- Quelle: /v2/invoice/list und /v2/invoice/{id}/data\n\n-- ---------------------------------------------------------------\n-- Rechnungskopf\n-- ---------------------------------------------------------------\nCREATE TABLE IF NOT EXISTS edoobox_raw.invoice (\n    invoice_id            text PRIMARY KEY,\n    invoice_number        text,\n    user_ref              text,                 -- md5 der rohen Teilnehmerkennung\n    status                integer,              -- 1 offen, 2 bezahlt, 3 storniert\n    status_text           text,\n    currency              char(3)     NOT NULL DEFAULT 'EUR',\n\n    amount                numeric(12,2),        -- Betrag aus der Liste\n    amount_pay            numeric(12,2),        -- tatsaechlich gezahlt\n    line_total            numeric(12,2),        -- lineTotalAmount\n    tax_basis_total       numeric(12,2),        -- taxBasisTotalAmount\n    tax_total             numeric(12,2),        -- taxTotalAmount\n    grand_total           numeric(12,2),        -- grandTotalAmount\n    due_payable           numeric(12,2),        -- duePayableAmount\n    prepaid_total         numeric(12,2),        -- totalPrepaidAmount\n    allowance_total       numeric(12,2),        -- allowanceTotalAmount\n    charge_total          numeric(12,2),        -- chargeTotalAmount\n\n    date_create           timestamptz,\n    date_pay              timestamptz,\n    date_payuntil         timestamptz,\n    date_cancelled        timestamptz,\n    offer_start_date      timestamptz,\n\n    address_country       text,\n    address_postcode      text,\n    buyer_reference       text,\n    language              text,\n\n    payload               jsonb,\n    first_seen_at         timestamptz NOT NULL DEFAULT now(),\n    last_synced_at        timestamptz NOT NULL DEFAULT now(),\n    last_changed_at       timestamptz NOT NULL DEFAULT now(),\n    payload_hash          text,\n    is_deleted            boolean     NOT NULL DEFAULT false\n);\n\nCOMMENT ON TABLE  edoobox_raw.invoice IS 'Rechnungskoepfe aus edoobox, Abbild ohne eigene Logik';\nCOMMENT ON COLUMN edoobox_raw.invoice.user_ref IS 'md5 der Kennung aus invoice.user, passt zu booking.user_ref';\nCOMMENT ON COLUMN edoobox_raw.invoice.tax_basis_total IS 'Bemessungsgrundlage, Netto';\n\nCREATE INDEX IF NOT EXISTS invoice_user_idx        ON edoobox_raw.invoice (user_ref);\nCREATE INDEX IF NOT EXISTS invoice_create_idx      ON edoobox_raw.invoice (date_create);\nCREATE INDEX IF NOT EXISTS invoice_status_idx      ON edoobox_raw.invoice (status);\nCREATE INDEX IF NOT EXISTS invoice_number_idx      ON edoobox_raw.invoice (invoice_number);\n\n-- ---------------------------------------------------------------\n-- Rechnungsposten aus items.contained\n-- Enthaelt den harten Verweis auf den Zahlungsvorgang.\n-- ---------------------------------------------------------------\nCREATE TABLE IF NOT EXISTS edoobox_raw.invoice_item (\n    invoice_id            text        NOT NULL\n                          REFERENCES edoobox_raw.invoice (invoice_id) ON DELETE CASCADE,\n    item_key              text        NOT NULL,     -- Schluessel aus items.contained\n    item_type             text,                     -- t_booking, t_manualtrans\n    transaction_id        text,                     -- transaction_… , Bruecke zur Buchung\n    transaction_number    text,\n    description           text,\n    amount                numeric(12,2),\n    vat_percent           numeric(5,2),             -- 0, 16, 19, 25\n    vat_ref               text,\n    promotion_name        text,\n    promotion_amount      numeric(12,2),\n    promotion_vat_percent numeric(5,2),\n    pricecategory_count   integer,\n    last_synced_at        timestamptz NOT NULL DEFAULT now(),\n    PRIMARY KEY (invoice_id, item_key)\n);\n\nCOMMENT ON COLUMN edoobox_raw.invoice_item.transaction_id IS 'Verweis auf edoobox_raw.booking_transaction, ohne Fremdschluessel weil Rechnungen aelter sein koennen';\n\nCREATE INDEX IF NOT EXISTS invoice_item_trans_idx  ON edoobox_raw.invoice_item (transaction_id);\nCREATE INDEX IF NOT EXISTS invoice_item_type_idx   ON edoobox_raw.invoice_item (item_type);\nCREATE INDEX IF NOT EXISTS invoice_item_vat_idx    ON edoobox_raw.invoice_item (vat_percent);\n\n-- ---------------------------------------------------------------\n-- Gedruckte Rechnungszeilen aus invoice_data.items\n-- ---------------------------------------------------------------\nCREATE TABLE IF NOT EXISTS edoobox_raw.invoice_line (\n    invoice_id            text        NOT NULL\n                          REFERENCES edoobox_raw.invoice (invoice_id) ON DELETE CASCADE,\n    position              integer     NOT NULL,\n    quantity              numeric(10,2),\n    price_net             numeric(12,2),\n    price_net_summation   numeric(12,2),\n    vat_type              text,\n    vat_percent           numeric(5,2),\n    transaction_number    text,\n    details               text,\n    last_synced_at        timestamptz NOT NULL DEFAULT now(),\n    PRIMARY KEY (invoice_id, position)\n);\n\nCREATE INDEX IF NOT EXISTS invoice_line_transnr_idx ON edoobox_raw.invoice_line (transaction_number);\n\n-- ---------------------------------------------------------------\n-- Zahlungen\n-- ---------------------------------------------------------------\nCREATE TABLE IF NOT EXISTS edoobox_raw.invoice_payment (\n    pay_id                text PRIMARY KEY,\n    invoice_id            text        NOT NULL\n                          REFERENCES edoobox_raw.invoice (invoice_id) ON DELETE CASCADE,\n    amount                numeric(12,2),\n    currency              char(3),\n    status                integer,\n    date_pay              timestamptz,\n    system                text,\n    system_id             text,\n    last_synced_at        timestamptz NOT NULL DEFAULT now()\n);\n\nCREATE INDEX IF NOT EXISTS invoice_payment_inv_idx ON edoobox_raw.invoice_payment (invoice_id);\nCREATE INDEX IF NOT EXISTS invoice_payment_sys_idx ON edoobox_raw.invoice_payment (system_id);\n\n-- ---------------------------------------------------------------\n-- Belege und Gutschriften\n-- ---------------------------------------------------------------\nCREATE TABLE IF NOT EXISTS edoobox_raw.invoice_receipt (\n    receipt_id            text PRIMARY KEY,\n    invoice_id            text        NOT NULL\n                          REFERENCES edoobox_raw.invoice (invoice_id) ON DELETE CASCADE,\n    receipt_number        text,\n    amount                numeric(12,2),\n    currency              char(3),\n    date_create           timestamptz,\n    last_synced_at        timestamptz NOT NULL DEFAULT now()\n);\n\nCREATE INDEX IF NOT EXISTS invoice_receipt_inv_idx ON edoobox_raw.invoice_receipt (invoice_id);\n\n-- ---------------------------------------------------------------\n-- Rechte fuer das Schreibkonto\n-- ---------------------------------------------------------------\nGRANT SELECT, INSERT, UPDATE, DELETE ON\n    edoobox_raw.invoice,\n    edoobox_raw.invoice_item,\n    edoobox_raw.invoice_line,\n    edoobox_raw.invoice_payment,\n    edoobox_raw.invoice_receipt\nTO n8n_writer;\n\nSELECT\n    (SELECT count(*) FROM information_schema.tables\n      WHERE table_schema = 'edoobox_raw'\n        AND table_name IN ('invoice','invoice_item','invoice_line','invoice_payment','invoice_receipt')\n    ) AS tabellen_vorhanden,\n    (SELECT count(*) FROM information_schema.columns\n      WHERE table_schema = 'edoobox_raw' AND table_name = 'invoice') AS spalten_invoice;\n",
+        "options": {}
+      },
+      "id": "26a00000-0000-4000-8000-00000026a002",
+      "name": "S26a ERGEBNIS Tabellen anlegen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S26a Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S26a ERGEBNIS Tabellen anlegen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

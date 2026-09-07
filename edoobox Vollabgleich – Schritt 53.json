@@ -1,0 +1,80 @@
+{
+  "name": "S53 Mehrfachtrainer pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "53000000-0000-4000-8000-000000005301",
+      "name": "S53 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "53000000-0000-4000-8000-000000005302",
+      "name": "S53 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Untersucht ausschliesslich Datumszeilen mit mehreren leader-Eintraegen.\n// Aus Administratoren werden nur ID, Vorname, Nachname und Kurzzeichen genutzt.\n// Kontakt-, Adress- und Teilnehmerdaten werden nicht ausgegeben.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\nif (!token || !edid) throw new Error('Token oder edid fehlt.');\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\nconst basis = 'https://app1.edoobox.com/v2';\n\nfunction rowsAus(body) {\n  const d = body?.data;\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') return Object.values(d);\n  return [];\n}\n\nasync function holeAlle(pfad) {\n  const alle = [];\n  const reply = 2000;\n  let start = 0;\n  let total = null;\n  for (let seite = 1; seite <= 20; seite += 1) {\n    const a = await this.helpers.httpRequest({\n      method: 'GET',\n      url: basis + pfad,\n      headers,\n      qs: { 'limit[start]': start, 'limit[reply]': reply },\n      json: true,\n      returnFullResponse: true,\n      timeout: 60000,\n      ignoreHttpStatusErrors: true,\n    });\n    if (!(a.statusCode >= 200 && a.statusCode < 300)) {\n      throw new Error(`${pfad}: HTTP ${a.statusCode}`);\n    }\n    const rows = rowsAus(a.body);\n    if (total === null && a.body?.limit?.total !== undefined) total = Number(a.body.limit.total);\n    alle.push(...rows);\n    start += rows.length;\n    if (rows.length === 0 || rows.length < reply || (total !== null && start >= total)) break;\n  }\n  if (total !== null && alle.length !== total) {\n    throw new Error(`${pfad}: unvollstaendig, gemeldet ${total}, gelesen ${alle.length}`);\n  }\n  return alle;\n}\n\nconst admins = await holeAlle.call(this, '/admin/list');\nconst offers = await holeAlle.call(this, '/offer/list');\nconst dates = await holeAlle.call(this, '/date/list');\n\nconst adminNachId = new Map(admins.map(a => [String(a.id), a]));\nconst offerNachId = new Map(offers.map(o => [String(o.id), o]));\nconst mehrfach = dates.filter(d => Array.isArray(d.leader) && d.leader.length > 1);\n\nfunction trainerText(id) {\n  const a = adminNachId.get(String(id));\n  if (!a) return `${id} (historisch oder nicht mehr vorhanden)`;\n  const name = [a.first_name, a.last_name].filter(Boolean).join(' ').trim();\n  const kuerzel = a.shortcut ? ` [${a.shortcut}]` : '';\n  return `${name || '(ohne Namen)'}${kuerzel} (${id})`;\n}\n\nconst ausgabe = mehrfach\n  .sort((a, b) => String(a.date_start).localeCompare(String(b.date_start)))\n  .map(d => {\n    const roh = d.leader.map(String);\n    const eindeutig = [...new Set(roh)];\n    const o = offerNachId.get(String(d.offer));\n    return {\n      json: {\n        schritt: 'S53',\n        datum_id: d.id,\n        beginn: d.date_start,\n        ende: d.date_end,\n        angebot_id: d.offer,\n        kursnummer: o?.number ?? '-',\n        angebot: o?.name ?? '(Angebot nicht gefunden)',\n        leader_eintraege: roh.length,\n        verschiedene_trainer: eindeutig.length,\n        trainer: eindeutig.map(trainerText).join(' / '),\n        bewertung: eindeutig.length === 1\n          ? 'Doppelte identische Trainerkennung'\n          : 'Mehrere unterschiedliche Trainer',\n      },\n    };\n  });\n\nconst verschiedeneAngebote = new Set(mehrfach.map(d => String(d.offer))).size;\nconst echteMehrfach = ausgabe.filter(x => x.json.verschiedene_trainer > 1).length;\nconst doppelte = ausgabe.filter(x => x.json.verschiedene_trainer === 1).length;\n\nausgabe.push({\n  json: {\n    schritt: 'S53 KONTROLLE',\n    datum_id: '-',\n    beginn: '-',\n    ende: '-',\n    angebot_id: '-',\n    kursnummer: '-',\n    angebot: `${mehrfach.length} Datumszeilen in ${verschiedeneAngebote} Angeboten`,\n    leader_eintraege: mehrfach.reduce((s, d) => s + d.leader.length, 0),\n    verschiedene_trainer: null,\n    trainer: '-',\n    bewertung: `${echteMehrfach} echte Mehrfachzuordnungen / ${doppelte} doppelte identische Kennungen`,\n  },\n});\n\nreturn ausgabe;"
+      },
+      "id": "53000000-0000-4000-8000-000000005303",
+      "name": "S53 ERGEBNIS Mehrfachtrainer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300]
+    }
+  ],
+  "connections": {
+    "S53 Manuell starten": {
+      "main": [[{"node": "S53 Token holen", "type": "main", "index": 0}]]
+    },
+    "S53 Token holen": {
+      "main": [[{"node": "S53 ERGEBNIS Mehrfachtrainer", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "53000000-0000-4000-8000-000000005399",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

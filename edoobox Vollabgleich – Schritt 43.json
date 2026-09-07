@@ -1,0 +1,37 @@
+{
+  "name": "S43 Regelwidersprueche pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "43000000-0000-4000-8000-000000004301",
+      "name": "S43 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Prueft Kategorien, bei denen Name und Betrag widersprechen. Nur lesend.\nWITH eingestuft AS (\n    SELECT p.position_id,\n           coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)') AS kat,\n           coalesce(p.amount_net, 0) AS betrag,\n           coalesce(p.quantity, 0) AS menge,\n           e.ist_erloes, e.ist_teilnehmer, e.quelle\n    FROM edoobox_raw.booking_position p\n    CROSS JOIN LATERAL kursplan.einstufung(p.pricecategory_name, p.amount_net) e\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Betrag trotz Nichterloesregel' AS bereich,\n           kat AS kennzahl, count(*)::numeric AS wert,\n           concat('netto ', round(sum(betrag), 2), ' / quelle ', min(quelle),\n                  ' / menge ', sum(menge)) AS hinweis\n    FROM eingestuft\n    WHERE betrag <> 0 AND ist_erloes IS FALSE\n    GROUP BY 3\n\n    UNION ALL SELECT 20, 'B Ungeklaert mit Betrag', kat, count(*)::numeric,\n           concat('netto ', round(sum(betrag), 2), ' / menge ', sum(menge))\n    FROM eingestuft\n    WHERE betrag <> 0 AND ist_erloes IS NULL\n    GROUP BY 3\n\n    UNION ALL SELECT 30, 'C Nullbetrag ohne Regel', kat, count(*)::numeric,\n           concat('menge ', sum(menge), ' / quelle ', min(quelle))\n    FROM eingestuft\n    WHERE betrag = 0 AND quelle = 'betrag ist null'\n    GROUP BY 3\n)\nSELECT 'S43' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, wert DESC, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "43000000-0000-4000-8000-000000004302",
+      "name": "S43 ERGEBNIS Regelwidersprueche",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S43 Manuell starten": {
+      "main": [[{"node": "S43 ERGEBNIS Regelwidersprueche", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

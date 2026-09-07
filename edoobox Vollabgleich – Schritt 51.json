@@ -1,0 +1,96 @@
+{
+  "name": "S51 Vollstaendige edoobox Ressourceninventur",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "51000000-0000-4000-8000-000000005101",
+      "name": "S51 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "51000000-0000-4000-8000-000000005102",
+      "name": "S51 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vollstaendige, rein lesende Strukturinventur der zwoelf im\n// edoobox-Schaubild genannten Ressourcen. Es werden niemals Feldwerte,\n// Namen, E-Mail-Adressen oder andere Personenangaben ausgegeben.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst basis = 'https://app1.edoobox.com/v2';\nconst ressourcen = [\n  { name: 'edo_admins',          pfade: ['/admin/list', '/admins/list', '/administrator/list'] },\n  { name: 'Vat',                 pfade: ['/vat/list', '/vats/list'] },\n  { name: 'Countries',           pfade: ['/country/list', '/countries/list'] },\n  { name: 'edo_categories',      pfade: ['/category/list', '/categories/list'] },\n  { name: 'edo_offers',          pfade: ['/offer/list', '/offers/list'] },\n  { name: 'edo_users',           pfade: ['/user/list', '/users/list'] },\n  { name: 'edo_dates',           pfade: ['/date/list', '/dates/list', '/module/list', '/modules/list'] },\n  { name: 'edo_bookings',        pfade: ['/booking/list', '/bookings/list'] },\n  { name: 'edo_pricecategories', pfade: ['/pricecategory/list', '/pricecategories/list'] },\n  { name: 'edo_attendances',     pfade: ['/attendance/list', '/attendances/list'] },\n  { name: 'edo_invoices',        pfade: ['/invoice/list', '/invoices/list'] },\n  { name: 'edo_transactions',    pfade: ['/transaction/list', '/transactions/list'] },\n];\n\nconst relation = /(^|\\.)(offer|offers|user|users|admin|admins|participant|participants|date|dates|booking|bookings|invoice|invoices|transaction|transactions|pay|paytrans|country|category|vat|number|permission)(\\[\\])?$/i;\n\nfunction typ(v) {\n  if (v === null) return 'null';\n  if (Array.isArray(v)) return 'array';\n  return typeof v;\n}\n\nfunction siehtWieIdAus(k) {\n  return /^(booking|offer|user|admin|date|invoice|transaction|attendance|category|pricecategory)_[a-z0-9]+(?:_[a-z0-9-]+)?$/i.test(k)\n    || /^[a-f0-9]{16,}$/i.test(k)\n    || /^\\d{7,}$/.test(k);\n}\n\nfunction datenAus(body) {\n  const d = body?.data;\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') return Object.values(d);\n  return [];\n}\n\nfunction wertSignatur(v) {\n  if (v === null || v === undefined || v === '') return null;\n  if (typeof v === 'object') return null;\n  return `${typeof v}:${String(v)}`;\n}\n\nfunction erfasse(stats, relationswerte, v, pfad) {\n  if (!pfad) return;\n  const s = stats.get(pfad) ?? { typen: new Set(), vorkommen: 0, gefuellt: 0 };\n  s.typen.add(typ(v));\n  s.vorkommen += 1;\n  if (v !== null && v !== undefined && v !== '') s.gefuellt += 1;\n  stats.set(pfad, s);\n\n  if (relation.test(pfad)) {\n    const sig = wertSignatur(v);\n    if (sig !== null) {\n      const r = relationswerte.get(pfad) ?? { gefuellt: 0, verschieden: new Set() };\n      r.gefuellt += 1;\n      r.verschieden.add(sig);\n      relationswerte.set(pfad, r);\n    }\n  }\n\n  if (Array.isArray(v)) {\n    for (const x of v) erfasse(stats, relationswerte, x, pfad + '[]');\n    return;\n  }\n\n  if (v && typeof v === 'object') {\n    const keys = Object.keys(v);\n    const idMap = keys.length > 0 && keys.filter(siehtWieIdAus).length / keys.length >= 0.8;\n    if (idMap) {\n      for (const x of Object.values(v)) erfasse(stats, relationswerte, x, pfad + '.*');\n    } else {\n      for (const [k, x] of Object.entries(v)) erfasse(stats, relationswerte, x, pfad + '.' + k);\n    }\n  }\n}\n\nasync function abruf(pfad, start, reply) {\n  try {\n    return await this.helpers.httpRequest({\n      method: 'GET',\n      url: basis + pfad,\n      headers,\n      qs: { 'limit[start]': start, 'limit[reply]': reply },\n      json: true,\n      returnFullResponse: true,\n      timeout: 60000,\n      ignoreHttpStatusErrors: true,\n    });\n  } catch (e) {\n    return {\n      statusCode: e?.response?.status ?? e?.httpCode ?? 'Fehler',\n      body: { _fehler: String(e?.message ?? e).slice(0, 160) },\n    };\n  }\n}\n\nconst ausgabe = [];\n\nfor (const ressource of ressourcen) {\n  const versuche = [];\n  let treffer = null;\n\n  for (const pfad of ressource.pfade) {\n    const probe = await abruf.call(this, pfad, 0, 3);\n    const status = probe.statusCode ?? 'Fehler';\n    const zeilen = status >= 200 && status < 300 ? datenAus(probe.body).length : 0;\n    versuche.push(`${pfad}=${status}/${zeilen}`);\n    if (!treffer && status >= 200 && status < 300 && probe.body && Object.prototype.hasOwnProperty.call(probe.body, 'data')) {\n      treffer = pfad;\n    }\n  }\n\n  if (!treffer) {\n    ausgabe.push({\n      json: {\n        schritt: 'S51',\n        bereich: 'A Ressource',\n        ressource: ressource.name,\n        endpoint: '-',\n        datensaetze: 0,\n        feldpfade: 0,\n        hinweis: 'Kein verwendbarer Endpunkt / ' + versuche.join(' ; '),\n      },\n    });\n    continue;\n  }\n\n  const stats = new Map();\n  const relationswerte = new Map();\n  const reply = 2000;\n  let start = 0;\n  let gesamt = 0;\n  let gemeldet = null;\n  let seiten = 0;\n  let abbruch = 'vollstaendig';\n  let vorigeSignatur = null;\n\n  while (seiten < 50) {\n    const antwort = await abruf.call(this, treffer, start, reply);\n    const status = antwort.statusCode ?? 'Fehler';\n    if (!(status >= 200 && status < 300)) {\n      abbruch = `Fehler ${status} ab Offset ${start}`;\n      break;\n    }\n\n    const body = antwort.body ?? {};\n    const rows = datenAus(body);\n    if (gemeldet === null && body.limit?.total !== undefined) gemeldet = Number(body.limit.total);\n    seiten += 1;\n\n    const ids = rows.slice(0, 2).concat(rows.slice(-2)).map((r) => {\n      if (!r || typeof r !== 'object') return typ(r);\n      return r.id ?? r.number ?? Object.keys(r).sort().join(',');\n    });\n    const signatur = JSON.stringify(ids);\n    if (seiten > 1 && signatur === vorigeSignatur && rows.length > 0) {\n      abbruch = 'Pagination vom Endpunkt ignoriert; Wiederholung erkannt';\n      break;\n    }\n    vorigeSignatur = signatur;\n\n    for (const row of rows) {\n      if (!row || typeof row !== 'object') continue;\n      for (const [k, v] of Object.entries(row)) erfasse(stats, relationswerte, v, k);\n    }\n\n    gesamt += rows.length;\n    start += rows.length;\n    if (rows.length === 0) break;\n    if (gemeldet !== null && start >= gemeldet) break;\n    if (rows.length < reply) break;\n  }\n\n  if (seiten >= 50) abbruch = 'Sicherheitsgrenze von 50 Seiten erreicht';\n\n  const feldbericht = [...stats.entries()]\n    .sort(([a], [b]) => a.localeCompare(b))\n    .map(([pfad, s]) => `${pfad}{${[...s.typen].sort().join('+')};${s.gefuellt}/${s.vorkommen}}`)\n    .join(' | ');\n\n  const relationsbericht = [...relationswerte.entries()]\n    .sort(([a], [b]) => a.localeCompare(b))\n    .map(([pfad, r]) => `${pfad}{gefüllt:${r.gefuellt};verschieden:${r.verschieden.size}}`)\n    .join(' | ');\n\n  ausgabe.push({\n    json: {\n      schritt: 'S51',\n      bereich: 'A Ressource',\n      ressource: ressource.name,\n      endpoint: treffer,\n      datensaetze: gesamt,\n      feldpfade: stats.size,\n      hinweis: `gemeldet ${gemeldet ?? '-'} / Seiten ${seiten} / ${abbruch} / Versuche ${versuche.join(' ; ')}`,\n    },\n  });\n  ausgabe.push({\n    json: {\n      schritt: 'S51',\n      bereich: 'B Feldinventar',\n      ressource: ressource.name,\n      endpoint: treffer,\n      datensaetze: gesamt,\n      feldpfade: stats.size,\n      hinweis: feldbericht || '-',\n    },\n  });\n  ausgabe.push({\n    json: {\n      schritt: 'S51',\n      bereich: 'C Beziehungen',\n      ressource: ressource.name,\n      endpoint: treffer,\n      datensaetze: gesamt,\n      feldpfade: relationswerte.size,\n      hinweis: relationsbericht || 'keine technischen Beziehungsfelder erkannt',\n    },\n  });\n}\n\nreturn ausgabe;"
+      },
+      "id": "51000000-0000-4000-8000-000000005103",
+      "name": "S51 ERGEBNIS Ressourceninventur",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300]
+    }
+  ],
+  "connections": {
+    "S51 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S51 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S51 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S51 ERGEBNIS Ressourceninventur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "51000000-0000-4000-8000-000000005199",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

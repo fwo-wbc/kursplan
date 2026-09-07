@@ -1,0 +1,53 @@
+{
+  "name": "S60 Offene Fremdtrainertarife nach Kurscode",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "60000000-0000-4000-8000-000000006001",
+      "name": "S60 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- S60: rein lesende Entscheidungsgrundlage fuer offene Fremdtrainertarife.\n-- Bei kuenftigen Mehrfachzuweisungen erscheint jeder Trainer getrennt.\n-- Netto ist deshalb ein Kontextwert und darf dann nicht ueber Trainer summiert werden.\nWITH offen AS (\n    SELECT\n        offer_id,\n        admin_id,\n        trainer_code,\n        kurscode,\n        kursbezeichnung,\n        date_start,\n        kostenphase,\n        netto_gebucht,\n        tarif_1,\n        tarif_2\n    FROM kursplan.v_angebot_trainerkosten\n    WHERE date_start >= timestamp '2023-01-01'\n      AND kosten_aktiv\n      AND kostenkonfiguration_fehlt\n),\ntrainer_gesamt AS (\n    SELECT\n        admin_id,\n        trainer_code,\n        count(DISTINCT offer_id) AS angebote_offen,\n        count(DISTINCT kurscode) AS kurscodes,\n        count(DISTINCT offer_id) FILTER (WHERE kostenphase = 'ist') AS angebote_ist,\n        count(DISTINCT offer_id) FILTER (WHERE kostenphase = 'prognose') AS angebote_prognose,\n        round(sum(coalesce(netto_gebucht, 0)), 2) AS netto_kontext,\n        min(date_start) AS erster_termin,\n        max(date_start) AS letzter_termin\n    FROM offen\n    GROUP BY admin_id, trainer_code\n),\ntrainer_kurs AS (\n    SELECT\n        admin_id,\n        trainer_code,\n        kurscode,\n        min(kursbezeichnung) AS kursbezeichnung,\n        count(DISTINCT offer_id) AS angebote_offen,\n        count(DISTINCT offer_id) FILTER (WHERE kostenphase = 'ist') AS angebote_ist,\n        count(DISTINCT offer_id) FILTER (WHERE kostenphase = 'prognose') AS angebote_prognose,\n        round(sum(coalesce(netto_gebucht, 0)), 2) AS netto_kontext,\n        min(tarif_1) AS tarif_1,\n        min(tarif_2) AS tarif_2,\n        round(count(DISTINCT offer_id) * min(tarif_1), 2) AS kosten_bei_tarif_1,\n        round(count(DISTINCT offer_id) * min(tarif_2), 2) AS kosten_bei_tarif_2,\n        min(date_start) AS erster_termin,\n        max(date_start) AS letzter_termin\n    FROM offen\n    GROUP BY admin_id, trainer_code, kurscode\n),\nkontrolle AS (\n    SELECT\n        count(*) AS angebote_offen,\n        round(sum(coalesce(netto_gebucht, 0)), 2) AS netto_offen\n    FROM kursplan.v_termin_db1\n    WHERE date_start >= timestamp '2023-01-01'\n      AND kosten_aktiv\n      AND kostenkonfiguration_fehlt\n),\nroh AS (\n    SELECT\n        10 AS sort_bereich,\n        'A Trainer gesamt'::text AS bereich,\n        g.trainer_code AS trainer,\n        g.admin_id,\n        NULL::text AS kurscode,\n        NULL::text AS kursbezeichnung,\n        g.angebote_offen,\n        g.kurscodes,\n        g.angebote_ist,\n        g.angebote_prognose,\n        g.netto_kontext,\n        NULL::numeric AS tarif_1,\n        NULL::numeric AS tarif_2,\n        NULL::numeric AS kosten_bei_tarif_1,\n        NULL::numeric AS kosten_bei_tarif_2,\n        g.erster_termin,\n        g.letzter_termin,\n        'Netto ist bei Mehrfachtrainern nur ein Kontextwert'::text AS entscheidung\n    FROM trainer_gesamt g\n\n    UNION ALL\n\n    SELECT\n        20,\n        'B Trainer x Kurscode',\n        k.trainer_code,\n        k.admin_id,\n        k.kurscode,\n        k.kursbezeichnung,\n        k.angebote_offen,\n        NULL::bigint,\n        k.angebote_ist,\n        k.angebote_prognose,\n        k.netto_kontext,\n        k.tarif_1,\n        k.tarif_2,\n        k.kosten_bei_tarif_1,\n        k.kosten_bei_tarif_2,\n        k.erster_termin,\n        k.letzter_termin,\n        'Auswahl: tarif_1, tarif_2 oder individueller Betrag'::text\n    FROM trainer_kurs k\n\n    UNION ALL\n\n    SELECT\n        30,\n        'C Kontrolle',\n        '(gesamt)',\n        NULL,\n        NULL,\n        NULL,\n        k.angebote_offen,\n        NULL::bigint,\n        NULL::bigint,\n        NULL::bigint,\n        k.netto_offen,\n        NULL::numeric,\n        NULL::numeric,\n        NULL::numeric,\n        NULL::numeric,\n        NULL::timestamptz,\n        NULL::timestamptz,\n        'Erwartet: 350 Angebote und 236552.89 Netto'::text\n    FROM kontrolle k\n)\nSELECT\n    'S60' AS schritt,\n    bereich,\n    trainer,\n    admin_id,\n    kurscode,\n    kursbezeichnung,\n    angebote_offen,\n    kurscodes,\n    angebote_ist,\n    angebote_prognose,\n    netto_kontext,\n    tarif_1,\n    tarif_2,\n    kosten_bei_tarif_1,\n    kosten_bei_tarif_2,\n    erster_termin,\n    letzter_termin,\n    entscheidung\nFROM roh\nORDER BY sort_bereich, netto_kontext DESC, trainer, angebote_offen DESC, kurscode;\n"
+      },
+      "id": "60000000-0000-4000-8000-000000006002",
+      "name": "S60 ERGEBNIS offene Trainertarife",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        580,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S60 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S60 ERGEBNIS offene Trainertarife",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "60000000-0000-4000-8000-000000006000",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

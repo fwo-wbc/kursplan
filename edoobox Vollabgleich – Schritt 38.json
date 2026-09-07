@@ -1,0 +1,37 @@
+{
+  "name": "S38 Fehlklassifikationen aufklaeren",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "38000000-0000-4000-8000-000000003801",
+      "name": "S38 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Zeigt die Buchungszeilen hinter den neuen Ueberbuchungen und prueft Freitextzahlen. Nur lesend.\nWITH pos AS (\n    SELECT\n        p.booking_id,\n        coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)') AS kat,\n        coalesce(p.quantity, 0) AS menge,\n        coalesce(p.amount_net, 0) AS betrag,\n        CASE\n            WHEN p.pricecategory_name ~* '(bis zu|max\\\\.?|fuer|für)[^0-9]{0,12}[0-9]+[[:space:]]*person'\n            THEN (substring(p.pricecategory_name from '(?i)(?:bis zu|max\\\\.?|fuer|für)[^0-9]{0,12}([0-9]+)[[:space:]]*person'))::int\n        END AS basis_n,\n        CASE\n            WHEN p.pricecategory_name ~* '[0-9]+[[:space:]]*(personen|person|teiln\\\\.?|teilnehmer)'\n            THEN (substring(p.pricecategory_name from '(?i)([0-9]+)[[:space:]]*(?:personen|person|teiln\\\\.?|teilnehmer)'))::int\n        END AS text_n,\n        (p.pricecategory_name ~* '(jede|je|pro)[[:space:]]+weitere|preis[^a-zA-ZäöüÄÖÜß]*für[^a-zA-ZäöüÄÖÜß]*jede[^a-zA-ZäöüÄÖÜß]*weitere') AS ist_zusatz\n    FROM edoobox_raw.booking_position p\n),\nje_buchung AS (\n    SELECT\n        b.booking_id, b.offer_id, s.status, coalesce(s.netto, 0) AS netto,\n        max(pos.basis_n) AS basis_n,\n        max(pos.text_n) AS text_n,\n        coalesce(sum(pos.menge) FILTER (WHERE pos.ist_zusatz), 0) AS zusatz_n,\n        coalesce(sum(pos.menge) FILTER (WHERE pos.kat = 'Inklusive'), 0) AS inklusive_n,\n        bool_or(pos.kat = 'Inklusive') AS hat_inklusive,\n        string_agg(concat(left(pos.kat, 48), ' x', pos.menge, ' @', round(pos.betrag, 2)), ' + ' ORDER BY pos.betrag DESC, pos.kat) AS zeilen_text\n    FROM edoobox_raw.booking b\n    JOIN kursplan.v_buchung_steuer s ON s.booking_id = b.booking_id\n    JOIN pos ON pos.booking_id = b.booking_id\n    GROUP BY b.booking_id, b.offer_id, s.status, 4\n),\nregel_alt AS (\n    SELECT j.*,\n           CASE WHEN basis_n IS NOT NULL THEN basis_n + zusatz_n\n                WHEN hat_inklusive THEN NULL ELSE 1 END AS plaetze_alt\n    FROM je_buchung j\n),\nje_termin AS (\n    SELECT o.offer_id, o.name, o.date_start, o.user_maximum,\n           count(*) FILTER (WHERE r.status = 'gebucht') AS buchungen,\n           count(*) FILTER (WHERE r.status = 'gebucht' AND r.plaetze_alt IS NULL) AS unklar,\n           coalesce(sum(r.plaetze_alt) FILTER (WHERE r.status = 'gebucht'), 0) AS plaetze_alt\n    FROM edoobox_raw.offer o\n    JOIN regel_alt r ON r.offer_id = o.offer_id\n    WHERE o.is_deleted IS NOT TRUE\n    GROUP BY o.offer_id, o.name, o.date_start, o.user_maximum\n),\nueber AS (\n    SELECT * FROM je_termin\n    WHERE user_maximum > 0 AND unklar = 0 AND plaetze_alt > user_maximum\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Buchung hinter Ueberbuchung' AS bereich,\n           concat(to_char(u.date_start, 'YYYY-MM-DD'), ' b', right(r.booking_id::text, 5)) AS kennzahl,\n           coalesce(r.plaetze_alt, 0)::numeric AS wert,\n           concat('termin ', left(u.name, 25), ' / basis ', coalesce(r.basis_n::text, '-'),\n                  ' / zusatz ', r.zusatz_n, ' / inkl ', r.inklusive_n,\n                  ' / ', left(r.zeilen_text, 180)) AS hinweis\n    FROM ueber u\n    JOIN regel_alt r ON r.offer_id = u.offer_id AND r.status = 'gebucht'\n\n    UNION ALL SELECT 20, 'B Freitextregel unklar',\n           CASE\n               WHEN text_n IS NOT NULL THEN concat('textzahl ', text_n)\n               WHEN hat_inklusive THEN concat('eins plus inklusive = ', 1 + inklusive_n + zusatz_n)\n               ELSE 'nicht ableitbar'\n           END,\n           count(*)::numeric,\n           concat('netto ', round(sum(netto), 2), ' / zusatzmenge ', sum(zusatz_n))\n    FROM regel_alt\n    WHERE status = 'gebucht' AND plaetze_alt IS NULL\n    GROUP BY 3\n\n    UNION ALL SELECT 30, 'C Freitextfall einzeln',\n           concat('b', right(booking_id::text, 5)),\n           coalesce(text_n, 1 + inklusive_n + zusatz_n)::numeric,\n           concat('textzahl ', coalesce(text_n::text, '-'), ' / eins+inkl+zusatz ',\n                  1 + inklusive_n + zusatz_n, ' / ', left(zeilen_text, 180))\n    FROM regel_alt\n    WHERE status = 'gebucht' AND plaetze_alt IS NULL\n\n    UNION ALL SELECT 40, 'D offerdef Verteilung',\n           CASE WHEN offerdef_ref IS NULL THEN '(leer)' ELSE left(offerdef_ref, 30) END,\n           count(*)::numeric,\n           concat('von ', count(DISTINCT name), ' namen / ',\n                  min(to_char(date_start, 'YYYY-MM-DD')), ' bis ', max(to_char(date_start, 'YYYY-MM-DD')))\n    FROM edoobox_raw.offer\n    WHERE is_deleted IS NOT TRUE\n    GROUP BY offerdef_ref\n)\nSELECT\n    'S38' AS schritt,\n    count(*) AS zeilen,\n    string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n               chr(10) ORDER BY ordnung, wert DESC, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "38000000-0000-4000-8000-000000003802",
+      "name": "S38 ERGEBNIS Fehlklassifikation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S38 Manuell starten": {
+      "main": [[{"node": "S38 ERGEBNIS Fehlklassifikation", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

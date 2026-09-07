@@ -1,0 +1,128 @@
+{
+  "name": "S13 Feldbestand der Detailantwort",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "d9e8c6f0-91a6-4cb3-9e99-0cf3a2f59001",
+      "name": "S13 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Drei moeglichst unterschiedliche Buchungen: eine bezahlte,\n-- eine stornierte und eine mit mehreren Teilnehmern.\n(SELECT booking_id FROM edoobox_raw.booking\n  WHERE is_deleted = false AND status = 'gebucht'\n  ORDER BY booking_time DESC NULLS LAST LIMIT 1)\nUNION ALL\n(SELECT booking_id FROM edoobox_raw.booking\n  WHERE is_deleted = false AND status = 'storniert'\n  ORDER BY booking_time DESC NULLS LAST LIMIT 1)\nUNION ALL\n(SELECT b.booking_id FROM edoobox_raw.booking b\n  JOIN edoobox_raw.booking_position p ON p.booking_id = b.booking_id\n  WHERE b.is_deleted = false\n  GROUP BY b.booking_id, b.booking_time\n  ORDER BY sum(p.quantity) DESC, b.booking_time DESC LIMIT 1);",
+        "options": {}
+      },
+      "id": "d9e8c6f0-91a6-4cb3-9e99-0cf3a2f59002",
+      "name": "S13 Buchungen auswaehlen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d9e8c6f0-91a6-4cb3-9e99-0cf3a2f59003",
+      "name": "S13 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Liest drei Buchungsdetails und meldet nur den Feldbestand der\n// verschachtelten Bereiche, keine Klardaten. Werte werden ausschliesslich\n// dann gezeigt, wenn sie erkennbar keine Personenangabe sind: Zahlen,\n// Wahrheitswerte und Zeitangaben.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst kennungen = $('S13 Buchungen auswaehlen')\n  .all()\n  .map((z) => z.json.booking_id)\n  .filter(Boolean);\n\n// Bereiche, die fuer Termine, Kurszuordnung und Zahlungen wichtig sind.\nconst bereiche = ['transactions', 'payments', 'fees', 'dates', 'offer', 'promotion', 'lessons_booking', 'users'];\n\n// Feldnamen, die niemals ausgegeben werden.\nconst gesperrt = /name|vorname|nachname|mail|street|strasse|address|adresse|city|ort|zip|plz|phone|tel|ip|birth|geburt|company|firma|salut|anrede|title|land|country|note|bemerkung/i;\n\nfunction typBezeichnung(w) {\n  if (w === null || w === undefined) return 'leer';\n  if (Array.isArray(w)) return `Liste(${w.length})`;\n  if (typeof w === 'object') return `Objekt(${Object.keys(w).length})`;\n  return typeof w;\n}\n\nfunction beispielwert(schluessel, w) {\n  if (gesperrt.test(schluessel)) return 'unterdrueckt';\n  if (w === null || w === undefined) return null;\n  if (typeof w === 'boolean' || typeof w === 'number') return w;\n  if (typeof w === 'string') {\n    // Nur unverfaengliche Formen zeigen: Zahlen, Datum, Zeit, Kennungen.\n    if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(w)) return w;\n    if (/^[0-9]+([.,][0-9]+)?$/.test(w)) return w;\n    if (/^[a-z_]+_[0-9a-f]{8,}/i.test(w)) return w.slice(0, 40);\n    return `Text(${w.length})`;\n  }\n  return typBezeichnung(w);\n}\n\nfunction felder(objekt) {\n  if (!objekt || typeof objekt !== 'object') return [];\n  return Object.entries(objekt).map(([k, v]) => ({\n    feld: k,\n    typ: typBezeichnung(v),\n    beispiel: beispielwert(k, v),\n  }));\n}\n\nconst zeilen = [];\nlet abrufe = 0;\n\nfor (const kennung of kennungen) {\n  const antwort = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://app1.edoobox.com/v2/booking/${encodeURIComponent(kennung)}/data`,\n    headers,\n    json: true,\n    returnFullResponse: true,\n    timeout: 60000,\n  });\n  abrufe += 1;\n\n  const roh = antwort.body?.data;\n  const b = Array.isArray(roh) ? roh[0] : roh && typeof roh === 'object' ? roh : {};\n  const kurz = String(kennung).slice(0, 28);\n\n  for (const bereich of bereiche) {\n    const inhalt = b[bereich];\n\n    if (inhalt === null || inhalt === undefined) {\n      zeilen.push({ schritt: 'S13', buchung: kurz, bereich, form: 'fehlt', eintraege: 0, felder: '' });\n      continue;\n    }\n\n    // Erstes Element bestimmen, egal ob Liste oder Objekt mit Kennungen.\n    let erstes = inhalt;\n    let anzahl = 1;\n    let form = 'Objekt';\n\n    if (Array.isArray(inhalt)) {\n      form = 'Liste';\n      anzahl = inhalt.length;\n      erstes = inhalt[0];\n    } else if (typeof inhalt === 'object') {\n      const werte = Object.values(inhalt);\n      const alleObjekte = werte.length > 0 && werte.every((v) => v && typeof v === 'object' && !Array.isArray(v));\n      if (alleObjekte) {\n        form = 'Objekt mit Kennungen';\n        anzahl = werte.length;\n        erstes = werte[0];\n      }\n    }\n\n    if (anzahl === 0 || !erstes || typeof erstes !== 'object') {\n      zeilen.push({ schritt: 'S13', buchung: kurz, bereich, form, eintraege: anzahl, felder: '' });\n      continue;\n    }\n\n    zeilen.push({\n      schritt: 'S13',\n      buchung: kurz,\n      bereich,\n      form,\n      eintraege: anzahl,\n      felder: felder(erstes)\n        .map((f) => `${f.feld}=${f.typ}${f.beispiel === null || f.beispiel === undefined ? '' : ' [' + f.beispiel + ']'}`)\n        .join(' | '),\n    });\n  }\n}\n\nzeilen.push({ schritt: 'S13', buchung: 'ZUSAMMENFASSUNG', bereich: 'abrufe', form: '', eintraege: abrufe, felder: '' });\n\nreturn zeilen.map((z) => ({ json: z }));\n"
+      },
+      "id": "d9e8c6f0-91a6-4cb3-9e99-0cf3a2f59004",
+      "name": "S13 ERGEBNIS Feldbestand",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S13 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S13 Buchungen auswaehlen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S13 Buchungen auswaehlen": {
+      "main": [
+        [
+          {
+            "node": "S13 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S13 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S13 ERGEBNIS Feldbestand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

@@ -1,0 +1,51 @@
+{
+  "name": "S31 Nulltermine aufklaeren",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "31000000-0000-4000-8000-000000003101",
+      "name": "S31 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Klaert, was die 82 Termine ohne Erloes und die 435 Buchungen darauf sind.\n-- Nutzt die Merkmalsfelder der Angebotstabelle. Nur lesend.\nWITH je_termin AS (\n    SELECT\n        s.offer_id,\n        count(*) FILTER (WHERE s.status = 'gebucht')                       AS gebucht,\n        count(*) FILTER (WHERE s.status = 'gebucht' AND coalesce(s.netto, 0) = 0) AS gebucht_null,\n        round(coalesce(sum(s.netto) FILTER (WHERE s.status = 'gebucht'), 0), 2)   AS netto\n    FROM kursplan.v_buchung_steuer s\n    WHERE s.offer_id IS NOT NULL\n    GROUP BY s.offer_id\n),\ngruppe AS (\n    SELECT\n        o.*,\n        t.gebucht, t.gebucht_null, t.netto,\n        CASE\n            WHEN t.gebucht = 0 THEN 'ohne gebuchte buchung'\n            WHEN t.netto = 0 THEN 'nur nullbuchungen'\n            WHEN t.gebucht_null > 0 THEN 'gemischt'\n            ELSE 'nur zahlende'\n        END::text AS art,\n        EXISTS (SELECT 1\n                  FROM kursplan.v_buchung_rechnung vr\n                  JOIN edoobox_raw.booking bb ON bb.booking_id = vr.booking_id\n                 WHERE bb.offer_id = o.offer_id) AS hat_rechnung,\n        o.payload ->> 'mustpay'       AS p_mustpay,\n        o.payload ->> 'internal_code'  AS p_internal_code\n    FROM edoobox_raw.offer o\n    JOIN je_termin t ON t.offer_id = o.offer_id\n    WHERE o.is_deleted IS NOT TRUE\n),\nroh AS (\n    -- A. Merkmale der Termine, gruppiert nach Art\n    SELECT 10 AS ordnung, 'A Merkmale je Art' AS bereich,\n           concat(art, ' | mustpay ', coalesce(p_mustpay, 'leer'),\n                  ' | modus ', coalesce(mode, 'leer'),\n                  ' | typ ', coalesce(offer_type, 'leer')) AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('mit rechnung ', count(*) FILTER (WHERE hat_rechnung),\n                  ' / netto ', round(sum(netto), 2)) AS hinweis\n    FROM gruppe\n    GROUP BY art, p_mustpay, mode, offer_type\n    HAVING count(*) >= 3\n\n    -- B. Nur die Nulltermine, weitere Merkmale\n    UNION ALL SELECT 20, 'B Nulltermin Merkmale',\n           concat('vat_rate ', coalesce(vat_rate::text, 'leer'),\n                  ' | land ', coalesce(country, 'leer'),\n                  ' | status ', coalesce(status, 'leer'),\n                  ' | multi ', coalesce(is_multi_offer::text, 'leer')),\n           count(*)::numeric,\n           concat('interner code gesetzt bei ',\n                  count(*) FILTER (WHERE nullif(p_internal_code, '') IS NOT NULL))\n    FROM gruppe WHERE art = 'nur nullbuchungen'\n    GROUP BY 3\n\n    -- C. Zum Vergleich: Termine mit Erloes\n    UNION ALL SELECT 21, 'C Vergleich zahlende Termine',\n           concat('vat_rate ', coalesce(vat_rate::text, 'leer'),\n                  ' | land ', coalesce(country, 'leer'),\n                  ' | multi ', coalesce(is_multi_offer::text, 'leer')),\n           count(*)::numeric, NULL\n    FROM gruppe WHERE art IN ('nur zahlende', 'gemischt')\n    GROUP BY 3\n    HAVING count(*) >= 5\n\n    -- D. Die Nulltermine einzeln\n    UNION ALL SELECT 30, 'D Nulltermin einzeln',\n           concat(coalesce(to_char(date_start, 'YYYY-MM-DD'), 'ohne datum'), ' ',\n                  left(coalesce(name, 'ohne name'), 46)),\n           gebucht::numeric,\n           concat('nr ', coalesce(offer_number, '-'),\n                  ' / max ', coalesce(user_maximum::text, '-'),\n                  ' / rechnung ', hat_rechnung::text,\n                  ' / code ', coalesce(nullif(p_internal_code, ''), '-'))\n    FROM gruppe WHERE art = 'nur nullbuchungen'\n\n    -- E. Kennzeichen is_multi_offer auf der Buchung selbst\n    UNION ALL SELECT 40, 'E Buchungskennzeichen',\n           concat('nullbuchung multi ', coalesce(b.is_multi_offer::text, 'leer'),\n                  ' quelle ', coalesce(b.source, 'leer')),\n           count(*)::numeric, NULL\n    FROM kursplan.v_buchung_steuer s\n    JOIN edoobox_raw.booking b ON b.booking_id = s.booking_id\n    WHERE s.status = 'gebucht' AND coalesce(s.netto, 0) = 0\n    GROUP BY 3\n    UNION ALL SELECT 41, 'E Buchungskennzeichen',\n           concat('zahlende buchung multi ', coalesce(b.is_multi_offer::text, 'leer'),\n                  ' quelle ', coalesce(b.source, 'leer')),\n           count(*)::numeric, NULL\n    FROM kursplan.v_buchung_steuer s\n    JOIN edoobox_raw.booking b ON b.booking_id = s.booking_id\n    WHERE s.status = 'gebucht' AND s.netto > 0\n    GROUP BY 3\n\n    -- F. Positionszeilen mit Betrag null\n    UNION ALL SELECT 50, 'F Nullposition',\n           left(coalesce(p.pricecategory_name, 'ohne name'), 60),\n           count(*)::numeric,\n           concat('davon auf zahlenden buchungen ',\n                  count(*) FILTER (WHERE s.netto > 0))\n    FROM edoobox_raw.booking_position p\n    JOIN kursplan.v_buchung_steuer s ON s.booking_id = p.booking_id\n    WHERE coalesce(p.amount_net, 0) = 0\n    GROUP BY 3\n    HAVING count(*) >= 10\n\n    -- G. Welche Rohfelder liefert die Schnittstelle je Termin\n    UNION ALL SELECT 60, 'G Rohfeld im Nulltermin', schluessel, count(*)::numeric,\n           NULL\n    FROM gruppe g2, jsonb_object_keys(g2.payload) AS schluessel\n    WHERE g2.art = 'nur nullbuchungen' AND jsonb_typeof(g2.payload) = 'object'\n    GROUP BY schluessel\n    HAVING count(*) >= 20\n)\nSELECT\n    'S31' AS schritt,\n    count(*) AS zeilen,\n    string_agg(\n        concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')),\n                  coalesce(hinweis, '-')),\n        chr(10) ORDER BY ordnung, wert DESC, kennzahl\n    ) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "31000000-0000-4000-8000-000000003102",
+      "name": "S31 ERGEBNIS Nulltermine",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S31 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S31 ERGEBNIS Nulltermine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

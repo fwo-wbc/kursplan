@@ -1,0 +1,51 @@
+{
+  "name": "S14a Merkspalte anlegen (Verwaltungskonto)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "aa000000-0000-4000-8000-00000000a001",
+      "name": "S14a Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Einmaliger Strukturwechsel. Muss mit dem Eigentuemerkonto laufen,\n-- weil ALTER TABLE dem schreibenden Konto nicht erlaubt ist.\nALTER TABLE edoobox_raw.booking\n    ADD COLUMN IF NOT EXISTS detail_synced_at timestamptz;\n\nCREATE INDEX IF NOT EXISTS booking_detail_offen_idx\n    ON edoobox_raw.booking (detail_synced_at)\n    WHERE detail_synced_at IS NULL;\n\n-- Sicherstellen, dass das schreibende Konto die neue Spalte auch fuellen darf.\nGRANT SELECT, INSERT, UPDATE, DELETE\n    ON ALL TABLES IN SCHEMA edoobox_raw TO n8n_writer;\nGRANT USAGE, SELECT\n    ON ALL SEQUENCES IN SCHEMA edoobox_raw TO n8n_writer;\n\nSELECT\n    count(*)                                         AS buchungen,\n    count(*) FILTER (WHERE detail_synced_at IS NULL) AS noch_offen\nFROM edoobox_raw.booking\nWHERE is_deleted = false;",
+        "options": {}
+      },
+      "id": "aa000000-0000-4000-8000-00000000a002",
+      "name": "S14a Struktur aendern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S14a Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S14a Struktur aendern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

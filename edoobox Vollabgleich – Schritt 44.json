@@ -1,0 +1,37 @@
+{
+  "name": "S44 Nicht zugeordnete Buchungen pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "44000000-0000-4000-8000-000000004401",
+      "name": "S44 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Prueft Buchungen ohne Angebot und Test-/Zukunftstermine. Nur lesend.\nWITH basis AS (\n    SELECT b.booking_id, b.offer_id, b.status, b.booking_time,\n           coalesce(s.netto, 0) AS netto,\n           o.offer_id AS gefunden, o.date_start, o.name, o.offer_number\n    FROM edoobox_raw.booking b\n    LEFT JOIN kursplan.v_buchung_steuer s ON s.booking_id = b.booking_id\n    LEFT JOIN edoobox_raw.offer o ON o.offer_id = b.offer_id AND o.is_deleted IS NOT TRUE\n    WHERE b.is_deleted IS NOT TRUE\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Ohne Angebot' AS bereich,\n           concat(coalesce(extract(year FROM booking_time)::int::text, 'ohne jahr'), ' ', status) AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('netto ', round(sum(netto), 2), ' / verschiedene offer_id ', count(DISTINCT offer_id)) AS hinweis\n    FROM basis\n    WHERE gefunden IS NULL\n    GROUP BY 3\n\n    UNION ALL SELECT 20, 'B Nettozuordnung gebucht',\n           CASE WHEN gefunden IS NULL THEN 'ohne angebot'\n                WHEN date_start IS NULL THEN 'angebot ohne terminstart'\n                WHEN date_start < timestamp '2023-01-01' THEN 'termin vor 2023'\n                ELSE 'termin ab 2023' END,\n           round(sum(netto), 2),\n           concat('buchungen ', count(*))\n    FROM basis\n    WHERE status = 'gebucht'\n    GROUP BY 3\n\n    UNION ALL SELECT 30, 'C Sichtabgleich', 'netto v_termin_erloes ab 2023',\n           round(coalesce(sum(netto_gebucht), 0), 2),\n           concat('termine ', count(*))\n    FROM kursplan.v_termin_erloes\n    WHERE date_start >= timestamp '2023-01-01'\n\n    UNION ALL SELECT 40, 'D Verdaechtiger Termin',\n           concat(to_char(date_start, 'YYYY-MM-DD'), ' ', left(coalesce(name, 'ohne name'), 38)),\n           round(sum(netto), 2),\n           concat('buchungen ', count(*) FILTER (WHERE status = 'gebucht'),\n                  ' / nummer ', left(coalesce(min(offer_number), '-'), 35))\n    FROM basis\n    WHERE gefunden IS NOT NULL\n      AND (name ~* '(^|[^a-z])test([^a-z]|$)|office-kurse 5er-paket' OR date_start >= timestamp '2027-01-01')\n    GROUP BY date_start, name\n\n    UNION ALL SELECT 50, 'E Zukunft mit Buchung',\n           concat(to_char(date_start, 'YYYY-MM-DD'), ' ', left(coalesce(name, 'ohne name'), 38)),\n           round(sum(netto) FILTER (WHERE status = 'gebucht'), 2),\n           concat('gebucht ', count(*) FILTER (WHERE status = 'gebucht'),\n                  ' / storniert ', count(*) FILTER (WHERE status = 'storniert'))\n    FROM basis\n    WHERE gefunden IS NOT NULL AND date_start > current_timestamp\n    GROUP BY date_start, name\n    HAVING count(*) FILTER (WHERE status = 'gebucht') > 0\n)\nSELECT 'S44' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, wert DESC, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "44000000-0000-4000-8000-000000004402",
+      "name": "S44 ERGEBNIS Nicht zugeordnet",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S44 Manuell starten": {
+      "main": [[{"node": "S44 ERGEBNIS Nicht zugeordnet", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

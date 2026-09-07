@@ -1,0 +1,50 @@
+{
+  "name": "edoobox 04 - Vollabgleich - Schritt 2",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "821ec2bb-188a-4b49-b0bc-81e93ce338c3",
+      "name": "Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH vorherige_laeufe AS (\n    UPDATE edoobox_raw.sync_run\n    SET\n        status = 'abgebrochen',\n        finished_at = now(),\n        error_text = 'Durch neuen manuellen Vollabgleich ersetzt'\n    WHERE run_type = 'vollabgleich'\n      AND status = 'laeuft'\n)\nINSERT INTO edoobox_raw.sync_run (\n    run_type,\n    status\n)\nVALUES (\n    'vollabgleich',\n    'laeuft'\n)\nRETURNING\n    run_id,\n    started_at,\n    status;",
+        "options": {}
+      },
+      "id": "caf52e41-b723-47f6-8873-fd3931cc9e36",
+      "name": "Vollabgleich starten",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        560,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "Vollabgleich starten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}

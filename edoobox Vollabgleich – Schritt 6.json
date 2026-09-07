@@ -1,0 +1,101 @@
+{
+  "name": "S6 Blaetterparameter finden",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "c2d1b9e3-2a3f-4b4c-8d22-3b8f1f6e2001",
+      "name": "S6 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c2d1b9e3-2a3f-4b4c-8d22-3b8f1f6e2002",
+      "name": "S6 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Findet die Parameterform fuer das Blaettern der Buchungsliste.\n// Nur Lesezugriffe. Ausgegeben werden Anzahlen, das Huellenfeld limit und\n// jeweils die erste und letzte Buchungs-ID zum Vergleich der Seiten.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst basis = 'https://app1.edoobox.com/v2/booking/list';\n\nfunction auswerten(body) {\n  const roh = body?.data;\n  const liste = roh && typeof roh === 'object' && !Array.isArray(roh) ? Object.entries(roh) : [];\n  const ids = liste.map(([k, v]) => (v && typeof v === 'object' ? v.id ?? k : k));\n  const zeiten = liste.map(([, v]) => (v && typeof v === 'object' ? v.time ?? null : null));\n  return {\n    anzahl: liste.length,\n    erste_id: ids[0] ?? null,\n    letzte_id: ids.length ? ids[ids.length - 1] : null,\n    erste_zeit: zeiten[0] ?? null,\n    letzte_zeit: zeiten.length ? zeiten[zeiten.length - 1] : null,\n    limit_huelle: body?.limit === undefined ? '-' : JSON.stringify(body.limit).slice(0, 200),\n  };\n}\n\nasync function abruf(bezeichnung, optionen) {\n  try {\n    const antwort = await this.helpers.httpRequest({\n      method: optionen.method ?? 'GET',\n      url: basis,\n      headers,\n      qs: optionen.qs,\n      body: optionen.body,\n      json: true,\n      returnFullResponse: true,\n      timeout: 30000,\n    });\n    return { variante: bezeichnung, status: antwort.statusCode, ...auswerten(antwort.body) };\n  } catch (fehler) {\n    return {\n      variante: bezeichnung,\n      status: fehler?.response?.status ?? fehler?.httpCode ?? 'kein Status',\n      anzahl: 0,\n      fehlermeldung: String(fehler?.message ?? fehler).slice(0, 200),\n    };\n  }\n}\n\nconst hole = abruf.bind(this);\n\nconst varianten = [\n  ['A Grundabruf', {}],\n  ['B JSON-Koerper Seite 1', { body: { limit: { start: 0, reply: 10 }, order: { time: 'DESC' } } }],\n  ['C JSON-Koerper Seite 2', { body: { limit: { start: 10, reply: 10 }, order: { time: 'DESC' } } }],\n  ['D JSON-Koerper aufsteigend', { body: { limit: { start: 0, reply: 10 }, order: { time: 'ASC' } } }],\n  ['E Query als JSON-Text S1', { qs: { limit: JSON.stringify({ start: 0, reply: 10 }), order: JSON.stringify({ time: 'DESC' }) } }],\n  ['F Query als JSON-Text S2', { qs: { limit: JSON.stringify({ start: 10, reply: 10 }), order: JSON.stringify({ time: 'DESC' }) } }],\n  ['G POST mit JSON-Koerper S1', { method: 'POST', body: { limit: { start: 0, reply: 10 }, order: { time: 'DESC' } } }],\n  ['H POST mit JSON-Koerper S2', { method: 'POST', body: { limit: { start: 10, reply: 10 }, order: { time: 'DESC' } } }],\n];\n\nconst ergebnisse = [];\nfor (const [bezeichnung, optionen] of varianten) {\n  ergebnisse.push(await hole(bezeichnung, optionen));\n}\n\nconst grund = ergebnisse[0];\n\nreturn ergebnisse.map((e) => ({\n  json: {\n    schritt: 'S6',\n    variante: e.variante,\n    status: e.status,\n    anzahl: e.anzahl,\n    wie_grundabruf: e.erste_id && grund?.erste_id ? e.erste_id === grund.erste_id : '-',\n    erste_id: e.erste_id ?? '-',\n    letzte_id: e.letzte_id ?? '-',\n    limit_huelle: e.limit_huelle ?? '-',\n    fehlermeldung: e.fehlermeldung ?? '-',\n  },\n}));\n"
+      },
+      "id": "c2d1b9e3-2a3f-4b4c-8d22-3b8f1f6e2003",
+      "name": "S6 ERGEBNIS Blaetterparameter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S6 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S6 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S6 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S6 ERGEBNIS Blaetterparameter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

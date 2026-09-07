@@ -1,0 +1,37 @@
+{
+  "name": "S49 Trainerfelder im Angebot pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "49000000-0000-4000-8000-000000004901",
+      "name": "S49 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Kompatible Nur-Lese-Suche nach Trainer- oder Personalfeldern im Offer-Payload.\nWITH produktiv AS (\n    SELECT t.offer_id, o.payload\n    FROM kursplan.v_kursart_termin t\n    JOIN edoobox_raw.offer o ON o.offer_id = t.offer_id\n    WHERE o.payload IS NOT NULL\n), kandidatentreffer AS (\n    SELECT p.offer_id, lower((m.treffer)[1]) AS schluessel\n    FROM produktiv p\n    CROSS JOIN LATERAL regexp_matches(\n        p.payload::text,\n        '\"([^\"]*(trainer|teacher|instructor|referent|speaker|lecturer|coach|resource|leader|staff|employee|presenter|host)[^\"]*)\"[[:space:]]*:',\n        'gi'\n    ) AS m(treffer)\n), kandidaten AS (\n    SELECT schluessel, count(DISTINCT offer_id) AS termine\n    FROM kandidatentreffer\n    GROUP BY schluessel\n), top_level AS (\n    SELECT k AS schluessel, count(*) AS termine\n    FROM produktiv p\n    CROSS JOIN LATERAL jsonb_object_keys(\n        CASE WHEN jsonb_typeof(p.payload) = 'object' THEN p.payload ELSE '{}'::jsonb END\n    ) k\n    GROUP BY k\n), top_auswahl AS (\n    SELECT * FROM top_level\n    ORDER BY termine DESC, schluessel\n    LIMIT 30\n), roh AS (\n    SELECT 10 AS ordnung, 'A Kandidatenfeld' AS bereich,\n           schluessel AS kennzahl, termine::numeric AS wert,\n           'Anzahl produktiver Termine mit diesem Feldnamen' AS hinweis\n    FROM kandidaten\n\n    UNION ALL SELECT 20, 'B Oberster Payload-Schluessel',\n           schluessel, termine::numeric,\n           'Anzahl produktiver Termine mit diesem Feld'\n    FROM top_auswahl\n\n    UNION ALL SELECT 30, 'C Kontrolle', 'gefundene Kandidatenfelder',\n           count(*)::numeric,\n           CASE WHEN count(*) = 0\n                THEN 'keine Trainerangabe im gespiegelten Offer-Payload gefunden'\n                ELSE 'Kandidaten oben auf Verwendbarkeit pruefen' END\n    FROM kandidaten\n)\nSELECT 'S49' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl,\n                            trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, wert DESC, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "49000000-0000-4000-8000-000000004902",
+      "name": "S49 Trainerfelder pruefen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S49 Manuell starten": {
+      "main": [[{"node": "S49 Trainerfelder pruefen", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

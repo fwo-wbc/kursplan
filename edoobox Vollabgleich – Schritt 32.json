@@ -1,0 +1,51 @@
+{
+  "name": "S32 Preiskategorie-Katalog",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "32000000-0000-4000-8000-000000003201",
+      "name": "S32 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Vollstaendiger Katalog der Preiskategorien als Grundlage fuer die Regeltabelle.\n-- Nur lesend.\nWITH pos AS (\n    SELECT\n        p.position_id, p.booking_id,\n        coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)') AS kat,\n        coalesce(p.amount_net, 0) AS betrag,\n        coalesce(p.quantity, 0)   AS menge,\n        s.status, s.netto AS buchung_netto,\n        extract(year FROM s.booking_time)::int AS jahr\n    FROM edoobox_raw.booking_position p\n    JOIN kursplan.v_buchung_steuer s ON s.booking_id = p.booking_id\n),\nroh AS (\n    -- A. Jede Preiskategorie mit Betrag null\n    SELECT 10 AS ordnung, 'A Kategorie immer null' AS bereich, kat AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('jahre ', min(jahr), ' bis ', max(jahr),\n                  ' / menge ', sum(menge),\n                  ' / auf zahlender buchung ', count(*) FILTER (WHERE buchung_netto > 0)) AS hinweis\n    FROM pos\n    GROUP BY kat\n    HAVING max(betrag) = 0\n\n    -- B. Kategorien mit Betrag, vollstaendig\n    UNION ALL SELECT 20, 'B Kategorie mit Betrag', kat,\n           count(*)::numeric,\n           concat('netto ', round(sum(betrag * greatest(menge, 1)), 2),\n                  ' / spanne ', round(min(betrag) FILTER (WHERE betrag > 0), 2),\n                  ' bis ', round(max(betrag), 2),\n                  ' / nullzeilen ', count(*) FILTER (WHERE betrag = 0),\n                  ' / jahre ', min(jahr), ' bis ', max(jahr))\n    FROM pos\n    GROUP BY kat\n    HAVING max(betrag) > 0\n\n    -- C. Mengen ueber eins, das waeren die zusaetzlichen Personen\n    UNION ALL SELECT 30, 'C Menge ueber eins', concat(kat, ' menge ', menge),\n           count(*)::numeric,\n           concat('netto je zeile ', round(min(betrag), 2), ' bis ', round(max(betrag), 2))\n    FROM pos WHERE menge > 1\n    GROUP BY kat, menge\n    HAVING count(*) >= 2\n\n    -- D. Buchungen mit mehreren Positionszeilen\n    UNION ALL SELECT 40, 'D Zeilen je Buchung', concat(zeilen::text, ' zeilen'),\n           count(*)::numeric,\n           concat('netto ', round(sum(netto_summe), 2),\n                  ' / davon gebucht ', count(*) FILTER (WHERE status = 'gebucht'))\n    FROM (\n        SELECT booking_id, count(*) AS zeilen, status,\n               sum(betrag * greatest(menge, 1)) AS netto_summe\n        FROM pos GROUP BY booking_id, status\n    ) t\n    GROUP BY zeilen\n\n    -- E. Kombinationen bei Buchungen mit zwei oder drei Zeilen\n    UNION ALL SELECT 50, 'E Kombination', kombination, count(*)::numeric,\n           concat('netto ', round(sum(netto_summe), 2))\n    FROM (\n        SELECT booking_id,\n               string_agg(left(kat, 34), ' + ' ORDER BY kat) AS kombination,\n               sum(betrag * greatest(menge, 1)) AS netto_summe\n        FROM pos GROUP BY booking_id HAVING count(*) BETWEEN 2 AND 3\n    ) t\n    GROUP BY kombination\n    HAVING count(*) >= 3\n)\nSELECT\n    'S32' AS schritt,\n    count(*) AS zeilen,\n    string_agg(\n        concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')),\n                  coalesce(hinweis, '-')),\n        chr(10) ORDER BY ordnung, wert DESC, kennzahl\n    ) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "32000000-0000-4000-8000-000000003202",
+      "name": "S32 ERGEBNIS Katalog",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S32 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S32 ERGEBNIS Katalog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

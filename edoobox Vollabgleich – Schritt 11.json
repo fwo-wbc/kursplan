@@ -1,0 +1,153 @@
+{
+  "name": "S11 Alle Buchungen einsammeln",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b7c6a4d8-7f84-4a91-9c77-8ad6e1d37001",
+      "name": "S11 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH vorherige_laeufe AS (\n    UPDATE edoobox_raw.sync_run\n    SET\n        status      = 'abgebrochen',\n        finished_at = now(),\n        error_text  = 'Durch neuen manuellen Vollabgleich ersetzt'\n    WHERE run_type = 'vollabgleich'\n      AND status   = 'laeuft'\n)\nINSERT INTO edoobox_raw.sync_run (run_type, status)\nVALUES ('vollabgleich', 'laeuft')\nRETURNING run_id, started_at, status;",
+        "options": {}
+      },
+      "id": "b7c6a4d8-7f84-4a91-9c77-8ad6e1d37002",
+      "name": "S11 Vollabgleich starten",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b7c6a4d8-7f84-4a91-9c77-8ad6e1d37003",
+      "name": "S11 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Holt alle Buchungen seitenweise ueber limit[start] und limit[reply].\n// Nachweislich wirksame Schreibweise, Hoechstwert der Seitengroesse 2000.\n// Personenbezogene Angaben werden nicht uebernommen, der Besitzer nur als\n// nicht umkehrbarer Streuwert, den die Datenbank selbst bildet.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst basis = 'https://app1.edoobox.com/v2/booking/list';\nconst seitengroesse = 500;\nconst hoechstzahl_seiten = 40;\n\nconst gesammelt = new Map();\nlet abrufe = 0;\nlet gemeldet_total = null;\nlet versatz = 0;\n\nfor (let seite = 0; seite < hoechstzahl_seiten; seite += 1) {\n  const antwort = await this.helpers.httpRequest({\n    method: 'GET',\n    url: basis,\n    headers,\n    qs: { 'limit[start]': versatz, 'limit[reply]': seitengroesse },\n    json: true,\n    returnFullResponse: true,\n    timeout: 120000,\n  });\n  abrufe += 1;\n\n  if (antwort.statusCode !== 200) {\n    throw new Error(`Seite ab ${versatz} lieferte Status ${antwort.statusCode}`);\n  }\n\n  const huelle = antwort.body?.limit ?? {};\n  if (gemeldet_total === null) gemeldet_total = huelle.total ?? null;\n\n  const roh = antwort.body?.data;\n  const eintraege = roh && typeof roh === 'object' && !Array.isArray(roh) ? Object.entries(roh) : [];\n\n  if (eintraege.length === 0) break;\n\n  // Sicherung gegen einen nicht angenommenen Versatz: wiederholt sich die\n  // erste Kennung, wird abgebrochen statt endlos dasselbe zu holen.\n  const ersteKennung = eintraege[0][1]?.id ?? eintraege[0][0];\n  if (versatz > 0 && gesammelt.has(ersteKennung) && huelle.start !== versatz) {\n    throw new Error('Der Versatz wurde nicht angenommen, Abbruch zur Sicherheit.');\n  }\n\n  for (const [schluessel, satz] of eintraege) {\n    const b = satz && typeof satz === 'object' ? satz : {};\n    const kennung = b.id ?? schluessel;\n    if (!kennung || !b.offer) continue;\n\n    gesammelt.set(kennung, {\n      id: String(kennung),\n      offer: String(b.offer),\n      time: b.time ?? null,\n      status: b.canceled ? 'storniert' : b.waiting_list ? 'warteliste' : 'gebucht',\n      owner: b.owner ? String(b.owner) : null,\n      mustpay: b.mustpay === true,\n      label: b.label ?? null,\n    });\n  }\n\n  versatz += seitengroesse;\n  if (gemeldet_total !== null && versatz >= gemeldet_total) break;\n}\n\nconst saetze = [...gesammelt.values()];\n\nreturn [\n  {\n    json: {\n      schritt: 'S11',\n      run_id: $('S11 Vollabgleich starten').first().json.run_id,\n      gemeldet_total,\n      eingesammelt: saetze.length,\n      abrufe,\n      vollstaendig: gemeldet_total !== null ? saetze.length >= gemeldet_total : null,\n      datenJson: JSON.stringify(saetze),\n    },\n  },\n];\n"
+      },
+      "id": "b7c6a4d8-7f84-4a91-9c77-8ad6e1d37004",
+      "name": "S11 Alle Buchungen holen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=WITH eingang AS (\n    SELECT\n        t.id,\n        t.offer,\n        t.\"time\",\n        t.status,\n        CASE WHEN t.owner IS NULL THEN NULL ELSE md5(t.owner) END AS user_ref,\n        md5(concat_ws('|', t.offer, t.status, t.\"time\"::text, t.mustpay::text, t.label)) AS payload_hash\n    FROM jsonb_to_recordset($edoJson${{ $json.datenJson }}$edoJson$::jsonb)\n         AS t(\n            id      text,\n            offer   text,\n            \"time\"  timestamptz,\n            status  text,\n            owner   text,\n            mustpay boolean,\n            label   text\n         )\n),\n-- Vor dem Schreiben festhalten, was sich inhaltlich aendert.\nkennzahlen AS (\n    SELECT\n        count(*) AS zeilen,\n        count(*) FILTER (\n            WHERE b.booking_id IS NULL\n               OR b.payload_hash IS DISTINCT FROM e.payload_hash\n        ) AS geaendert\n    FROM eingang e\n    LEFT JOIN edoobox_raw.booking b ON b.booking_id = e.id\n),\ngeschrieben AS (\n    INSERT INTO edoobox_raw.booking AS b (\n        booking_id, offer_id, status, booking_time, user_ref,\n        source, last_synced_at, last_changed_at, payload_hash, is_deleted\n    )\n    SELECT\n        e.id, e.offer, e.status, e.\"time\", e.user_ref,\n        'api', now(), now(), e.payload_hash, false\n    FROM eingang e\n    ON CONFLICT (booking_id) DO UPDATE\n    SET\n        offer_id        = EXCLUDED.offer_id,\n        status          = EXCLUDED.status,\n        booking_time    = EXCLUDED.booking_time,\n        user_ref        = EXCLUDED.user_ref,\n        last_synced_at  = now(),\n        is_deleted      = false,\n        last_changed_at = CASE\n                              WHEN b.payload_hash IS DISTINCT FROM EXCLUDED.payload_hash\n                              THEN now()\n                              ELSE b.last_changed_at\n                          END,\n        payload_hash    = EXCLUDED.payload_hash\n    RETURNING b.booking_id\n),\nfehlend AS (\n    UPDATE edoobox_raw.booking\n    SET is_deleted     = true,\n        last_synced_at = now()\n    WHERE source       = 'api'\n      AND is_deleted   = false\n      AND booking_id NOT IN (SELECT id FROM eingang)\n    RETURNING booking_id\n),\nlauf AS (\n    UPDATE edoobox_raw.sync_run\n    SET status           = 'erfolgreich',\n        finished_at      = now(),\n        bookings_seen    = (SELECT zeilen    FROM kennzahlen),\n        bookings_changed = (SELECT geaendert FROM kennzahlen),\n        api_calls        = {{ $json.abrufe }}\n    WHERE run_id = {{ $json.run_id }}\n    RETURNING run_id, status, bookings_seen, bookings_changed, api_calls\n)\nSELECT\n    l.run_id,\n    l.status,\n    l.bookings_seen    AS gelesen,\n    l.bookings_changed AS inhaltlich_geaendert,\n    l.api_calls        AS abrufe,\n    (SELECT count(*) FROM geschrieben) AS gespeichert,\n    (SELECT count(*) FROM fehlend)     AS als_geloescht_markiert\nFROM lauf l;",
+        "options": {}
+      },
+      "id": "b7c6a4d8-7f84-4a91-9c77-8ad6e1d37005",
+      "name": "S11 Buchungen speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S11 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S11 Vollabgleich starten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S11 Vollabgleich starten": {
+      "main": [
+        [
+          {
+            "node": "S11 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S11 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S11 Alle Buchungen holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S11 Alle Buchungen holen": {
+      "main": [
+        [
+          {
+            "node": "S11 Buchungen speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

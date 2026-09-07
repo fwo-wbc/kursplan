@@ -1,0 +1,50 @@
+{
+  "name": "edoobox 04 - Vollabgleich",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "821ec2bb-188a-4b49-b0bc-81e93ce338c3",
+      "name": "Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    current_database() AS datenbank,\n    current_user AS benutzer,\n    to_regclass('edoobox_raw.sync_run') AS sync_tabelle;",
+        "options": {}
+      },
+      "id": "caf52e41-b723-47f6-8873-fd3931cc9e36",
+      "name": "Datenbank pruefen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        560,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "Datenbank pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}

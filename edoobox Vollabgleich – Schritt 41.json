@@ -1,0 +1,37 @@
+{
+  "name": "S41 Finale Platzregel pruefen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "41000000-0000-4000-8000-000000004101",
+      "name": "S41 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Finale Platzregel: Buchungsanzahl, bezahlte Koepfe und groesste kostenlose Gruppe. Nur lesend.\nWITH pos AS (\n    SELECT p.booking_id,\n           coalesce(nullif(btrim(p.pricecategory_name), ''), '(ohne namen)') AS kat,\n           coalesce(p.quantity, 0) AS menge,\n           CASE WHEN p.pricecategory_name ~* '(bis zu|max\\\\.?|f\\\\.|fuer|für)[^0-9]{0,12}[0-9]+[[:space:]]*person'\n                THEN (substring(p.pricecategory_name from '(?i)(?:bis zu|max\\\\.?|f\\\\.|fuer|für)[^0-9]{0,12}([0-9]+)[[:space:]]*person'))::int END AS basis_n,\n           CASE WHEN p.pricecategory_name ~* '[0-9]+[[:space:]]*(personen|person|teiln|teilnehmer)'\n                THEN (substring(p.pricecategory_name from '(?i)([0-9]+)[[:space:]]*(?:personen|person|teiln|teilnehmer)'))::int END AS text_n,\n           (p.pricecategory_name ~* '(jede|je|pro)[[:space:]]+weitere|preis[^a-zA-ZäöüÄÖÜß]*für[^a-zA-ZäöüÄÖÜß]*jede[^a-zA-ZäöüÄÖÜß]*weitere') AS ist_zusatz\n    FROM edoobox_raw.booking_position p\n),\nje_buchung AS (\n    SELECT b.booking_id, b.offer_id, s.status, coalesce(s.netto, 0) AS netto,\n           max(pos.basis_n) AS basis_n, max(pos.text_n) AS text_n,\n           coalesce(sum(pos.menge) FILTER (WHERE pos.ist_zusatz), 0) AS zusatz_n,\n           coalesce(sum(pos.menge) FILTER (WHERE pos.kat = 'Inklusive'), 0) AS inklusive_n,\n           bool_or(pos.kat = 'Inklusive') AS hat_inklusive\n    FROM edoobox_raw.booking b\n    JOIN kursplan.v_buchung_steuer s ON s.booking_id = b.booking_id\n    LEFT JOIN pos ON pos.booking_id = b.booking_id\n    GROUP BY b.booking_id, b.offer_id, s.status, 4\n),\nkopf AS (\n    SELECT j.*,\n           CASE WHEN basis_n IS NOT NULL THEN basis_n + zusatz_n\n                WHEN text_n IS NOT NULL THEN text_n\n                WHEN hat_inklusive THEN 1 + inklusive_n + zusatz_n\n                ELSE 1 END AS abgeleitet\n    FROM je_buchung j\n),\nje_termin AS (\n    SELECT o.offer_id, o.name, o.date_start, o.user_maximum,\n           count(*) FILTER (WHERE k.status = 'gebucht') AS buchungen,\n           coalesce(sum(k.abgeleitet) FILTER (WHERE k.status = 'gebucht' AND k.netto <> 0), 0) AS bezahlt,\n           coalesce(max(k.abgeleitet) FILTER (WHERE k.status = 'gebucht' AND k.netto = 0), 0) AS groesste_gratisgruppe,\n           greatest(\n               count(*) FILTER (WHERE k.status = 'gebucht'),\n               coalesce(sum(k.abgeleitet) FILTER (WHERE k.status = 'gebucht' AND k.netto <> 0), 0),\n               coalesce(max(k.abgeleitet) FILTER (WHERE k.status = 'gebucht' AND k.netto = 0), 0)\n           ) AS plaetze,\n           round(coalesce(sum(k.netto) FILTER (WHERE k.status = 'gebucht'), 0), 2) AS netto\n    FROM edoobox_raw.offer o\n    JOIN kopf k ON k.offer_id = o.offer_id\n    WHERE o.is_deleted IS NOT TRUE\n    GROUP BY o.offer_id, o.name, o.date_start, o.user_maximum\n),\nroh AS (\n    SELECT 10 AS ordnung, 'A Regelentscheidung' AS bereich,\n           CASE WHEN plaetze = buchungen THEN 'buchungsanzahl'\n                WHEN plaetze = bezahlt THEN 'bezahlte koepfe'\n                ELSE 'groesste gratisgruppe' END AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('buchungen ', sum(buchungen), ' / bezahlt ', sum(bezahlt),\n                  ' / gratismaximum ', sum(groesste_gratisgruppe), ' / plaetze ', sum(plaetze)) AS hinweis\n    FROM je_termin WHERE buchungen > 0\n    GROUP BY 3\n\n    UNION ALL SELECT 20, 'B Ueberbuchung final',\n           concat(to_char(date_start, 'YYYY-MM-DD'), ' ', left(name, 40)),\n           plaetze::numeric,\n           concat('hoechstzahl ', user_maximum, ' / buchungen ', buchungen,\n                  ' / bezahlt ', bezahlt, ' / gratismaximum ', groesste_gratisgruppe,\n                  ' / netto ', netto)\n    FROM je_termin\n    WHERE user_maximum > 0 AND plaetze > user_maximum\n\n    UNION ALL SELECT 30, 'C Auslastung ab 2023',\n           CASE WHEN user_maximum IS NULL OR user_maximum = 0 THEN 'ohne hoechstzahl'\n                WHEN plaetze::numeric / user_maximum > 1 THEN 'ueber 100 prozent'\n                WHEN plaetze::numeric / user_maximum >= 0.75 THEN '75 bis 100 prozent'\n                WHEN plaetze::numeric / user_maximum >= 0.5 THEN '50 bis 75 prozent'\n                WHEN plaetze::numeric / user_maximum >= 0.25 THEN '25 bis 50 prozent'\n                ELSE 'unter 25 prozent' END,\n           count(*)::numeric,\n           concat('plaetze ', sum(plaetze), ' / netto ', round(sum(netto), 2))\n    FROM je_termin\n    WHERE date_start >= '2023-01-01' AND buchungen > 0\n    GROUP BY 3\n\n    UNION ALL SELECT 40, 'D Jahresmittel final',\n           concat('jahr ', extract(year FROM date_start)::int),\n           round(avg(plaetze::numeric / user_maximum) * 100, 1),\n           concat('termine ', count(*), ' / plaetze ', sum(plaetze),\n                  ' / hoechstzahl ', sum(user_maximum), ' / netto ', round(sum(netto), 2))\n    FROM je_termin\n    WHERE user_maximum > 0 AND buchungen > 0\n    GROUP BY 3\n\n    UNION ALL SELECT 50, 'E Kontrolltermin',\n           concat(to_char(date_start, 'YYYY-MM-DD'), ' ', left(name, 40)),\n           plaetze::numeric,\n           concat('hoechstzahl ', user_maximum, ' / buchungen ', buchungen,\n                  ' / bezahlt ', bezahlt, ' / gratismaximum ', groesste_gratisgruppe,\n                  ' / netto ', netto)\n    FROM je_termin\n    WHERE date_start IN ('2022-11-21', '2022-11-22', '2022-11-28', '2022-12-01',\n                         '2023-05-05', '2023-07-19', '2024-02-02', '2024-11-05', '2026-05-21')\n)\nSELECT 'S41' AS schritt, count(*) AS zeilen,\n       string_agg(concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')), coalesce(hinweis, '-')),\n                  chr(10) ORDER BY ordnung, wert DESC, kennzahl) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "41000000-0000-4000-8000-000000004102",
+      "name": "S41 ERGEBNIS Finale Platzregel",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "S41 Manuell starten": {
+      "main": [[{"node": "S41 ERGEBNIS Finale Platzregel", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

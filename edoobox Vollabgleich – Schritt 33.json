@@ -1,0 +1,51 @@
+{
+  "name": "S33 Fehlende Rechnungen finden",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "33000000-0000-4000-8000-000000003301",
+      "name": "S33 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Sucht die Rechnungen der Nulltermine ueber das Terminstartdatum statt ueber\n-- die Vorgangskennung. Vergleicht ausserdem Buchungs- und Rechnungsseite je Jahr.\n-- Nur lesend.\nWITH je_termin AS (\n    SELECT s.offer_id,\n           count(*) FILTER (WHERE s.status = 'gebucht') AS gebucht,\n           round(coalesce(sum(s.netto) FILTER (WHERE s.status = 'gebucht'), 0), 2) AS netto\n    FROM kursplan.v_buchung_steuer s\n    WHERE s.offer_id IS NOT NULL\n    GROUP BY s.offer_id\n),\nnulltermin AS (\n    SELECT o.offer_id, o.name, o.offer_number, o.date_start, o.offerdef_ref, t.gebucht\n    FROM edoobox_raw.offer o\n    JOIN je_termin t ON t.offer_id = o.offer_id\n    WHERE t.gebucht > 0 AND t.netto = 0 AND o.is_deleted IS NOT TRUE\n),\ntreffer AS (\n    SELECT nt.offer_id, nt.gebucht,\n           count(DISTINCT i.invoice_id)                        AS rechnungen,\n           round(coalesce(sum(i.amount), 0), 2)                AS summe\n    FROM nulltermin nt\n    LEFT JOIN edoobox_raw.invoice i\n           ON i.offer_start_date IS NOT NULL\n          AND nt.date_start IS NOT NULL\n          AND date_trunc('day', i.offer_start_date) = date_trunc('day', nt.date_start)\n          AND i.is_deleted IS NOT TRUE\n    GROUP BY nt.offer_id, nt.gebucht\n),\nroh AS (\n    -- A. Rechnungen fuer Nulltermine ueber das Startdatum gefunden\n    SELECT 10 AS ordnung, 'A Nulltermin Rechnungssuche' AS bereich,\n           CASE WHEN rechnungen = 0 THEN 'keine rechnung am termindatum'\n                WHEN rechnungen = 1 THEN 'eine rechnung am termindatum'\n                ELSE 'mehrere rechnungen am termindatum' END AS kennzahl,\n           count(*)::numeric AS wert,\n           concat('buchungen ', sum(gebucht), ' / rechnungssumme ', round(sum(summe), 2)) AS hinweis\n    FROM treffer\n    GROUP BY 3\n\n    -- B. Buchungsseite gegen Rechnungsseite je Jahr\n    UNION ALL SELECT 20, 'B Jahr Buchung', extract(year FROM s.booking_time)::int::text,\n           round(coalesce(sum(s.netto) FILTER (WHERE s.status = 'gebucht'), 0), 2),\n           concat('gebuchte buchungen ', count(*) FILTER (WHERE s.status = 'gebucht'),\n                  ' / brutto ', round(coalesce(sum(s.brutto) FILTER (WHERE s.status = 'gebucht'), 0), 2))\n    FROM kursplan.v_buchung_steuer s\n    GROUP BY 3\n\n    UNION ALL SELECT 21, 'C Jahr Rechnung', extract(year FROM i.date_create)::int::text,\n           round(coalesce(sum(i.amount), 0), 2),\n           concat('rechnungen ', count(*),\n                  ' / mit zahlung ', count(*) FILTER (WHERE i.date_pay IS NOT NULL),\n                  ' / zahlsumme ', round(coalesce(sum(i.amount_pay), 0), 2))\n    FROM edoobox_raw.invoice i\n    WHERE i.is_deleted IS NOT TRUE\n    GROUP BY 3\n\n    -- D. Rechnungen ohne Verbindung zu einer Buchung\n    UNION ALL SELECT 30, 'D Rechnung ohne Buchung',\n           concat('jahr ', coalesce(extract(year FROM i.date_create)::int::text, 'ohne')),\n           count(*)::numeric,\n           concat('summe ', round(coalesce(sum(i.amount), 0), 2),\n                  ' / mit startdatum ', count(*) FILTER (WHERE i.offer_start_date IS NOT NULL))\n    FROM edoobox_raw.invoice i\n    WHERE i.is_deleted IS NOT TRUE\n      AND NOT EXISTS (SELECT 1 FROM kursplan.v_buchung_rechnung vr\n                       WHERE vr.invoice_id = i.invoice_id)\n    GROUP BY 3\n\n    -- E. Deckung des Feldes offer_start_date\n    UNION ALL SELECT 40, 'E Feld offer_start_date',\n           concat('jahr ', coalesce(extract(year FROM i.date_create)::int::text, 'ohne')),\n           count(*)::numeric,\n           concat('mit startdatum ', count(*) FILTER (WHERE i.offer_start_date IS NOT NULL),\n                  ' / anteil ', round(100.0 * count(*) FILTER (WHERE i.offer_start_date IS NOT NULL)\n                                      / count(*), 1), ' prozent')\n    FROM edoobox_raw.invoice i\n    WHERE i.is_deleted IS NOT TRUE\n    GROUP BY 3\n\n    -- F. Nullbuchungen, deren Teilnehmerkennung irgendeine Rechnung hat\n    UNION ALL SELECT 50, 'F Nullbuchung Teilnehmerkennung',\n           CASE WHEN EXISTS (SELECT 1 FROM edoobox_raw.invoice i\n                              WHERE i.user_ref = b.user_ref AND i.is_deleted IS NOT TRUE)\n                THEN 'kennung hat rechnung' ELSE 'kennung ohne rechnung' END,\n           count(*)::numeric, NULL\n    FROM kursplan.v_buchung_steuer s\n    JOIN edoobox_raw.booking b ON b.booking_id = s.booking_id\n    WHERE s.status = 'gebucht' AND coalesce(s.netto, 0) = 0\n    GROUP BY 3\n)\nSELECT\n    'S33' AS schritt,\n    count(*) AS zeilen,\n    string_agg(\n        concat_ws(' | ', bereich, kennzahl, trim(to_char(wert, '99999999990.99')),\n                  coalesce(hinweis, '-')),\n        chr(10) ORDER BY ordnung, kennzahl, wert DESC\n    ) AS bericht\nFROM roh;",
+        "options": {}
+      },
+      "id": "33000000-0000-4000-8000-000000003302",
+      "name": "S33 ERGEBNIS Rechnungssuche",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        540,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S33 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S33 ERGEBNIS Rechnungssuche",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

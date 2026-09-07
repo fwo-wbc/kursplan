@@ -1,0 +1,45 @@
+{
+  "name": "S56 Trainer nach Kurscode ab 2023",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "56000000-0000-4000-8000-000000005601",
+      "name": "S56 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Rein lesende Grundlage fuer die spaetere Tarifpflege.\n-- Jeder Trainer wird je Gesamtangebot genau einmal gezaehlt.\n-- Bei Mehrfachzuweisungen ist der Erloes je Trainer nur ein Kontextwert und nicht addierbar.\nWITH produktiv AS (\n    SELECT t.offer_id, t.kurscode, t.kursbezeichnung, t.date_start,\n           coalesce(t.netto_gebucht, 0)::numeric AS netto_gebucht\n    FROM kursplan.v_kursart_termin t\n    WHERE t.date_start >= timestamptz '2023-01-01 00:00:00 Europe/Berlin'\n),\nangebot_trainer AS (\n    SELECT DISTINCT d.offer_id, dl.admin_id\n    FROM edoobox_raw.offer_date d\n    JOIN edoobox_raw.date_leader dl ON dl.date_id = d.date_id\n    WHERE d.is_deleted = false\n),\nbasis AS (\n    SELECT p.*, z.admin_id, a.shortcut, a.is_active AS admin_aktiv,\n           CASE\n               WHEN z.admin_id IS NULL THEN 'offen'\n               WHEN z.admin_id = 'admin_4c155f660347_225880320' THEN 'eigen'\n               WHEN z.admin_id IN ('admin_802a0b62c8fa_230986090', 'admin_67d66851a4fb_399776305') THEN 'dummy'\n               WHEN z.admin_id = 'admin_4fd8d3239e95_247330005' THEN 'administrativ'\n               WHEN a.admin_id IS NULL THEN 'historisch_offen'\n               ELSE 'fremd_offen'\n           END::text AS kostenrolle,\n           CASE\n               WHEN z.admin_id IS NULL THEN '(ohne Trainer)'\n               WHEN z.admin_id = 'admin_4c155f660347_225880320' THEN 'FW'\n               WHEN z.admin_id = 'admin_802a0b62c8fa_230986090' THEN 'PP'\n               WHEN z.admin_id = 'admin_67d66851a4fb_399776305' THEN 'Hansi Hansen'\n               WHEN z.admin_id = 'admin_4fd8d3239e95_247330005' THEN 'PG'\n               ELSE coalesce(nullif(a.shortcut, ''), z.admin_id)\n           END::text AS trainer\n    FROM produktiv p\n    LEFT JOIN angebot_trainer z ON z.offer_id = p.offer_id\n    LEFT JOIN edoobox_raw.trainer_admin a ON a.admin_id = z.admin_id AND a.is_deleted = false\n),\ntrainer_gesamt AS (\n    SELECT trainer, kostenrolle, admin_id, bool_or(admin_aktiv) AS admin_aktiv,\n           count(DISTINCT offer_id) AS angebote,\n           count(DISTINCT kurscode) AS kurscodes,\n           round(sum(netto_gebucht), 2) AS netto_kontext,\n           min(date_start) AS erster_einsatz, max(date_start) AS letzter_einsatz\n    FROM basis\n    GROUP BY trainer, kostenrolle, admin_id\n),\ntrainer_kurs AS (\n    SELECT trainer, kostenrolle, admin_id, bool_or(admin_aktiv) AS admin_aktiv,\n           kurscode, min(kursbezeichnung) AS kursbezeichnung,\n           count(DISTINCT offer_id) AS angebote,\n           round(sum(netto_gebucht), 2) AS netto_kontext,\n           min(date_start) AS erster_einsatz, max(date_start) AS letzter_einsatz\n    FROM basis\n    GROUP BY trainer, kostenrolle, admin_id, kurscode\n),\nkontrolle AS (\n    SELECT count(*)::bigint AS angebote,\n           count(*) FILTER (WHERE NOT EXISTS (\n               SELECT 1 FROM angebot_trainer at WHERE at.offer_id = p.offer_id\n           ))::bigint AS ohne_trainer,\n           count(*) FILTER (WHERE (\n               SELECT count(*) FROM angebot_trainer at WHERE at.offer_id = p.offer_id\n           ) > 1)::bigint AS mehrfachtrainer,\n           count(*) FILTER (WHERE EXISTS (\n               SELECT 1 FROM angebot_trainer at\n               WHERE at.offer_id = p.offer_id\n                 AND at.admin_id IN (\n                     'admin_802a0b62c8fa_230986090',\n                     'admin_67d66851a4fb_399776305',\n                     'admin_4fd8d3239e95_247330005'\n                 )\n           ))::bigint AS dummy_oder_admin,\n           round(sum(p.netto_gebucht), 2) AS netto\n    FROM produktiv p\n),\nroh AS (\n    SELECT 10 AS sort_bereich,\n           'S56'::text AS schritt, 'A Trainerbestand'::text AS bereich,\n           g.trainer, g.kostenrolle, g.admin_id, g.admin_aktiv,\n           NULL::text AS kurscode, NULL::text AS kursbezeichnung,\n           g.angebote, g.kurscodes, g.netto_kontext AS netto_ab_2023,\n           g.erster_einsatz, g.letzter_einsatz,\n           'Erloes ist bei Mehrfachtrainern nicht ueber Trainerzeilen addierbar'::text AS hinweis\n    FROM trainer_gesamt g\n\n    UNION ALL\n\n    SELECT 20, 'S56', 'B Trainer x Kurscode',\n           k.trainer, k.kostenrolle, k.admin_id, k.admin_aktiv,\n           k.kurscode, k.kursbezeichnung, k.angebote, NULL::bigint,\n           k.netto_kontext, k.erster_einsatz, k.letzter_einsatz,\n           'Grundlage fuer trainer- und themenabhaengige Tarife'::text\n    FROM trainer_kurs k\n\n    UNION ALL\n\n    SELECT 30, 'S56', 'C Kontrolle', '(gesamt)', 'kontrolle',\n           NULL, NULL, NULL, NULL, c.angebote, NULL::bigint, c.netto,\n           NULL, NULL,\n           concat('ohne Trainer ', c.ohne_trainer,\n                  ' / Mehrfachtrainer ', c.mehrfachtrainer,\n                  ' / Dummy oder administrativ ', c.dummy_oder_admin)\n    FROM kontrolle c\n)\nSELECT schritt, bereich, trainer, kostenrolle, admin_id, admin_aktiv,\n       kurscode, kursbezeichnung, angebote, kurscodes, netto_ab_2023,\n       erster_einsatz, letzter_einsatz, hinweis\nFROM roh\nORDER BY sort_bereich, kostenrolle, trainer, angebote DESC, kurscode NULLS FIRST;"
+      },
+      "id": "56000000-0000-4000-8000-000000005602",
+      "name": "S56 ERGEBNIS Trainer nach Kurscode",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [580, 300]
+    }
+  ],
+  "connections": {
+    "S56 Manuell starten": {
+      "main": [[
+        {
+          "node": "S56 ERGEBNIS Trainer nach Kurscode",
+          "type": "main",
+          "index": 0
+        }
+      ]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "56000000-0000-4000-8000-000000005699",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

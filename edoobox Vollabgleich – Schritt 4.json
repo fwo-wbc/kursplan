@@ -1,0 +1,101 @@
+{
+  "name": "S4 Buchungsendpunkt ermitteln",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "821ec2bb-188a-4b49-b0bc-81e93ce338c3",
+      "name": "S4 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f4962864-c25f-4e8c-bde7-1fc971cd9457",
+      "name": "S4 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Ermittelt den nutzbaren Endpunkt fuer die Buchungsliste.\n// Es werden ausschliesslich Lesezugriffe ausgefuehrt.\n// Ausgegeben werden nur Statuscodes und Feldnamen, keine Inhalte.\n\nconst auth = $input.first().json;\n\n// edoobox liefert je nach Server zwei Formen:\n//   A) Token in 'data', edid auf oberster Ebene   (app1, aktuell)\n//   B) Token in 'access_token', edid in 'data.edid' (Dokumentation V2)\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst basis = 'https://app1.edoobox.com';\n\nconst kandidaten = [\n  { methode: 'GET',  url: `${basis}/v2/booking/list` },\n  { methode: 'POST', url: `${basis}/v2/booking/list` },\n  { methode: 'GET',  url: `${basis}/v2/bookings` },\n  { methode: 'GET',  url: `${basis}/v1/bookings?language=de` },\n];\n\nfunction feldnamen(wert, tiefe = 0) {\n  if (Array.isArray(wert)) {\n    return {\n      typ: 'array',\n      anzahl: wert.length,\n      erstes_element: wert.length && tiefe < 3 ? feldnamen(wert[0], tiefe + 1) : null,\n    };\n  }\n  if (wert !== null && typeof wert === 'object') {\n    if (tiefe >= 3) return { typ: 'object', felder: Object.keys(wert) };\n    return Object.fromEntries(\n      Object.entries(wert).slice(0, 40).map(([k, v]) => [k, feldnamen(v, tiefe + 1)])\n    );\n  }\n  return { typ: wert === null ? 'null' : typeof wert };\n}\n\nconst ergebnisse = [];\n\nfor (const kandidat of kandidaten) {\n  try {\n    const antwort = await this.helpers.httpRequest({\n      method: kandidat.methode,\n      url: kandidat.url,\n      headers,\n      json: true,\n      returnFullResponse: true,\n      timeout: 20000,\n    });\n\n    ergebnisse.push({\n      methode: kandidat.methode,\n      url: kandidat.url,\n      status: antwort.statusCode,\n      brauchbar: antwort.statusCode >= 200 && antwort.statusCode < 300,\n      struktur: feldnamen(antwort.body),\n    });\n  } catch (fehler) {\n    ergebnisse.push({\n      methode: kandidat.methode,\n      url: kandidat.url,\n      status: fehler?.response?.status ?? fehler?.httpCode ?? 'kein Status',\n      brauchbar: false,\n      fehlermeldung: String(fehler?.message ?? fehler).slice(0, 300),\n    });\n  }\n}\n\nconst treffer = ergebnisse.filter((e) => e.brauchbar);\n\nreturn [\n  {\n    json: {\n      schritt: 'S4 - Endpunktsuche',\n      hinweis: 'Nur Statuscodes und Feldnamen. Keine Buchungsinhalte, keine Zugangsdaten.',\n      erkannte_tokenform: typeof auth.data === 'string' ? 'Token in data' : 'Token in access_token',\n      gefundene_endpunkte: treffer.map((t) => `${t.methode} ${t.url}`),\n      ergebnisse,\n    },\n  },\n];\n"
+      },
+      "id": "0f2b0a53-2ce4-4a2e-9f4b-6c6a3f7f18aa",
+      "name": "S4 ERGEBNIS Buchungsendpunkt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S4 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S4 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S4 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S4 ERGEBNIS Buchungsendpunkt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

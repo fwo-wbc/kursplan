@@ -1,0 +1,101 @@
+{
+  "name": "S8 Versatzname und Seitenmaximum",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e4f3d1a5-4c51-4d6e-8f44-5da3b8a04001",
+      "name": "S8 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e4f3d1a5-4c51-4d6e-8f44-5da3b8a04002",
+      "name": "S8 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Teil 1: Wie heisst der Versatzparameter?  Seitengroesse fest auf 10.\n// Teil 2: Wie gross darf eine Seite werden?\n// Die Antwort spiegelt die verwendeten Werte im Feld limit zurueck.\n\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst basis = 'https://app1.edoobox.com/v2/booking/list';\n\nfunction auswerten(body) {\n  const roh = body?.data;\n  const liste = roh && typeof roh === 'object' && !Array.isArray(roh) ? Object.entries(roh) : [];\n  const ids = liste.map(([k, v]) => (v && typeof v === 'object' ? v.id ?? k : k));\n  const l = body?.limit ?? {};\n  return {\n    anzahl: liste.length,\n    gemeldet_start: l.start ?? '-',\n    gemeldet_reply: l.reply ?? '-',\n    gemeldet_total: l.total ?? '-',\n    erste_id: ids[0] ?? null,\n  };\n}\n\nasync function abruf(bezeichnung, qs) {\n  try {\n    const antwort = await this.helpers.httpRequest({\n      method: 'GET',\n      url: basis,\n      headers,\n      qs,\n      json: true,\n      returnFullResponse: true,\n      timeout: 120000,\n    });\n    return { variante: bezeichnung, status: antwort.statusCode, ...auswerten(antwort.body) };\n  } catch (fehler) {\n    return {\n      variante: bezeichnung,\n      status: fehler?.response?.status ?? fehler?.httpCode ?? 'kein Status',\n      anzahl: 0,\n      fehlermeldung: String(fehler?.message ?? fehler).slice(0, 160),\n    };\n  }\n}\n\nconst hole = abruf.bind(this);\n\nconst varianten = [\n  ['A Vergleich limit 10', { limit: 10 }],\n  ['B start', { limit: 10, start: 100 }],\n  ['C skip', { limit: 10, skip: 100 }],\n  ['D from', { limit: 10, from: 100 }],\n  ['E begin', { limit: 10, begin: 100 }],\n  ['F position', { limit: 10, position: 100 }],\n  ['G index', { limit: 10, index: 100 }],\n  ['H page', { limit: 10, page: 11 }],\n  ['I first', { limit: 10, first: 100 }],\n  ['J Seitenmass 500', { limit: 500 }],\n  ['K Seitenmass 1000', { limit: 1000 }],\n  ['L Seitenmass 5000', { limit: 5000 }],\n];\n\nconst ergebnisse = [];\nfor (const [bezeichnung, qs] of varianten) {\n  ergebnisse.push(await hole(bezeichnung, qs));\n}\n\nconst vergleich = ergebnisse[0];\n\nreturn ergebnisse.map((e) => ({\n  json: {\n    schritt: 'S8',\n    variante: e.variante,\n    status: e.status,\n    anzahl: e.anzahl,\n    gemeldet_start: e.gemeldet_start ?? '-',\n    gemeldet_reply: e.gemeldet_reply ?? '-',\n    gemeldet_total: e.gemeldet_total ?? '-',\n    versatz_wirkt:\n      e.erste_id && vergleich?.erste_id ? (e.erste_id !== vergleich.erste_id ? 'JA' : 'nein') : '-',\n    fehlermeldung: e.fehlermeldung ?? '-',\n  },\n}));\n"
+      },
+      "id": "e4f3d1a5-4c51-4d6e-8f44-5da3b8a04003",
+      "name": "S8 ERGEBNIS Versatzname",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S8 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S8 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S8 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S8 ERGEBNIS Versatzname",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

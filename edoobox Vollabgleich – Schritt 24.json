@@ -1,0 +1,130 @@
+{
+  "name": "S24 Bruecke Rechnung zu Buchung",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "24000000-0000-4000-8000-000000002401",
+      "name": "S24 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 8 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "24000000-0000-4000-8000-000000002402",
+      "name": "S24 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Zwei Erkundungen in einem Knoten:\n//   1. Feldbestand von /v2/invoice/{id}/data fuer acht Rechnungen\n//   2. gibt die Rechnungsliste erneut aus, damit die Datenbank vergleichen kann\n\nconst auth = $('S24 Token holen').first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nasync function abruf(pfad, qs) {\n  return await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://app1.edoobox.com/v2${pfad}`,\n    headers,\n    qs,\n    json: true,\n    returnFullResponse: true,\n    timeout: 120000,\n    ignoreHttpStatusErrors: true,\n  });\n}\n\nconst hole = abruf.bind(this);\n\nfunction liste(h) {\n  if (!h || typeof h !== 'object') return [];\n  const d = h.data;\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') return Object.values(d);\n  return [];\n}\n\nfunction zahl(w) {\n  if (w === null || w === undefined || w === '' || w === false) return null;\n  const n = Number(String(w).replace(',', '.'));\n  return Number.isFinite(n) ? n : null;\n}\n\nfunction zeitpunkt(w) {\n  return typeof w === 'string' && /^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(w) ? w : null;\n}\n\n// Alle Rechnungen einsammeln\nconst alle = [];\nlet start = 0;\nfor (let i = 0; i < 20; i += 1) {\n  const a = await hole('/invoice/list', { 'limit[start]': start, 'limit[reply]': 2000 });\n  if (a.statusCode !== 200) throw new Error(`invoice/list Status ${a.statusCode}`);\n  const d = liste(a.body);\n  alle.push(...d);\n  if (d.length < 2000) break;\n  start += 2000;\n}\n\nconst saetze = alle.filter((r) => r && r.id).map((r) => ({\n  invoice_id: String(r.id),\n  paytrans: r.paytrans ? String(r.paytrans) : null,\n  user_ref_roh: r.user ? String(r.user) : null,\n  invoice_number: r.number ? String(r.number) : null,\n  amount: zahl(r.amount),\n  status: zahl(r.status),\n  date_create: zeitpunkt(r.date_create),\n  offer_start_date: zeitpunkt(r.offer_start_date),\n}));\n\n// Feldbestand der Einzelrechnung. Acht moeglichst verschiedene Faelle.\nconst proben = [];\nfor (const s of [1, 2, 3].map((n) => saetze.find((x) => x.status === n)).filter(Boolean)) proben.push(s);\nfor (const s of saetze.slice(-3)) if (!proben.includes(s)) proben.push(s);\nfor (const s of saetze) {\n  if (proben.length >= 8) break;\n  if (!proben.includes(s)) proben.push(s);\n}\n\nfunction art(w) {\n  if (w === null) return 'null';\n  if (Array.isArray(w)) return `liste[${w.length}]`;\n  if (typeof w === 'object') return `objekt{${Object.keys(w).slice(0, 14).join(',')}}`;\n  if (typeof w === 'boolean') return `wahrheitswert:${w}`;\n  if (typeof w === 'number') return 'zahl';\n  if (typeof w === 'string') {\n    if (w === '') return 'text:leer';\n    if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(w)) return 'text:zeitpunkt';\n    return `text(${w.length})`;\n  }\n  return typeof w;\n}\n\nconst offen = /id$|_id|ref|booking|offer|order|trans|vat|ust|tax|steuer|mwst|rate|satz|net|gross|brutto|netto|amount|betrag|total|status|type|art|number|nummer|country|land|currency/i;\n\nconst felder = new Map();\nlet gelesen = 0;\nlet fehler = '';\n\nfor (const p of proben) {\n  const a = await hole(`/invoice/${encodeURIComponent(p.invoice_id)}/data`, {});\n  if (a.statusCode !== 200) {\n    if (!fehler) fehler = `Status ${a.statusCode}`;\n    continue;\n  }\n  const roh = a.body?.data;\n  const r = Array.isArray(roh) ? roh[0] : roh;\n  if (!r || typeof r !== 'object') continue;\n  gelesen += 1;\n  for (const [feld, wert] of Object.entries(r)) {\n    if (!felder.has(feld)) felder.set(feld, { feld, arten: new Set(), werte: new Set() });\n    const e = felder.get(feld);\n    e.arten.add(art(wert));\n    if (offen.test(feld) && (typeof wert !== 'object' || wert === null)) {\n      const t = String(wert);\n      if (t.length <= 40) e.werte.add(t);\n    }\n  }\n}\n\nconst zeilen = [{\n  json: {\n    schritt: 'S24',\n    bereich: 'Einzelrechnung',\n    feld: '(Probe)',\n    arten: `${gelesen} von ${proben.length} gelesen${fehler ? ', Fehler: ' + fehler : ''}`,\n    beispielwerte: '',\n    datenJson: JSON.stringify(saetze),\n  },\n}];\n\nfor (const e of [...felder.values()].sort((a, b) => a.feld.localeCompare(b.feld))) {\n  zeilen.push({\n    json: {\n      schritt: 'S24',\n      bereich: 'Einzelrechnung',\n      feld: e.feld,\n      arten: [...e.arten].slice(0, 4).join(' | '),\n      beispielwerte: [...e.werte].slice(0, 6).join(' | '),\n      datenJson: '',\n    },\n  });\n}\n\nreturn zeilen;\n"
+      },
+      "id": "24000000-0000-4000-8000-000000002403",
+      "name": "S24 ERGEBNIS Einzelrechnung",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Sucht eine belastbare Brücke zwischen Rechnung und Buchung.\nWITH eingang AS (\n    SELECT *\n    FROM jsonb_to_recordset($edoJson${{ $json.datenJson }}$edoJson$::jsonb)\n         AS t(\n            invoice_id       text,\n            paytrans         text,\n            user_ref_roh     text,\n            invoice_number   text,\n            amount           numeric,\n            status           integer,\n            date_create      text,\n            offer_start_date text\n         )\n)\nSELECT 'Praefixe unserer transaction_id' AS befund,\n       string_agg(DISTINCT split_part(transaction_id, '_', 1), ', ') AS wert\n  FROM edoobox_raw.booking_transaction\nUNION ALL\nSELECT 'Praefixe unserer booking_id',\n       string_agg(DISTINCT split_part(booking_id, '_', 1), ', ')\n  FROM edoobox_raw.booking\nUNION ALL\nSELECT 'Praefixe unserer offer_id',\n       string_agg(DISTINCT split_part(offer_id, '_', 1), ', ')\n  FROM edoobox_raw.offer\nUNION ALL\nSELECT 'Rechnungsnummer trifft transaction_number',\n       count(*)::text\n  FROM eingang e\n  JOIN edoobox_raw.booking_transaction t ON t.transaction_number = e.invoice_number\nUNION ALL\nSELECT 'md5(user) trifft booking.user_ref',\n       count(DISTINCT e.invoice_id)::text\n  FROM eingang e\n  JOIN edoobox_raw.booking b ON b.user_ref = md5(e.user_ref_roh)\nUNION ALL\nSELECT 'davon eindeutig auf genau eine Buchung',\n       count(*)::text\n  FROM (\n    SELECT e.invoice_id\n      FROM eingang e\n      JOIN edoobox_raw.booking b ON b.user_ref = md5(e.user_ref_roh)\n     GROUP BY e.invoice_id\n    HAVING count(*) = 1\n  ) x\nUNION ALL\nSELECT 'md5(user) und Kursbeginn treffen zusammen',\n       count(DISTINCT e.invoice_id)::text\n  FROM eingang e\n  JOIN edoobox_raw.booking b ON b.user_ref = md5(e.user_ref_roh)\n  JOIN edoobox_raw.offer o   ON o.offer_id = b.offer_id\n WHERE o.date_start = e.offer_start_date::timestamptz\nUNION ALL\nSELECT 'davon eindeutig auf genau eine Buchung',\n       count(*)::text\n  FROM (\n    SELECT e.invoice_id\n      FROM eingang e\n      JOIN edoobox_raw.booking b ON b.user_ref = md5(e.user_ref_roh)\n      JOIN edoobox_raw.offer o   ON o.offer_id = b.offer_id\n     WHERE o.date_start = e.offer_start_date::timestamptz\n     GROUP BY e.invoice_id\n    HAVING count(*) = 1\n  ) y\nUNION ALL\nSELECT 'Rechnungsbetrag trifft Betrag eines Zahlungsvorgangs',\n       count(DISTINCT e.invoice_id)::text\n  FROM eingang e\n  JOIN edoobox_raw.booking_transaction t ON round(t.amount, 2) = round(e.amount, 2)\nUNION ALL\nSELECT 'Beispiel transaction_id (gekuerzt)',\n       string_agg(kurz, ' | ')\n  FROM (\n    SELECT split_part(transaction_id, '_', 1) || '_…' AS kurz\n      FROM edoobox_raw.booking_transaction\n     LIMIT 3\n  ) z;",
+        "options": {}
+      },
+      "id": "24000000-0000-4000-8000-000000002404",
+      "name": "S24 ERGEBNIS Brueckensuche",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        980,
+        300
+      ],
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "S24 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S24 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S24 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S24 ERGEBNIS Einzelrechnung",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S24 ERGEBNIS Einzelrechnung": {
+      "main": [
+        [
+          {
+            "node": "S24 ERGEBNIS Brueckensuche",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "executionTimeout": 900
+  },
+  "active": false,
+  "tags": []
+}

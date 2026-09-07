@@ -1,0 +1,128 @@
+{
+  "name": "S15 Angebotsendpunkt suchen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "f1a0e8b2-b3c8-4ee5-af11-2eb5c4b7b001",
+      "name": "S15 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Eine echte Angebotskennung als Probe fuer die Einzelabfrage.\nSELECT\n    max(offer_id)                    AS eine_kennung,\n    count(DISTINCT offer_id)         AS verschiedene_angebote,\n    count(*)                         AS buchungen\nFROM edoobox_raw.booking\nWHERE is_deleted = false\n  AND offer_id IS NOT NULL;",
+        "options": {}
+      },
+      "id": "f1a0e8b2-b3c8-4ee5-af11-2eb5c4b7b002",
+      "name": "S15 Angebotskennung holen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "expire",
+              "value": "={{ $now.plus({ hours: 2 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f1a0e8b2-b3c8-4ee5-af11-2eb5c4b7b003",
+      "name": "S15 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Probiert moegliche Angebotsendpunkte durch und meldet je Versuch\n// nur Statuscode, Anzahl der Eintraege und Feldnamen. Keine Klardaten.\n\nconst auth = $('S15 Token holen').first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\n\nif (!token || !edid) {\n  throw new Error('Token oder edid nicht gefunden. Vorhandene Felder: ' + Object.keys(auth).join(', '));\n}\n\nconst headers = {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: `Bearer ${token}`,\n  'Content-Type': 'application/json',\n};\n\nconst probe = $('S15 Angebotskennung holen').first().json;\nconst angebot = probe.eine_kennung;\n\nif (!angebot) {\n  throw new Error('Keine Angebotskennung in der Datenbank gefunden.');\n}\n\nconst basis = 'https://app1.edoobox.com/v2';\n\nconst versuche = [\n  { zweck: 'Angebotsliste', pfad: '/offer/list' },\n  { zweck: 'Angebotsliste kurz', pfad: '/offer' },\n  { zweck: 'Angebot einzeln', pfad: `/offer/${encodeURIComponent(angebot)}/data` },\n  { zweck: 'Angebot einzeln kurz', pfad: `/offer/${encodeURIComponent(angebot)}` },\n  { zweck: 'Angebotsgruppen', pfad: '/offerlist/list' },\n  { zweck: 'Kategorien', pfad: '/category/list' },\n  { zweck: 'Termine', pfad: '/date/list' },\n  { zweck: 'Lektionen', pfad: '/lesson/list' },\n  { zweck: 'Kurse', pfad: '/course/list' },\n  { zweck: 'Preiskategorien', pfad: '/pricecategory/list' },\n];\n\nfunction feldnamen(o) {\n  if (!o || typeof o !== 'object') return String(typeof o);\n  return Object.keys(o).slice(0, 40).join(', ');\n}\n\nasync function versuch(v) {\n  try {\n    const antwort = await this.helpers.httpRequest({\n      method: 'GET',\n      url: basis + v.pfad,\n      headers,\n      qs: { 'limit[start]': 0, 'limit[reply]': 3 },\n      json: true,\n      returnFullResponse: true,\n      timeout: 45000,\n      ignoreHttpStatusErrors: true,\n    });\n\n    const koerper = antwort.body ?? {};\n    const inhalt = koerper.data;\n\n    let anzahl = 0;\n    let erstes = null;\n\n    if (Array.isArray(inhalt)) {\n      anzahl = inhalt.length;\n      erstes = inhalt[0];\n    } else if (inhalt && typeof inhalt === 'object') {\n      const werte = Object.values(inhalt);\n      anzahl = werte.length;\n      erstes = werte[0];\n    }\n\n    return {\n      schritt: 'S15',\n      zweck: v.zweck,\n      pfad: v.pfad.replace(/offer_[0-9a-f]+_[0-9]+/i, '{angebot}'),\n      status: antwort.statusCode,\n      gemeldet_total: koerper.limit?.total ?? null,\n      eintraege: anzahl,\n      huellenfelder: feldnamen(koerper),\n      datenfelder: erstes && typeof erstes === 'object' ? feldnamen(erstes) : '',\n    };\n  } catch (e) {\n    return {\n      schritt: 'S15',\n      zweck: v.zweck,\n      pfad: v.pfad.replace(/offer_[0-9a-f]+_[0-9]+/i, '{angebot}'),\n      status: e.statusCode ?? 'Fehler',\n      gemeldet_total: null,\n      eintraege: 0,\n      huellenfelder: String(e.message ?? e).slice(0, 120),\n      datenfelder: '',\n    };\n  }\n}\n\nconst laufen = versuch.bind(this);\nconst zeilen = [];\n\nfor (const v of versuche) {\n  zeilen.push(await laufen(v));\n}\n\nzeilen.push({\n  schritt: 'S15',\n  zweck: 'ZUSAMMENFASSUNG',\n  pfad: '',\n  status: '',\n  gemeldet_total: probe.verschiedene_angebote,\n  eintraege: probe.buchungen,\n  huellenfelder: 'verschiedene Angebote laut Datenbank',\n  datenfelder: '',\n});\n\nreturn zeilen.map((z) => ({ json: z }));\n"
+      },
+      "id": "f1a0e8b2-b3c8-4ee5-af11-2eb5c4b7b004",
+      "name": "S15 ERGEBNIS Endpunktsuche",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "S15 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S15 Angebotskennung holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S15 Angebotskennung holen": {
+      "main": [
+        [
+          {
+            "node": "S15 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S15 Token holen": {
+      "main": [
+        [
+          {
+            "node": "S15 ERGEBNIS Endpunktsuche",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}
