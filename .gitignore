@@ -1,3 +1,8 @@
+# Umgebungsvariablen (niemals einchecken)
+.env
+.env.local
+.env*.local
+
 # Temporäre Diagnose- und Hilfsskripte (alle Verzeichnisse)
 .tmp_*
 
