@@ -8,17 +8,25 @@
 --  Zuordnung nachvollziehbar und versionierbar. Beide Quellen muessen bei
 --  Aenderungen gemeinsam gepflegt werden.
 --
---  Abgeleitete Tabellen (date_leader, booking_position, booking_transaction,
---  invoice_item, invoice_line, invoice_payment, invoice_receipt) werden NICHT
---  ueber P90 als eigenstaendige Listen-Ressource verarbeitet, weil sie aus
---  eingebetteten Arrays bzw. Detailendpunkten (/invoice/{id}/data) stammen
---  (offene Punkte O-8/O-9 der Spezifikation). Siehe Kommentare unten.
+--  Stand 07.09.2026: Die offenen Punkte O-1 und O-2 sind entschieden. Alle
+--  zwoelf Ressourcen werden gespiegelt (Lastenheft E-31e/AK-36). Die sieben
+--  zuvor fehlenden Zieltabellen liegen in
+--  "edoobox-Spiegelung_P90-Zusatztabellen.sql" vor. Kennungen wurden
+--  vereinheitlicht: 'Vat' -> 'edo_vat', 'Countries' -> 'edo_countries'.
+--
+--  Abgeleitete Tabellen: date_leader, booking_position und booking_transaction
+--  werden jetzt IN P90 aus den Listenressourcen abgeleitet (date.leader[],
+--  booking.users[] und booking.transactions[]) - ohne Buchungs-Detailendpunkt (O-8).
+--  Die Rechnungs-Kindtabellen (invoice_item, invoice_line, invoice_payment,
+--  invoice_receipt) bleiben NICHT Teil von P90; sie stammen weiterhin allein aus
+--  dem Rechnungs-Detailendpunkt /invoice/{id}/data (zulaessig laut Entscheidung
+--  19.09.2026). Siehe Kommentare unten.
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS edoobox_raw.p90_ressource (
     ressourcenkennung  text PRIMARY KEY,
     endpunkt           text NOT NULL,
-    zieltabelle        text,               -- NULL = keine Zieltabelle im Workspace (O-2)
+    zieltabelle        text,               -- NULL = keine Zieltabelle im Workspace
     primaerschluessel  text,
     seitengroesse      integer     NOT NULL DEFAULT 2000,
     loesch_auswertung  boolean     NOT NULL DEFAULT true,
@@ -32,22 +40,40 @@ COMMENT ON TABLE edoobox_raw.p90_ressource IS
     'Feste Konfigurationstabelle fuer P90 (Referenz). Keine Nutzereingaben in SQL/Tabellennamen.';
 
 -- ----------------------------------------------------------------------------
--- Aktiv ueber P90 spiegelbare Listen-Ressourcen (Zieltabelle eindeutig vorhanden)
+-- Alle zwoelf Listen-Ressourcen (Zieltabelle eindeutig vorhanden)
 -- ----------------------------------------------------------------------------
 INSERT INTO edoobox_raw.p90_ressource
     (ressourcenkennung, endpunkt, zieltabelle, primaerschluessel, seitengroesse,
      loesch_auswertung, hash_modus, payload_rohdaten, aktiv, anmerkung)
 VALUES
+    -- Operative Ressourcen (P01) und Stamm-/Referenzdaten
     ('edo_admins',   '/admin/list',     'trainer_admin', 'admin_id',     2000, true,  false, false, true,
      'Nur id, shortcut, permission, Aktiv-Status (Datensparsamkeit E-27a/6.7).'),
     ('edo_dates',    '/date/list',      'offer_date',    'date_id',      2000, true,  false, false, true,
-     'date_leader (n:m) wird aus dates.leader[] abgeleitet, nicht als eigene P90-Listenressource (O-8).'),
+     'date_leader (n:m) wird in P90 aus dates.leader[] abgeleitet (nicht als eigene Listenressource, O-8).'),
     ('edo_offers',   '/offer/list',     'offer',         'offer_id',     2000, true,  true,  true,  true,
      'Vollstaendige Antwort zusaetzlich als payload (jsonb); keine Personenangaben.'),
     ('edo_bookings', '/booking/list',   'booking',       'booking_id',   2000, true,  true,  false, true,
-     'user_ref = md5(owner). booking_position/booking_transaction werden aus Buchungsdetails abgeleitet (O-8).'),
+     'user_ref = md5(owner). booking_position aus bookings.users[], booking_transaction aus bookings.transactions[] (O-8).'),
     ('edo_invoices', '/invoice/list',   'invoice',       'invoice_id',   2000, true,  true,  true,  true,
-     'Nur Rechnungskopf via Liste. Kindtabellen stammen aus /invoice/{id}/data (Detailabruf, O-8) und sind nicht Teil von P90.')
+     'Nur Rechnungskopf via Liste. Kindtabellen stammen aus /invoice/{id}/data (Detailabruf bleibt zulaessig, 19.09.2026; O-8) und sind nicht Teil von P90.'),
+    -- Referenzdaten (O-2, neu angelegt)
+    ('edo_vat',            '/vat/list',           'vat',            'vat_id',            2000, true, false, true,  true,
+     'Umsatzsteuer. Referenzdaten ohne Personenbezug; payload als Verlustfreiheits-Sicherung.'),
+    ('edo_countries',      '/country/list',       'country',        'country_id',        2000, true, false, true,  true,
+     'Laender. Referenzdaten ohne Personenbezug; payload als Verlustfreiheits-Sicherung.'),
+    ('edo_categories',     '/category/list',      'category',       'category_id',       2000, true, false, true,  true,
+     'Kategorien. Referenzdaten ohne Personenbezug; payload als Verlustfreiheits-Sicherung.'),
+    ('edo_users',          '/user/list',          'user_account',   'user_ref',          2000, true, false, false, true,
+     'Nur md5(user.id) als user_ref; kein Personenbezug (E-27a). Transformation id -> md5 im P90-Code.'),
+    ('edo_pricecategories', '/pricecategory/list', 'pricecategory',  'pricecategory_id',  2000, true, true,  true,  true,
+     'Preiskategorien (K-09/K-10). Referenzdaten ohne Personenbezug; Hash-Modus + payload.'),
+    ('edo_attendances',    '/attendance/list',    'attendance',     'attendance_id',     2000, true, false, false, true,
+     'Anwesenheiten. Nur Termin-/Benutzerbezug (md5) und Status; kein payload (Personenbezug).'),
+    ('edo_transactions',   '/transaction/list',   'transaction_full','transaction_id',   2000, true, false, false, true,
+      'Gesamtressource ohne userdata-Personendaten (E-27a). Keine P90-Ableitung.'),
+    ('edo_tags',           '/tag/list',           'tag',            'tag_id',           2000, true, false, true,  true,
+      'Tags/Etiketten. Referenzdaten ohne Personenbezug; payload als Sicherung. Verifiziert 26.09.2026.')
 ON CONFLICT (ressourcenkennung) DO UPDATE SET
     endpunkt          = EXCLUDED.endpunkt,
     zieltabelle       = EXCLUDED.zieltabelle,
@@ -60,49 +86,16 @@ ON CONFLICT (ressourcenkennung) DO UPDATE SET
     anmerkung         = EXCLUDED.anmerkung;
 
 -- ----------------------------------------------------------------------------
--- Ressourcen der zwoelf edoobox-Ressourcen OHNE Zieltabelle im Workspace (O-2).
--- Diese Eintraege sind Platzhalter: P90 weist den Aufruf mit klarer Fehlermeldung
--- zurueck, solange keine Zieltabellen festgelegt sind. Es werden KEINE Datensaetze
--- erfunden und keine Tabellen implizit erwartet.
--- ----------------------------------------------------------------------------
-INSERT INTO edoobox_raw.p90_ressource
-    (ressourcenkennung, endpunkt, zieltabelle, primaerschluessel, seitengroesse,
-     loesch_auswertung, hash_modus, payload_rohdaten, aktiv, anmerkung)
-VALUES
-    ('Vat',                '/vat/list',           NULL, NULL, 2000, true, false, false, false,
-     'Keine Zieltabelle im Workspace (O-2).'),
-    ('Countries',          '/country/list',       NULL, NULL, 2000, true, false, false, false,
-     'Keine Zieltabelle im Workspace (O-2).'),
-    ('edo_categories',     '/category/list',      NULL, NULL, 2000, true, false, false, false,
-     'Keine Zieltabelle im Workspace (O-2).'),
-    ('edo_users',          '/user/list',          NULL, NULL, 2000, true, false, false, false,
-     'Keine Zieltabelle; nur md5(user_ref) in booking/invoice (O-2, Datensparsamkeit).'),
-    ('edo_pricecategories', '/pricecategory/list', NULL, NULL, 2000, true, false, false, false,
-     'Keine eigenstaendige Zieltabelle; nur booking_position/preiskategorie_ausnahme (O-2).'),
-    ('edo_attendances',    '/attendance/list',    NULL, NULL, 2000, true, false, false, false,
-     'Keine Zieltabelle; laut Analyse nicht erforderlich fuer DB I (O-2).'),
-    ('edo_transactions',   '/transaction/list',   NULL, NULL, 2000, true, false, false, false,
-     'Nur Buchungsbezug in booking_transaction; Gesamtressource ohne Zieltabelle (O-2/O-9).')
-ON CONFLICT (ressourcenkennung) DO UPDATE SET
-    endpunkt          = EXCLUDED.endpunkt,
-    zieltabelle       = EXCLUDED.zieltabelle,
-    primaerschluessel = EXCLUDED.primaerschluessel,
-    seitengroesse     = EXCLUDED.seitengroesse,
-    loesch_auswertung = EXCLUDED.loesch_auswertung,
-    hash_modus        = EXCLUDED.hash_modus,
-    payload_rohdaten  = EXCLUDED.payload_rohdaten,
-    aktiv             = EXCLUDED.aktiv,
-    anmerkung         = EXCLUDED.anmerkung;
-
--- ----------------------------------------------------------------------------
--- Abgeleitete Tabellen (keine eigenen Listen-Endpunkte, daher keine P90-Zeile):
---   date_leader          aus dates.leader[]            (Schritt 54)
---   booking_position     aus bookings.users[]          (Schritt 12)
---   booking_transaction  aus Buchung bzw. /transaction/list (Schritt 11)
---   invoice_item         aus /invoice/{id}/data items.contained
---   invoice_line         aus /invoice/{id}/data invoice_data.items
---   invoice_payment      aus /invoice/{id}/data pay
---   invoice_receipt      aus /invoice/{id}/data receipt
+-- Abgeleitete Tabellen:
+--   IN P90 abgeleitet (aus Listenressourcen, ohne Buchungs-Detailendpunkt; O-8):
+--     date_leader          aus edo_dates.leader[]       (Schritt 54)
+--     booking_position     aus edo_bookings.users[]     (Gruppierung je Preiskategorie + JOIN pricecategory)
+--     booking_transaction  aus edo_bookings.transactions[] (eingebettete Vorgaenge; transaction_time bleibt NULL)
+--   WEITERHIN NICHT in P90 (nur Rechnungs-Detailendpunkt /invoice/{id}/data):
+--     invoice_item         items.contained
+--     invoice_line         invoice_data.items
+--     invoice_payment      pay
+--     invoice_receipt      receipt
 -- ----------------------------------------------------------------------------
 
 GRANT SELECT ON edoobox_raw.p90_ressource TO n8n_writer;

@@ -1,0 +1,55 @@
+{
+  "name": "S63 Kostenkonfiguration schliessen und neue Trainer/Kurscodes anlegen",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "63000000-0000-4000-8000-000000006311",
+      "name": "S63 Manuell starten",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- S63: letzte offene Kostenkonfiguration schliessen und O-10 (Teilumfang)\n-- neue Trainer/Kurscodes vollstaendig anlegen, ohne historische Platzhalter\n-- zu erfinden. Wiederholbar (idempotent) als Pflegeschritt nach P01/P03.\n\n-- 1) Neue Trainerprofile vollstaendig anlegen (nur aktuelle Admin-Liste).\nINSERT INTO kursplan.trainer_kostenprofil_admin\n    (admin_id, trainer_code, kostenrolle, tarif_1, tarif_2, standard_tarif, ist_aktiv, bemerkung, geaendert_am)\nSELECT\n    ta.admin_id,\n    coalesce(nullif(btrim(ta.shortcut), ''), ta.admin_id),\n    'fremd',\n    270.00,\n    370.00,\n    NULL,\n    true,\n    'S63: neu angelegt; Kostenrolle und Tarife vor Verwendung pruefen',\n    now()\nFROM edoobox_raw.trainer_admin ta\nWHERE ta.is_deleted = false\n  AND NOT EXISTS (\n      SELECT 1 FROM kursplan.trainer_kostenprofil_admin p WHERE p.admin_id = ta.admin_id\n  )\nON CONFLICT (admin_id) DO NOTHING;\n\n-- 2) Offene Fremdtrainer-Kurs-Kombinationen vollstaendig regeln.\nINSERT INTO kursplan.trainer_kurs_tarifregel\n    (admin_id, kurscode, tarif, trainerkosten_override, ist_aktiv, bemerkung, geaendert_am)\nSELECT\n    k.admin_id,\n    k.kurscode,\n    'tarif_1',\n    NULL,\n    true,\n    'S63: neu angelegte Regel; Tarif pruefen (Standard tarif_1)',\n    now()\nFROM kursplan.v_angebot_trainerkosten k\nWHERE k.date_start >= timestamp '2023-01-01'\n  AND k.kostenkonfiguration_fehlt\n  AND k.kostenrolle = 'fremd'\n  AND k.standard_tarif IS NULL\n  AND k.verwendeter_tarif IS NULL\n  AND k.verwendeter_override IS NULL\nGROUP BY k.admin_id, k.kurscode\nON CONFLICT (admin_id, kurscode) DO UPDATE\nSET tarif = 'tarif_1',\n    trainerkosten_override = NULL,\n    ist_aktiv = true,\n    bemerkung = EXCLUDED.bemerkung,\n    geaendert_am = now();\n\n-- 3) Kontrolle\nWITH offen AS (\n    SELECT count(*) AS anzahl, round(coalesce(sum(netto_gebucht), 0), 2) AS netto\n    FROM kursplan.v_termin_db1\n    WHERE date_start >= timestamp '2023-01-01'\n      AND kosten_aktiv\n      AND kostenkonfiguration_fehlt\n),\nneue_profile AS (\n    SELECT count(*) AS anzahl FROM kursplan.trainer_kostenprofil_admin\n    WHERE bemerkung LIKE '%S63%'\n),\nneue_regeln AS (\n    SELECT count(*) AS anzahl FROM kursplan.trainer_kurs_tarifregel\n    WHERE bemerkung LIKE '%S63%'\n)\nSELECT\n    'S63'::text AS schritt,\n    'A Kontrolle'::text AS bereich,\n    'offene Kostenkonfigurationen nach Fix'::text AS kennzahl,\n    o.anzahl::numeric AS wert,\n    concat('Netto ', o.netto) AS hinweis\nFROM offen o\nUNION ALL SELECT 'S63', 'B Neue Profile', 'neu angelegte Trainerprofile', p.anzahl, 'idempotent' FROM neue_profile p\nUNION ALL SELECT 'S63', 'C Neue Regeln', 'neu angelegte Trainer-Kurs-Regeln', r.anzahl, 'tarif_1 als Standard' FROM neue_regeln r\nORDER BY bereich;",
+        "options": {}
+      },
+      "id": "63000000-0000-4000-8000-000000006312",
+      "name": "S63 ADMIN Konfiguration schliessen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [300, 0],
+      "credentials": {
+        "postgres": {
+          "id": "eXRRFRowW6RCTJvp",
+          "name": "PostgreSQL Kursplan – n8n_writer"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "S63 Manuell starten": {
+      "main": [
+        [
+          {
+            "node": "S63 ADMIN Konfiguration schliessen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "active": false,
+  "versionId": "63000000-0000-4000-8000-000000006300",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

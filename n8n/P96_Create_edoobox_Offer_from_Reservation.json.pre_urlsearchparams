@@ -1,0 +1,201 @@
+{
+    "name": "P96 - Create edoobox Offer from Reservation",
+    "active": true,
+    "nodes": [
+        {
+            "id": "p96-0001-webhook",
+            "name": "P96 Webhook",
+            "webhookId": "bb0c0ab0-ba66-4805-b77a-170cf53d868e",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                240,
+                300
+            ],
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "create-edoobox-offer",
+                "responseMode": "responseNode",
+                "options": {}
+            }
+        },
+        {
+            "id": "p96-0002-token",
+            "name": "P96 Token holen",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                460,
+                300
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "https://app1.edoobox.com/v2/auth",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpCustomAuth",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "grant-type",
+                            "value": "password"
+                        },
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ expire: $now.plus({ hours: 24 }).toISO() }) }}",
+                "options": {}
+            },
+            "credentials": {
+                "httpCustomAuth": {
+                    "id": "ecGv3wCmKLEUq8fX",
+                    "name": "Custom Auth account"
+                }
+            }
+        },
+        {
+            "id": "p96-0003-token-normalisieren",
+            "name": "P96 Token normalisieren",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                680,
+                300
+            ],
+            "parameters": {
+                "jsCode": "// Token aus beiden edoobox-Antwortformen ermitteln (analog P90).\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\nif (!token) {\n  throw new Error('Kein Token in der edoobox-Auth-Antwort enthalten.');\n}\nconst webhook = $('P96 Webhook').first().json;\n// Der Webhook-Node legt den Request-Body unter 'body' ab. Die Payload-Felder\n// (kdnr, firmenname, kursnr, start, ende, ...) werden deshalb flach uebernommen,\n// damit die Folgeknoten sie direkt lesen koennen.\nconst payload = webhook.body || {};\nconst basis = payload.basis_url || auth.basis_url || 'https://app1.edoobox.com';\nreturn [{ json: { ...payload, token, edid, basis } }];"
+            }
+        },
+        {
+            "id": "p96-0004-kategorien",
+            "name": "P96 Kategorien verarbeiten",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                900,
+                300
+            ],
+            "parameters": {
+                "jsCode": "// Kategorie-Handling:\n//  1) Falls im Payload eine category_id uebergeben wurde: pruefen, ob sie in\n//     edoobox existiert (GET /v2/category/{category_id}).\n//  2) Existiert sie (HTTP 200): diese ID verwenden.\n//  3) Existiert sie nicht (HTTP 404 oder Fehler):\n//     a) Hauptkategorie 'Firmenkurse' ueber GET /v2/category/list suchen\n//        (List-Endpunkt gemaess P90: '/category/list', Paginierung limit[start/reply]).\n//     b) Unterkategorie '[kdnr] [Firmenname]' suchen, sonst unter 'Firmenkurse' anlegen.\n//        GET listet die Elternkennung im Feld 'parent'; das ANLEGEN erwartet sie im\n//        Feld 'category' (API-Hinweis ED80100: require { name, category, type }).\nconst state = $('P96 Token normalisieren').first().json;\nconst headers = {\n  'Authorization': `Bearer ${state.token}`,\n  'Content-Type': 'application/json',\n  'grant-type': 'access_token',\n  ...(state.edid ? { edid: state.edid } : {})\n};\n\nfunction rowsAus(roh) {\n  const d = roh && roh.data ? roh.data : roh;\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') return Object.values(d);\n  return [];\n}\n\n// 1) Uebergebene category_id pruefen (GET /v2/category/{category_id})\nlet categoryId = state.category_id ? String(state.category_id) : null;\nif (categoryId) {\n  const pruef = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `${state.basis}/v2/category/${encodeURIComponent(categoryId)}`,\n    headers,\n    json: true,\n    returnFullResponse: true,\n    timeout: 120000,\n    ignoreHttpStatusErrors: true,\n  });\n\n  if (pruef.statusCode >= 200 && pruef.statusCode < 300) {\n    // 2) Kategorie existiert -> uebergebene ID verwenden\n    categoryId = String(categoryId);\n  } else {\n    // 3) HTTP 404 oder Fehler -> Kategorie neu ermitteln bzw. anlegen\n    categoryId = null;\n  }\n}\n\nif (!categoryId) {\n  // 3a) Hauptkategorie 'Firmenkurse' ueber GET /v2/category/list suchen\n  const listen = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `${state.basis}/v2/category/list`,\n    headers,\n    qs: { 'limit[start]': 0, 'limit[reply]': 2000 },\n    json: true,\n    returnFullResponse: true,\n    timeout: 120000,\n    ignoreHttpStatusErrors: true,\n  });\n\n  if (!(listen.statusCode >= 200 && listen.statusCode < 300)) {\n    throw new Error('GET /v2/category/list: HTTP ' + listen.statusCode + ' - ' + JSON.stringify(listen.body).slice(0, 800));\n  }\n\n  const kategorien = rowsAus(listen.body);\n  const haupt = kategorien.find((c) => (c.name || c.title) === 'Firmenkurse');\n  if (!haupt) {\n    throw new Error('Hauptkategorie Firmenkurse wurde nicht gefunden.');\n  }\n  const hauptId = haupt.id ?? haupt.category_id ?? haupt.ref;\n\n  // 3b) Unterkategorie '[kdnr] [Firmenname]' suchen\n  const unterName = `${state.kdnr} ${state.firmenname}`;\n  const unter = kategorien.find((c) => (c.name || c.title) === unterName);\n  categoryId = unter ? String(unter.id ?? unter.category_id ?? unter.ref) : null;\n\n  // 3c) Nicht gefunden -> unter 'Firmenkurse' neu anlegen\n  if (!categoryId) {\n    const angelegt = await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${state.basis}/v2/category`,\n      headers,\n      body: { data: { name: unterName, category: hauptId, type: 'folder' } },\n      json: true,\n      returnFullResponse: true,\n      timeout: 120000,\n      ignoreHttpStatusErrors: true,\n    });\n\n    if (!(angelegt.statusCode >= 200 && angelegt.statusCode < 300)) {\n      throw new Error('POST /v2/category: HTTP ' + angelegt.statusCode + ' - ' + JSON.stringify(angelegt.body).slice(0, 800));\n    }\n\n    const ak = angelegt.body || {};\n    if (ak.data && typeof ak.data === 'object') {\n      categoryId = ak.data.id ?? ak.data.category_id ?? ak.data.ref;\n    } else if (typeof ak.data === 'string' || typeof ak.data === 'number') {\n      categoryId = ak.data;\n    } else if (ak.category && typeof ak.category === 'object') {\n      categoryId = ak.category.id ?? ak.category.category_id ?? ak.category.ref;\n    } else {\n      categoryId = ak.id ?? ak.category_id ?? ak.ref;\n    }\n    if (categoryId !== null && categoryId !== undefined) {\n      categoryId = String(categoryId);\n    }\n  }\n}\n\nif (!categoryId) {\n  throw new Error('Unterkategorie konnte nicht ermittelt oder angelegt werden.');\n}\n\nreturn [{ json: { ...state, category_id: String(categoryId) } }];"
+            }
+        },
+        {
+            "id": "p96-0005-offer",
+            "name": "P96 Offer anlegen",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1120,
+                300
+            ],
+            "parameters": {
+                "jsCode": "// Angebot durch DUPLIZIEREN des Vorlagen-Angebots erzeugen und veroeffentlichen.\r\n// edoobox V2 POST /v2/offer/{template_id}/duplicate erwartet als Form-Data exakt\r\n// die Felder \"name\" und \"category\" (laut API-Antwort). Das Duplikat uebernimmt\r\n// alle Inhalte der Vorlage (Preise, Bild, Beschreibung, ...) - es wird KEIN\r\n// leeres Angebot per POST /v2/offer angelegt und KEINE Preiskategorien kopiert.\r\n//\r\n// VEROEFFENTLICHUNG:\r\n// Das Statusfeld heisst \"status\" und ist numerisch:\r\n//   status = 0  => \"Entwurf\"\r\n//   status = 1  => \"Veröffentlicht\"\r\n//   status = 2  => \"Garantierte Durchführung\"\r\n//   status = 3/4/5 => abgeschlossen/archiviert\r\n// Das Duplikat wird per PUT /v2/offer/{newOfferId} auf status = 1 gesetzt und\r\n// anschliessend per GET zurueckgelesen und verifiziert.\r\nconst state = $('P96 Kategorien verarbeiten').first().json;\r\nconst headers = {\r\n  'Authorization': `Bearer ${state.token}`,\r\n  'Content-Type': 'application/x-www-form-urlencoded',\r\n  'grant-type': 'access_token',\r\n  ...(state.edid ? { edid: state.edid } : {})\r\n};\r\n\r\n// GET /v2/offer/{id} liefert { data: { <id>: { record } } } bzw. { data: [] }.\r\n// Diese Helferfunktion entpackt die Kennungs-Ebene.\r\nfunction entpacken(body) {\r\n  if (!body || typeof body !== 'object') return body;\r\n  let d = body.data ?? body;\r\n  while (d && typeof d === 'object' && !Array.isArray(d)) {\r\n    const keys = Object.keys(d);\r\n    if (keys.length === 1 && d[keys[0]] && typeof d[keys[0]] === 'object') {\r\n      d = d[keys[0]];\r\n      continue;\r\n    }\r\n    break;\r\n  }\r\n  if (Array.isArray(d)) return d[0] ?? null;\r\n  return d;\r\n}\r\n\r\nconst templateId = state.template_id || state.template_offer_id;\r\nif (!templateId) {\r\n  throw new Error('Keine template_id im Payload vorhanden - Duplizieren nicht moeglich.');\r\n}\r\n\r\nconst offerTitle = state.kurstitel || state.vorlagen_name || state.thema || '';\r\nif (!offerTitle) {\r\n  throw new Error('Kein Angebotstitel (kurstitel/vorlagen_name/thema) im Payload vorhanden.');\r\n}\r\n\r\n// 1) Vorlagen-Angebot duplizieren: POST /v2/offer/{template_id}/duplicate\r\n//    mit Form-Data (URLSearchParams): exakt 'name' und 'category'.\r\nconst form = new URLSearchParams();\r\nform.set('name', offerTitle);\r\nform.set('category', String(state.category_id));\r\n\r\nconst antwort = await this.helpers.httpRequest({\r\n  method: 'POST',\r\n  url: `${state.basis}/v2/offer/${templateId}/duplicate`,\r\n  headers,\r\n  body: form.toString(),\r\n  json: false,\r\n  returnFullResponse: true,\r\n  ignoreHttpStatusErrors: true,\r\n  timeout: 60000\r\n});\r\n\r\nif (!(antwort.statusCode >= 200 && antwort.statusCode < 300) || (antwort.body && antwort.body.success === false)) {\r\n  throw new Error('edoobox POST /v2/offer/' + templateId + '/duplicate: HTTP ' + antwort.statusCode + ' - ' + JSON.stringify(antwort.body).slice(0, 1500));\r\n}\r\n\r\nconst roh = antwort.body;\r\nconst neu = roh && (roh.offer ?? roh.data ?? roh);\r\nconst offerId = (neu && (neu.id ?? neu.offer_id)) || (roh && roh.data && roh.data.id);\r\nif (!offerId) {\r\n  throw new Error('edoobox hat keine offer_id zurueckgeliefert (Antwort: ' + JSON.stringify(roh).slice(0, 500) + ')');\r\n}\r\n\r\n// 2) Duplikat veroeffentlichen: PUT /v2/offer/{newOfferId} mit status = 1.\r\nconst putAntwort = await this.helpers.httpRequest({\r\n  method: 'PUT',\r\n  url: `${state.basis}/v2/offer/${offerId}`,\r\n  headers: { ...headers, 'Content-Type': 'application/json' },\r\n  body: { data: { status: 1 } },\r\n  json: true,\r\n  returnFullResponse: true,\r\n  ignoreHttpStatusErrors: true,\r\n  timeout: 60000\r\n});\r\n\r\nif (!(putAntwort.statusCode >= 200 && putAntwort.statusCode < 300) || (putAntwort.body && putAntwort.body.success === false)) {\r\n  throw new Error('edoobox PUT /v2/offer/' + offerId + ' (status=1): HTTP ' + putAntwort.statusCode + ' - ' + JSON.stringify(putAntwort.body).slice(0, 1500));\r\n}\r\n\r\n// 3) Gezielter Einzel-Sync: Datensatz zuruecklesen und Veroeffentlichung verifizieren.\r\nconst getAntwort = await this.helpers.httpRequest({\r\n  method: 'GET',\r\n  url: `${state.basis}/v2/offer/${offerId}`,\r\n  headers: { ...headers, 'Content-Type': 'application/json' },\r\n  json: true,\r\n  returnFullResponse: true,\r\n  ignoreHttpStatusErrors: true,\r\n  timeout: 60000\r\n});\r\n\r\nif (!(getAntwort.statusCode >= 200 && getAntwort.statusCode < 300)) {\r\n  throw new Error('edoobox GET /v2/offer/' + offerId + ': HTTP ' + getAntwort.statusCode + ' - ' + JSON.stringify(getAntwort.body).slice(0, 1500));\r\n}\r\n\r\nconst offerRoh = entpacken(getAntwort.body);\r\nconst veroeffentlicht = offerRoh && Number(offerRoh.status) === 1;\r\nif (!veroeffentlicht) {\r\n  throw new Error('edoobox hat das Angebot nicht auf \"veroeffentlicht\" gesetzt (status=' + JSON.stringify(offerRoh && offerRoh.status) + ')');\r\n}\r\n\r\nreturn [{ json: { ...state, offer_id: String(offerId), published: true, offer: offerRoh } }];"
+            }
+        },
+        {
+            "id": "p96-0006-date",
+            "name": "P96 Date anlegen",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1340,
+                300
+            ],
+            "parameters": {
+                "jsCode": "// Termin (Date) anlegen: Start/Ende, Trainer und einen kalendersprechenden Titel.\n// EVENTUAL-CONSISTENCY-FIX: Der Offer wurde im vorherigen Knoten gerade erst\n// angelegt. Ein unmittelbar folgender POST /v2/date kann bei edoobox mit\n// HTTP 402 ED80100 abgelehnt werden, weil der frische Offer noch nicht\n// vollstaendig indiziert ist. Deshalb Retry mit Backoff (bis zu 4 Versuche).\nconst zzState = $('P96 Offer anlegen').first().json;\nconst zzHeaders = {\n  'Authorization': `Bearer ${zzState.token}`,\n  'Content-Type': 'application/json',\n  'grant-type': 'access_token',\n  ...(zzState.edid ? { edid: zzState.edid } : {})\n};\n\nfunction zzEntpacken(body) {\n  if (!body || typeof body !== 'object') return body;\n  let zzD = body.data ?? body;\n  while (zzD && typeof zzD === 'object' && !Array.isArray(zzD)) {\n    const zzKeys = Object.keys(zzD);\n    if (zzKeys.length === 1 && zzD[zzKeys[0]] && typeof zzD[zzKeys[0]] === 'object') {\n      zzD = zzD[zzKeys[0]];\n      continue;\n    }\n    break;\n  }\n  if (Array.isArray(zzD)) return zzD[0] ?? null;\n  return zzD;\n}\n\nconst zzKurstitel = zzState.kurstitel || zzState.vorlagen_name || zzState.thema || '';\nconst zzTrainerKuerzel = (zzState.trainer_kuerzel || '').trim();\nconst zzTitle = zzTrainerKuerzel\n  ? `${zzState.kdnr} ${zzKurstitel} (${zzTrainerKuerzel})`\n  : [zzState.kdnr, zzKurstitel].filter(Boolean).join(' ');\n\nconst zzBody = {\n  offer: zzState.offer_id,\n  description: zzTitle,\n  date_start: zzState.start,\n  date_end: zzState.ende,\n  place: false,\n  room: false,\n  leader: [zzState.trainer_admin_id]\n};\n\n// Retry-Loop (initial + 3 Wiederholungen). Rekursion ohne Top-Level-let.\nasync function zzDateAnlegen(zzVersuch) {\n  const zzAntwort = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${zzState.basis}/v2/date`,\n    headers: zzHeaders,\n    body: { data: zzBody },\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n    timeout: 60000\n  });\n\n  const zzOk = (zzAntwort.statusCode >= 200 && zzAntwort.statusCode < 300)\n    && !(zzAntwort.body && zzAntwort.body.success === false);\n  if (zzOk) return zzAntwort;\n\n  const zzBodyText = JSON.stringify(zzAntwort.body).slice(0, 400);\n  const zzRetryable = zzAntwort.statusCode === 402 || /ED80100/.test(zzBodyText);\n  if (zzRetryable && zzVersuch < 4) {\n    await new Promise((rr) => setTimeout(rr, zzVersuch * 1000));\n    return zzDateAnlegen(zzVersuch + 1);\n  }\n  throw new Error('edoobox POST /v2/date: HTTP ' + zzAntwort.statusCode + ' - ' + zzBodyText);\n}\n\nconst zzAntwortFinal = await zzDateAnlegen(1);\n\nconst zzRoh = zzAntwortFinal.body;\nconst zzNeu = zzRoh && (zzRoh.date ?? zzRoh.data ?? zzRoh);\nconst zzDateId = (zzNeu && (zzNeu.id ?? zzNeu.date_id)) || (zzRoh && zzRoh.data && zzRoh.data.id);\nif (!zzDateId) {\n  throw new Error('edoobox hat keine date_id zurueckgeliefert (Antwort: ' + JSON.stringify(zzRoh).slice(0, 500) + ')');\n}\n\n// Gezielter Einzel-Sync: nur diesen einen Termin zuruecklesen.\nconst zzGetAntwort = await this.helpers.httpRequest({\n  method: 'GET',\n  url: `${zzState.basis}/v2/date/${zzDateId}`,\n  headers: zzHeaders,\n  json: true,\n  returnFullResponse: true,\n  ignoreHttpStatusErrors: true,\n  timeout: 60000\n});\n\nif (!(zzGetAntwort.statusCode >= 200 && zzGetAntwort.statusCode < 300)) {\n  throw new Error('edoobox GET /v2/date/' + zzDateId + ': HTTP ' + zzGetAntwort.statusCode + ' - ' + JSON.stringify(zzGetAntwort.body).slice(0, 1500));\n}\n\nconst zzDateRoh = zzEntpacken(zzGetAntwort.body);\n\nreturn [{ json: { offer_id: zzState.offer_id, date_id: String(zzDateId), offer: zzState.offer, offer_date: zzDateRoh } }];"
+            }
+        },
+        {
+            "id": "p96-0007-antwort",
+            "name": "P96 Antwort senden",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1,
+            "position": [
+                1560,
+                300
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ JSON.stringify({ offer_id: $json.offer_id, date_id: $json.date_id, offer: $json.offer, offer_date: $json.offer_date }) }}",
+                "options": {}
+            }
+        }
+    ],
+    "connections": {
+        "P96 Webhook": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Token holen",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "P96 Token holen": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Token normalisieren",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "P96 Token normalisieren": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Kategorien verarbeiten",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "P96 Kategorien verarbeiten": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Offer anlegen",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "P96 Offer anlegen": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Date anlegen",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "P96 Date anlegen": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Antwort senden",
+                        "type": "main"
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1",
+        "availableInMCP": true
+    }
+}

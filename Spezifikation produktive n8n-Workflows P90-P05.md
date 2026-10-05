@@ -531,7 +531,9 @@ Offene Frage 3 des Lastenhefts: Über welchen Kanal (E-Mail-System/-Konto) verse
 
 ### O-8 — Detailabruf Rechnungen und Buchungsdetails
 
-Die Rechnungstabellen stammen aus `/v2/invoice/{id}/data` (Detailabruf). E-24 verbietet im Regelbetrieb Einzelabrufe sämtlicher Buchungsdetails. Es ist zu klären, wie die `booking_position`/`booking_transaction`-Daten produktiv **ohne** Detailendpunkt aus den Listenressourcen gewonnen werden (die Analyse verweist auf `booking/list` mit Teilnehmer-/Kategorie-/Transaktionsbezügen), und ob der Rechnungs-Detailabruf weiterhin zulässig ist.
+**Entschieden (19.09.2026):** Der Rechnungs-Detailabruf `/v2/invoice/{id}/data` bleibt zulässig. E-24 untersagt im Regelbetrieb Einzelabrufe von **Buchungsdetails**; das Befüllen der Rechnungs-Kindtabellen (`invoice_item`, `invoice_line`, `invoice_payment`, `invoice_receipt`) über den Rechnungs-Detailendpunkt ist davon nicht betroffen und wird beibehalten.
+
+**Weiterhin offen:** Wie die `booking_position`/`booking_transaction`-Daten produktiv **ohne** Buchungs-Detailendpunkt aus den Listenressourcen gewonnen werden (die Analyse verweist auf `booking/list` mit Teilnehmer-/Kategorie-/Transaktionsbezügen).
 
 ### O-9 — Vollständige Transaktionsressource
 

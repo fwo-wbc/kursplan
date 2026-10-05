@@ -1,0 +1,201 @@
+{
+    "name": "P96 - Create edoobox Offer from Reservation",
+    "active": true,
+    "nodes": [
+        {
+            "id": "p96-0001-webhook",
+            "name": "P96 Webhook",
+            "webhookId": "bb0c0ab0-ba66-4805-b77a-170cf53d868e",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                240,
+                300
+            ],
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "create-edoobox-offer",
+                "responseMode": "responseNode",
+                "options": {}
+            }
+        },
+        {
+            "id": "p96-0002-token",
+            "name": "P96 Token holen",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                460,
+                300
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "https://app1.edoobox.com/v2/auth",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpCustomAuth",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "grant-type",
+                            "value": "password"
+                        },
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ expire: $now.plus({ hours: 24 }).toISO() }) }}",
+                "options": {}
+            },
+            "credentials": {
+                "httpCustomAuth": {
+                    "id": "ecGv3wCmKLEUq8fX",
+                    "name": "Custom Auth account"
+                }
+            }
+        },
+        {
+            "id": "p96-0003-token-normalisieren",
+            "name": "P96 Token normalisieren",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                680,
+                300
+            ],
+            "parameters": {
+                "jsCode": "// Token aus beiden edoobox-Antwortformen ermitteln (analog P90).\nconst auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\nif (!token) {\n  throw new Error('Kein Token in der edoobox-Auth-Antwort enthalten.');\n}\nconst webhook = $('P96 Webhook').first().json;\n// Der Webhook-Node legt den Request-Body unter 'body' ab. Die Payload-Felder\n// (kdnr, firmenname, kursnr, start, ende, ...) werden deshalb flach uebernommen,\n// damit die Folgeknoten sie direkt lesen koennen.\nconst payload = webhook.body || {};\nconst basis = payload.basis_url || auth.basis_url || 'https://app1.edoobox.com';\nreturn [{ json: { ...payload, token, edid, basis } }];"
+            }
+        },
+        {
+            "id": "p96-0004-kategorien",
+            "name": "P96 Kategorien verarbeiten",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                900,
+                300
+            ],
+            "parameters": {
+                "jsCode": "// Kategorie-Handling:\n//  1) Hauptkategorie 'Firmenkurse' ueber GET /v2/category/list suchen\n//     (List-Endpunkt gemaess P90: '/category/list', Paginierung limit[start/reply]).\n//  2) Unterkategorie '[kdnr] [Firmenname]' pruefen, sonst unter 'Firmenkurse' anlegen.\n//     GET listet die Elternkennung im Feld 'parent'; das ANLEGEN erwartet sie im\n//     Feld 'category' (API-Hinweis ED80100: require { name, category, type }).\nconst state = $('P96 Token normalisieren').first().json;\nconst headers = {\n  'Authorization': `Bearer ${state.token}`,\n  'Content-Type': 'application/json',\n  'grant-type': 'access_token',\n  ...(state.edid ? { edid: state.edid } : {})\n};\n\nfunction rowsAus(roh) {\n  const d = roh && roh.data ? roh.data : roh;\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') return Object.values(d);\n  return [];\n}\n\nconst listen = await this.helpers.httpRequest({\n  method: 'GET',\n  url: `${state.basis}/v2/category/list`,\n  headers,\n  qs: { 'limit[start]': 0, 'limit[reply]': 2000 },\n  json: true,\n  returnFullResponse: true,\n  timeout: 120000,\n  ignoreHttpStatusErrors: true,\n});\n\nif (!(listen.statusCode >= 200 && listen.statusCode < 300)) {\n  throw new Error('GET /v2/category/list: HTTP ' + listen.statusCode + ' - ' + JSON.stringify(listen.body).slice(0, 800));\n}\n\nconst kategorien = rowsAus(listen.body);\nconst haupt = kategorien.find((c) => (c.name || c.title) === 'Firmenkurse');\nif (!haupt) {\n  throw new Error('Hauptkategorie Firmenkurse wurde nicht gefunden.');\n}\nconst hauptId = haupt.id ?? haupt.category_id ?? haupt.ref;\n\nconst unterName = `${state.kdnr} ${state.firmenname}`;\nconst unter = kategorien.find((c) => (c.name || c.title) === unterName);\nlet categoryId = unter ? (unter.id ?? unter.category_id ?? unter.ref) : null;\n\nif (!categoryId) {\n  const angelegt = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${state.basis}/v2/category`,\n    headers,\n    body: { data: { name: unterName, category: hauptId, type: 'folder' } },\n    json: true,\n    returnFullResponse: true,\n    timeout: 120000,\n    ignoreHttpStatusErrors: true,\n  });\n\n  if (!(angelegt.statusCode >= 200 && angelegt.statusCode < 300)) {\n    throw new Error('POST /v2/category: HTTP ' + angelegt.statusCode + ' - ' + JSON.stringify(angelegt.body).slice(0, 800));\n  }\n\n  const ak = angelegt.body || {};\n  if (ak.data && typeof ak.data === 'object') {\n    categoryId = ak.data.id ?? ak.data.category_id ?? ak.data.ref;\n  } else if (typeof ak.data === 'string' || typeof ak.data === 'number') {\n    categoryId = ak.data;\n  } else if (ak.category && typeof ak.category === 'object') {\n    categoryId = ak.category.id ?? ak.category.category_id ?? ak.category.ref;\n  } else {\n    categoryId = ak.id ?? ak.category_id ?? ak.ref;\n  }\n}\n\nif (!categoryId) {\n  throw new Error('Unterkategorie konnte nicht ermittelt oder angelegt werden.');\n}\n\nreturn [{ json: { ...state, category_id: String(categoryId) } }];"
+            }
+        },
+        {
+            "id": "p96-0005-offer",
+            "name": "P96 Offer anlegen",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1120,
+                300
+            ],
+            "parameters": {
+                "jsCode": "// Angebot unter der ermittelten Unterkategorie anlegen und DIREKT veroeffentlichen.\n// edoobox V2 POST /v2/offer erwartet den Nutzdatensatz im Wrapper { \"data\": {...} }.\n// Pflichtfelder laut API-Referenz: category, name, number, type.\n//\n// VEROEFFENTLICHUNG (hart verifiziert anhand des gespiegelten Bestands):\n// Das Statusfeld heisst \"status\" und ist numerisch:\n//   status = 0  => \"Entwurf\"\n//   status = 1  => \"Veröffentlicht\"\n//   status = 2  => \"Garantierte Durchführung\"\n//   status = 3/4/5 => abgeschlossen/archiviert\n// Beleg: Die korrekt veroeffentlichten Firmenkurse \"2250-pbi-gl-1026\" und\n// \"2250-xls-gl-m2-0926\" tragen status = '1'. Das fruehere status=2 erzeugte\n// fälschlich \"Garantierte Durchführung\". Deshalb status: 1 und Verifikation == 1.\n//\n// PREISE (Vorlagen-Klon):\n// edoobox erzeugt bei POST /v2/offer automatisch genau EINE Standard-Preiskategorie\n// (Name \"---\"). Diese kann per DELETE nicht entfernt werden (HTTP 404 ED80019) und\n// per PUT nicht umbenannt werden (PUT akzeptiert laut API-Doku nur amount/status/order,\n// kein name). Deshalb gilt folgende Strategie:\n//   1) ALLE Vorlagenpreise per POST /v2/pricecategory anlegen (korrekte Namen).\n//   2) Die auto-erzeugte Standardkategorie (initial_price_id) per DELETE entfernen;\n//      bei Fehlschlag per PUT status=false deaktivieren.\n//\n// Felder der Preisstruktur \"pricecategory\":\n//   name, amount, offer, order, status, default, customer_limit, date_start, date_end\n//\n// Ablauf:\n//   1) GET /v2/pricecategory/list?filter=[{property:\"offer\",expression:\"=\",value:<template_id>}]\n//      -> templatePrices (Vorlage)\n//   2) GET /v2/pricecategory/list?filter=[{property:\"offer\",expression:\"=\",value:<offer_id>}]\n//      -> vorhandene (automatisch erzeugte) Preiskategorien des neuen Offers\n//   3) Alle templatePrices per POST anlegen.\n//   4) initial_price_id (erste vorhandene Kategorie) per DELETE entfernen;\n//      bei Fehlschlag per PUT status=false deaktivieren.\nconst state = $('P96 Kategorien verarbeiten').first().json;\nconst headers = {\n  'Authorization': `Bearer ${state.token}`,\n  'Content-Type': 'application/json',\n  'grant-type': 'access_token',\n  ...(state.edid ? { edid: state.edid } : {})\n};\n\n// GET /v2/offer/{id} (und /v2/date/{id}) liefern { data: { <id>: { record } } }\n// bzw. { data: [] }. Diese Helferfunktion entpackt die Kennungs-Ebene.\nfunction entpacken(body) {\n  if (!body || typeof body !== 'object') return body;\n  let d = body.data ?? body;\n  while (d && typeof d === 'object' && !Array.isArray(d)) {\n    const keys = Object.keys(d);\n    if (keys.length === 1 && d[keys[0]] && typeof d[keys[0]] === 'object') {\n      d = d[keys[0]];\n      continue;\n    }\n    break;\n  }\n  if (Array.isArray(d)) return d[0] ?? null;\n  return d;\n}\n\n// Liste aus einer List-Antwort extrahieren (data kann Objekt oder Array sein).\nfunction listeAus(body) {\n  if (!body || typeof body !== 'object') return [];\n  let d = body.data ?? body;\n  while (d && typeof d === 'object' && !Array.isArray(d)) {\n    const keys = Object.keys(d);\n    // { data: { <preis_id>: { record } } } -> Werte aufsammeln\n    if (keys.length >= 1 && keys.every((k) => d[k] && typeof d[k] === 'object')) {\n      return Object.values(d);\n    }\n    if (keys.length === 1 && d[keys[0]] && typeof d[keys[0]] === 'object') {\n      d = d[keys[0]];\n      continue;\n    }\n    break;\n  }\n  if (Array.isArray(d)) return d;\n  return [];\n}\n\n// Preiskategorie-ID aus einem Datensatz ermitteln.\nfunction preisIdAus(kat) {\n  return kat && (kat.id ?? kat.pricecategory_id ?? kat.ref);\n}\n\n// Kopierbare Felder aus einem Vorlagen-Preis extrahieren (ohne offer).\nfunction felderAus(kat) {\n  return {\n    name: kat.name ?? kat.title ?? null,\n    amount: kat.amount ?? kat.amount_net ?? null,\n    ...(kat.order !== undefined && kat.order !== null && kat.order !== false ? { order: kat.order } : {}),\n    ...(kat.status !== undefined && kat.status !== null ? { status: kat.status } : {}),\n    ...(kat.default !== undefined && kat.default !== null ? { default: kat.default } : {}),\n    ...(kat.customer_limit !== undefined && kat.customer_limit !== null ? { customer_limit: kat.customer_limit } : {}),\n    ...(kat.date_start !== undefined && kat.date_start !== null && kat.date_start !== false ? { date_start: kat.date_start } : {}),\n    ...(kat.date_end !== undefined && kat.date_end !== null && kat.date_end !== false ? { date_end: kat.date_end } : {})\n  };\n}\n\nconst daten = {\n  category: state.category_id,\n  name: state.vorlagen_name || state.thema,\n  number: state.kursnr,\n  type: 'offer',\n  status: 1,\n  mode: 'Online',\n  country: 'country_d31aa3310f9b_4934995030',\n  vat: 'dynamic',\n  ...(state.offerdef_ref ? { offerdef: state.offerdef_ref } : {}),\n  ...(state.user_minimal !== null && state.user_minimal !== undefined ? { user_minimal: state.user_minimal } : {}),\n  ...(state.user_maximum !== null && state.user_maximum !== undefined ? { user_maximum: state.user_maximum } : {}),\n  ...(state.anmeldeschluss ? { date_close: state.anmeldeschluss } : {})\n};\n\nconst antwort = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `${state.basis}/v2/offer`,\n  headers,\n  body: { data: daten },\n  json: true,\n  returnFullResponse: true,\n  ignoreHttpStatusErrors: true,\n  timeout: 60000\n});\n\nif (!(antwort.statusCode >= 200 && antwort.statusCode < 300) || (antwort.body && antwort.body.success === false)) {\n  throw new Error('edoobox POST /v2/offer: HTTP ' + antwort.statusCode + ' - ' + JSON.stringify(antwort.body).slice(0, 1500));\n}\n\nconst roh = antwort.body;\nconst neu = roh && (roh.offer ?? roh.data ?? roh);\nconst offerId = (neu && (neu.id ?? neu.offer_id)) || (roh && roh.data && roh.data.id);\nif (!offerId) {\n  throw new Error('edoobox hat keine offer_id zurueckgeliefert (Antwort: ' + JSON.stringify(roh).slice(0, 500) + ')');\n}\n\n// ---------------------------------------------------------------------------\n// PREISE aus dem Vorlagen-Angebot (Template) uebernehmen.\n// ---------------------------------------------------------------------------\nconst templateId = state.template_id;\nconst templateOfferId = state.template_offer_id || templateId;\nlet preiseKopiert = 0;\nlet standardpreisEntfernt = 0;\nif (templateOfferId) {\n  try {\n    // 1) Vorlagenpreise abrufen.\n    const preisListe = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `${state.basis}/v2/pricecategory/list`,\n      headers,\n      qs: {\n        'filter': JSON.stringify([{ property: 'offer', expression: '=', value: templateOfferId }]),\n        'limit[start]': 0,\n        'limit[reply]': 200\n      },\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n      timeout: 60000\n    });\n\n    if (!(preisListe.statusCode >= 200 && preisListe.statusCode < 300)) {\n      throw new Error('GET /v2/pricecategory/list (Template): HTTP ' + preisListe.statusCode);\n    }\n\n    const templatePrices = listeAus(preisListe.body)\n      .filter((kat) => kat && typeof kat === 'object')\n      .filter((kat) => {\n        const name = kat.name ?? kat.title;\n        const amount = kat.amount ?? kat.amount_net;\n        return !(name === null || name === undefined || amount === null || amount === undefined);\n      });\n\n    // 2) Aktuelle Preiskategorien des neuen Offers abrufen (auto-erzeugte Standardzeile).\n    const neuListe = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `${state.basis}/v2/pricecategory/list`,\n      headers,\n      qs: {\n        'filter': JSON.stringify([{ property: 'offer', expression: '=', value: String(offerId) }]),\n        'limit[start]': 0,\n        'limit[reply]': 200\n      },\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n      timeout: 60000\n    });\n\n    let bestehende = [];\n    if (neuListe.statusCode >= 200 && neuListe.statusCode < 300) {\n      bestehende = listeAus(neuListe.body).filter((kat) => kat && typeof kat === 'object');\n    }\n\n    // initial_price_id = erste vorhandene Preiskategorie (die von edoobox erzeugte).\n    const erste = bestehende.find((kat) => preisIdAus(kat));\n    const initialPriceId = erste ? preisIdAus(erste) : null;\n\n    // 3) ALLE Vorlagenpreise per POST anlegen (korrekte Namen).\n    for (const kat of templatePrices) {\n      const neuerPreis = { ...felderAus(kat), offer: String(offerId) };\n      const preisAntwort = await this.helpers.httpRequest({\n        method: 'POST',\n        url: `${state.basis}/v2/pricecategory`,\n        headers,\n        body: { data: neuerPreis },\n        json: true,\n        returnFullResponse: true,\n        ignoreHttpStatusErrors: true,\n        timeout: 60000\n      });\n      if (preisAntwort.statusCode >= 200 && preisAntwort.statusCode < 300) {\n        preiseKopiert += 1;\n      } else {\n        console.log('Warnung: POST /v2/pricecategory fehlgeschlagen (HTTP ' + preisAntwort.statusCode + '): ' + JSON.stringify(preisAntwort.body).slice(0, 300));\n      }\n    }\n\n    // 4) Auto-erzeugte Standardkategorie entfernen: DELETE, Fallback PUT status=false.\n    if (initialPriceId) {\n      const delAntwort = await this.helpers.httpRequest({\n        method: 'DELETE',\n        url: `${state.basis}/v2/pricecategory/${initialPriceId}`,\n        headers,\n        json: true,\n        returnFullResponse: true,\n        ignoreHttpStatusErrors: true,\n        timeout: 60000\n      });\n      if (delAntwort.statusCode >= 200 && delAntwort.statusCode < 300) {\n        standardpreisEntfernt += 1;\n        console.log('Standardpreis ' + initialPriceId + ' per DELETE entfernt (HTTP ' + delAntwort.statusCode + ')');\n      } else {\n        // DELETE nicht unterstuetzt (HTTP 404 ED80019) -> deaktivieren.\n        const putAntwort = await this.helpers.httpRequest({\n          method: 'PUT',\n          url: `${state.basis}/v2/pricecategory/${initialPriceId}`,\n          headers,\n          body: { data: { status: false, default: false } },\n          json: true,\n          returnFullResponse: true,\n          ignoreHttpStatusErrors: true,\n          timeout: 60000\n        });\n        if (putAntwort.statusCode >= 200 && putAntwort.statusCode < 300) {\n          standardpreisEntfernt += 1;\n          console.log('Standardpreis ' + initialPriceId + ' deaktiviert (PUT status=false, HTTP ' + putAntwort.statusCode + ')');\n        } else {\n          console.log('Warnung: Standardpreis ' + initialPriceId + ' weder loesch- noch deaktivierbar (DELETE ' + delAntwort.statusCode + ' / PUT ' + putAntwort.statusCode + ')');\n        }\n      }\n    }\n  } catch (e) {\n    console.log('Warnung: Preisuebernahme aus Template fehlgeschlagen: ' + e.message);\n  }\n}\n\n// BILD uebernehmen: publicfile-ID aus image.name (CDN-Name) ermitteln und per\n// PUT /v2/offer/{id}/image setzen. Das image-Objekt kommt 1:1 aus dem Template\n// (state.image) ueber die App-Route.\nconst templateImage = state.image != null && typeof state.image === 'object'\n  && !Array.isArray(state.image) ? state.image : null;\nif (templateImage && templateImage.name) {\n  const cdnName = String(templateImage.name).replace(/^aws\\|\\|/, '');\n  let publicfileId = templateImage.publicfile ?? templateImage.public_file ?? null;\n  if (!publicfileId && cdnName) {\n    try {\n      const pfList = await this.helpers.httpRequest({\n        method: 'GET',\n        url: `${state.basis}/v2/publicfile`,\n        headers,\n        qs: { 'limit[start]': 0, 'limit[reply]': 2000 },\n        json: true,\n        returnFullResponse: true,\n        ignoreHttpStatusErrors: true,\n        timeout: 60000\n      });\n      if (pfList.statusCode >= 200 && pfList.statusCode < 300) {\n        const pfData = pfList.body && pfList.body.data ? pfList.body.data : pfList.body;\n        if (pfData && typeof pfData === 'object') {\n          for (const [pid, pf] of Object.entries(pfData)) {\n            if (pf && (pf.file_name_cdn === cdnName || pf.file_name === cdnName)) {\n              publicfileId = pid;\n              break;\n            }\n          }\n        }\n      }\n    } catch (e) {\n      console.log('Warnung: GET /v2/publicfile fehlgeschlagen: ' + e.message);\n    }\n  }\n  if (publicfileId) {\n    const imgAntwort = await this.helpers.httpRequest({\n      method: 'PUT',\n      url: `${state.basis}/v2/offer/${offerId}/image`,\n      headers,\n      body: { data: { publicfile: publicfileId } },\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n      timeout: 60000\n    });\n    if (!(imgAntwort.statusCode >= 200 && imgAntwort.statusCode < 300)) {\n      console.log('Warnung: PUT /v2/offer/' + offerId + '/image schlug fehl (HTTP ' + imgAntwort.statusCode + '): ' + JSON.stringify(imgAntwort.body).slice(0, 300));\n    }\n  }\n}\n\n// Gezielter Einzel-Sync: Datensatz zuruecklesen und Veroeffentlichung verifizieren.\nconst getAntwort = await this.helpers.httpRequest({\n  method: 'GET',\n  url: `${state.basis}/v2/offer/${offerId}`,\n  headers,\n  json: true,\n  returnFullResponse: true,\n  ignoreHttpStatusErrors: true,\n  timeout: 60000\n});\n\nif (!(getAntwort.statusCode >= 200 && getAntwort.statusCode < 300)) {\n  throw new Error('edoobox GET /v2/offer/' + offerId + ': HTTP ' + getAntwort.statusCode + ' - ' + JSON.stringify(getAntwort.body).slice(0, 1500));\n}\n\nconst offerRoh = entpacken(getAntwort.body);\nconst veroeffentlicht = offerRoh && Number(offerRoh.status) === 1;\nif (!veroeffentlicht) {\n  throw new Error('edoobox hat das Angebot nicht auf \"veroeffentlicht\" gesetzt (status=' + JSON.stringify(offerRoh && offerRoh.status) + ')');\n}\n\nreturn [{ json: { ...state, offer_id: String(offerId), published: true, preise_kopiert: preiseKopiert, standardpreis_entfernt: standardpreisEntfernt, offer: offerRoh } }];"
+            }
+        },
+        {
+            "id": "p96-0006-date",
+            "name": "P96 Date anlegen",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1340,
+                300
+            ],
+            "parameters": {
+                "jsCode": "// Termin (Date) anlegen: Start/Ende, Trainer und einen kalendersprechenden Titel.\n// EVENTUAL-CONSISTENCY-FIX: Der Offer wurde im vorherigen Knoten gerade erst\n// angelegt. Ein unmittelbar folgender POST /v2/date kann bei edoobox mit\n// HTTP 402 ED80100 abgelehnt werden, weil der frische Offer noch nicht\n// vollstaendig indiziert ist. Deshalb Retry mit Backoff (bis zu 4 Versuche).\nconst zzState = $('P96 Offer anlegen').first().json;\nconst zzHeaders = {\n  'Authorization': `Bearer ${zzState.token}`,\n  'Content-Type': 'application/json',\n  'grant-type': 'access_token',\n  ...(zzState.edid ? { edid: zzState.edid } : {})\n};\n\nfunction zzEntpacken(body) {\n  if (!body || typeof body !== 'object') return body;\n  let zzD = body.data ?? body;\n  while (zzD && typeof zzD === 'object' && !Array.isArray(zzD)) {\n    const zzKeys = Object.keys(zzD);\n    if (zzKeys.length === 1 && zzD[zzKeys[0]] && typeof zzD[zzKeys[0]] === 'object') {\n      zzD = zzD[zzKeys[0]];\n      continue;\n    }\n    break;\n  }\n  if (Array.isArray(zzD)) return zzD[0] ?? null;\n  return zzD;\n}\n\nconst zzKurstitel = zzState.kurstitel || zzState.vorlagen_name || zzState.thema || '';\nconst zzTrainerKuerzel = (zzState.trainer_kuerzel || '').trim();\nconst zzTitle = zzTrainerKuerzel\n  ? `${zzState.kdnr} ${zzKurstitel} (${zzTrainerKuerzel})`\n  : [zzState.kdnr, zzKurstitel].filter(Boolean).join(' ');\n\nconst zzBody = {\n  offer: zzState.offer_id,\n  description: zzTitle,\n  date_start: zzState.start,\n  date_end: zzState.ende,\n  place: false,\n  room: false,\n  leader: [zzState.trainer_admin_id]\n};\n\n// Retry-Loop (initial + 3 Wiederholungen). Rekursion ohne Top-Level-let.\nasync function zzDateAnlegen(zzVersuch) {\n  const zzAntwort = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${zzState.basis}/v2/date`,\n    headers: zzHeaders,\n    body: { data: zzBody },\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n    timeout: 60000\n  });\n\n  const zzOk = (zzAntwort.statusCode >= 200 && zzAntwort.statusCode < 300)\n    && !(zzAntwort.body && zzAntwort.body.success === false);\n  if (zzOk) return zzAntwort;\n\n  const zzBodyText = JSON.stringify(zzAntwort.body).slice(0, 400);\n  const zzRetryable = zzAntwort.statusCode === 402 || /ED80100/.test(zzBodyText);\n  if (zzRetryable && zzVersuch < 4) {\n    await new Promise((rr) => setTimeout(rr, zzVersuch * 1000));\n    return zzDateAnlegen(zzVersuch + 1);\n  }\n  throw new Error('edoobox POST /v2/date: HTTP ' + zzAntwort.statusCode + ' - ' + zzBodyText);\n}\n\nconst zzAntwortFinal = await zzDateAnlegen(1);\n\nconst zzRoh = zzAntwortFinal.body;\nconst zzNeu = zzRoh && (zzRoh.date ?? zzRoh.data ?? zzRoh);\nconst zzDateId = (zzNeu && (zzNeu.id ?? zzNeu.date_id)) || (zzRoh && zzRoh.data && zzRoh.data.id);\nif (!zzDateId) {\n  throw new Error('edoobox hat keine date_id zurueckgeliefert (Antwort: ' + JSON.stringify(zzRoh).slice(0, 500) + ')');\n}\n\n// Gezielter Einzel-Sync: nur diesen einen Termin zuruecklesen.\nconst zzGetAntwort = await this.helpers.httpRequest({\n  method: 'GET',\n  url: `${zzState.basis}/v2/date/${zzDateId}`,\n  headers: zzHeaders,\n  json: true,\n  returnFullResponse: true,\n  ignoreHttpStatusErrors: true,\n  timeout: 60000\n});\n\nif (!(zzGetAntwort.statusCode >= 200 && zzGetAntwort.statusCode < 300)) {\n  throw new Error('edoobox GET /v2/date/' + zzDateId + ': HTTP ' + zzGetAntwort.statusCode + ' - ' + JSON.stringify(zzGetAntwort.body).slice(0, 1500));\n}\n\nconst zzDateRoh = zzEntpacken(zzGetAntwort.body);\n\nreturn [{ json: { offer_id: zzState.offer_id, date_id: String(zzDateId), offer: zzState.offer, offer_date: zzDateRoh } }];"
+            }
+        },
+        {
+            "id": "p96-0007-antwort",
+            "name": "P96 Antwort senden",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1,
+            "position": [
+                1560,
+                300
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ JSON.stringify({ offer_id: $json.offer_id, date_id: $json.date_id, offer: $json.offer, offer_date: $json.offer_date }) }}",
+                "options": {}
+            }
+        }
+    ],
+    "connections": {
+        "P96 Webhook": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Token holen",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "P96 Token holen": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Token normalisieren",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "P96 Token normalisieren": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Kategorien verarbeiten",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "P96 Kategorien verarbeiten": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Offer anlegen",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "P96 Offer anlegen": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Date anlegen",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "P96 Date anlegen": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "P96 Antwort senden",
+                        "type": "main"
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1",
+        "availableInMCP": true
+    }
+}

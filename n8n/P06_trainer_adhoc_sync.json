@@ -1,0 +1,98 @@
+{
+    "name": "P06 Trainer Ad-hoc Sync",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "sync-trainer",
+                "responseMode": "lastNode",
+                "options": {}
+            },
+            "id": "p06-0001-webhook",
+            "name": "P06 Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                240,
+                300
+            ],
+            "webhookId": "p06-trainer-adhoc-sync"
+        },
+        {
+            "parameters": {
+                "workflowId": {
+                    "__rl": true,
+                    "value": "P90 Ressourcen-Unterworkflow",
+                    "mode": "list",
+                    "cachedResultName": "P90 Ressourcen-Unterworkflow"
+                },
+                "workflowInputs": {
+                    "values": [
+                        {
+                            "name": "ressource",
+                            "value": "trainer_admin"
+                        },
+                        {
+                            "name": "abgleichsart",
+                            "value": "normal"
+                        },
+                        {
+                            "name": "hinweis",
+                            "value": "Ad-hoc Sync aus Kursplan-App"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "p06-0002-p90",
+            "name": "P06 P90 aufrufen",
+            "type": "n8n-nodes-base.executeWorkflow",
+            "typeVersion": 1,
+            "position": [
+                460,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ JSON.stringify({ success: true, message: 'Trainer erfolgreich gespiegelt' }) }}",
+                "options": {}
+            },
+            "id": "p06-0003-respond",
+            "name": "P06 Antwort senden",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1,
+            "position": [
+                680,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "P06 Webhook": {
+            "main": [
+                {
+                    "node": "P06 P90 aufrufen",
+                    "type": "main",
+                    "index": 0
+                }
+            ]
+        },
+        "P06 P90 aufrufen": {
+            "main": [
+                {
+                    "node": "P06 Antwort senden",
+                    "type": "main",
+                    "index": 0
+                }
+            ]
+        }
+    },
+    "pinData": {},
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "active": false,
+    "tags": []
+}

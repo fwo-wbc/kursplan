@@ -1,7 +1,7 @@
 # Lastenheft: Planungs- und Kommunikationsanwendung „Kursplan"
 
 | | |
-|---|---|
+| --- | --- |
 | **Dokumenttyp** | Lastenheft (Anforderungen des Auftraggebers) |
 | **Version** | 1.6 |
 | **Datum** | 05.09.2026 |
@@ -13,7 +13,7 @@
 ### Änderungsverzeichnis
 
 | Version | Änderung |
-|---|---|
+| --- | --- |
 | 1.0 | Erstfassung |
 | 1.1 | Zeitraster erweitert: `K3` auf 13:30–15:00 geändert, `K4` (15:30–17:00) und Abendkurs `AB` (18:00–20:00) neu; Kollisionsprüfung auf tatsächliche Uhrzeiten umgestellt (S-02, S-02a). Neuer Abschnitt „Notwendige Dokumente" (D-01 bis D-08). Feiertagsregelung verbindlich und auf Deutschland eingegrenzt; Trainerurlaub und Betriebsruhe neu (S-11 bis S-15). Mehrfachbelegung auch je Trainer, Planung ohne Trainerzuweisung neu (L-05a, L-05b, L-13). Eigenständigkeit jedes Termins ausdrücklich festgeschrieben (T-01a). Trainerkosten je Zuordnung neu (T-11). Mehrteilige Kurse als Terminverbund neu (T-12, E-05a). Kostendeckungsbewertung mit Preiskategorien und Nachholern neu (K-09 bis K-14, E-23 bis E-26). n8n und SQL-Zugang als Integrationsweg neu (E-27 bis E-30). Neue Abnahmefälle AK-14 bis AK-22. Kostenkategorien je Trainer neu, mindestens fünf und in der Anzahl nicht begrenzt (S-07a). Priorität geändert auf MUSS: S-03, S-10, V-03, L-11, T-10. Kapitel 15 von `R-` auf `AU-` umbenannt, um die Kollision mit den Rollenkennungen aufzulösen. Rolle Co-Organisator und Terminabruf durch die Website entfallen. Phasenplan neu zugeordnet. Annahmen A-1 bis A-7 bestätigt; A-2, A-3 und A-5 präzisiert. |
 | 1.2 | Der bestehende n8n-Ablauf wurde ausgewertet und im Lastenheft dokumentiert (E-24), einschließlich acht bekannter Einschränkungen, die die Richtigkeit des Deckungsbeitrags betreffen (E-24a bis E-24c). Der Integrationsweg ist entschieden: lesender Zugriff der Anwendung auf eine aggregierte PostgreSQL-Sicht statt eines Eingangsendpunkts (E-27, E-27a, E-29, E-31). Klassifizierung der Preiskategorien auf Musterregeln, Betragsregel und manuelle Festlegung umgestellt, da die Bezeichnungen je Termin frei definierbar sind; Ausgangsbestand der Kategorien aufgenommen (K-10, K-10a bis K-10c). Kursarten mit eigener Mindestteilnehmerzahl neu, Firmenkurs ergänzt (S-04a, S-04b). Datenschutzanforderungen zur bestehenden Buchungsdatenbank und zu Zugangsdaten neu (DS-10 bis DS-12). Neue Abnahmefälle AK-23 bis AK-25. |
@@ -21,10 +21,12 @@
 | 1.4 | Kapitel 13.5 vollständig neu gefasst und in fünf Unterabschnitte gegliedert: Datenmodell, Zugriff der Anwendung, Abläufe in n8n, Zugangsdaten, Reihenfolge der Inbetriebnahme. Die getrennte Führung von Buchung, Position und Zahlung ist als Anforderung festgeschrieben, weil nur sie die Einschränkungen 1, 3 und 4 aus E-24a konstruktiv ausschließt (E-27 bis E-27d). Personenbezogene Felder werden im Neubau nicht mehr gespiegelt (E-27a, DS-10, DS-11 neu gefasst). Zugriff der Anwendung auf drei Sichten mit getrennten Datenbankrollen erweitert; Einstufung der Preiskategorien in der Datenbank verankert (E-28 bis E-28b). Betriebsanforderungen an die verwaltete Datenbank in der EU neu (E-29, E-29a). Vier getrennte n8n-Abläufe mit Webhook-Empfang, entkoppelter Verarbeitung, stündlichem inkrementellem Abruf und wöchentlichem Vollabgleich neu; der Vollabgleich ist von SOLL auf MUSS gehoben, da die Buchungsressource keinen Filter auf ein Änderungsdatum kennt (E-31 bis E-31h). Kurzlebige Zugriffstoken und Widerruf des Alttokens neu (E-32 bis E-32c). Reihenfolge der Inbetriebnahme mit Prüfpunkt neu (E-33, E-34). Ausbaustufe 0 als vorgezogene Stufe für Datenbeschaffung und Datenhaltung neu; Ausbaustufen 4 und 5 entsprechend bereinigt. Neue Abnahmefälle AK-29 bis AK-37. Offene Punkte 2 bis 4 ersetzt, da Betriebsort, Takt und Herkunft der Buchungen geklärt sind; neu offen sind der Aufbau der Detailantwort, der Aufbau der Webhook-Nachricht und der Umfang des Bestands. |
 | 1.5 | Betriebsform der Datenbank festgelegt: eigener PostgreSQL-Container auf dem vorhandenen Hetzner-Server des Auftraggebers, verwaltet über Portainer, statt eines verwalteten Dienstes. Kapitel 13.5 um den Abschnitt Betrieb der Datenbank erweitert; die Unterabschnitte sind entsprechend neu numeriert. Die Datenbank veröffentlicht keinen Port und ist nur über das interne Containernetz sowie über einen SSH-Tunnel erreichbar; die Verschlüsselung der Verbindung ist deshalb nur bei späterer Öffnung nach außen zwingend (E-29). Sicherung, erprobte Wiederherstellung und Versionswechsel sind als eigene Anforderungen in die Verantwortung des Auftraggebers überführt (E-29a bis E-29c); der Auftragsverarbeitungsvertrag für die Datenbank entfällt, der Serververtrag tritt an seine Stelle. Klargestellt, dass Datenbankbenutzer ausschließlich technische Konten sind und kein Anwendungsnutzer, insbesondere kein Trainer, einen eigenen Datenbankzugang erhält (E-28c); R-05 entsprechend präzisiert. Reihenfolge der Inbetriebnahme um Netz, Volume und Sicherung erweitert (E-33, nun neun Schritte). Neue Abnahmefälle AK-38 und AK-39, AK-37 erweitert. |
 | 1.6 | Produktive n8n-Zielarchitektur nach vollständiger Prüfung aller zwölf edoobox-Ressourcen neu festgelegt. Webhooks und Buchungs-Detailabrufe sind für die erste produktive Fassung nicht mehr erforderlich. Operative Ressourcen einschließlich Angebote, Datumszeilen, Buchungen und Transaktionen werden werktags von 08:00 bis 23:45 Uhr alle 15 Minuten vollständig und hashbasiert abgeglichen; Stamm- und Referenzdaten täglich, alle zwölf Ressourcen wöchentlich. Fünf ausführbare Workflows plus gemeinsamer Ressourcen-Unterworkflow definiert (E-31 bis E-31k). Abrufmenge mit derzeit rund 1.344 Listenaufrufen je Werktag gegen das Limit von 100.000 geprüft. Abnahmefälle AK-31, AK-32, AK-35 und AK-36 angepasst, AK-40 ergänzt. Inbetriebnahmereihenfolge, Phasenplan und offene Punkte aktualisiert. |
+| 1.7 | Automatisierter Excel-Export für Trainer & Termine nach Microsoft OneDrive neu (AU-07, Abschnitt 15.1): täglicher Export um 03:00 Uhr über einen rollierenden Zeitraum von heute bis heute + 6 Monate, feste Dateinamenskonvention `[yyyy-mm-dd] Backup Trainerzeitpläne.xlsx`, Ablage in einem definierten OneDrive-Zielverzeichnis. Umsetzung in einer nachgelagerten Phase nach Abschluss der Kernfunktionen; als Ausbaustufe 6 in den Phasenplan aufgenommen. |
 
 > **Klarstellung:** Die Anweisung „V-04 ist MUSS" bezog sich nach Rücksprache auf **V-03** (Freigabe einzelner Slots statt nur ganzer Tagesabschnitte). V-03 ist entsprechend als MUSS eingestuft. V-04 war bereits in Version 1.0 MUSS und bleibt unverändert; V-08 (Vorschlag wiederkehrender Verfügbarkeiten) bleibt SOLL.
 
 **Priorisierung der Anforderungen:**
+
 - **MUSS** — zwingend, ohne diese Anforderung ist das System nicht abnahmefähig
 - **SOLL** — wichtig, aber verhandelbar bzw. in späterer Phase lieferbar
 - **KANN** — wünschenswert, optional
@@ -36,6 +38,7 @@
 Die Terminplanung für Live-Online-Kurse erfolgt derzeit über mehrere getrennte Excel-Tabellen. Jeder Trainer pflegt eine eigene Verfügbarkeitstabelle, die Kursplanung liegt in weiteren Dateien beim Organisator.
 
 Daraus ergeben sich folgende Probleme:
+
 1. Kein gemeinsamer, aktueller Datenstand; Abgleich erfolgt manuell
 2. Trainer erfahren den Status ihrer freigegebenen Zeiten nicht systematisch
 3. Absprachen, Terminänderungen und Anfragen laufen über E-Mail und sind nicht rekonstruierbar
@@ -47,7 +50,7 @@ Daraus ergeben sich folgende Probleme:
 ### Mengengerüst
 
 | Kennzahl | Wert |
-|---|---|
+| --- | --- |
 | Trainer inkl. Organisator | 5–10 |
 | Kurstitel im Katalog | über 80 |
 | Kurstermine pro Jahr inkl. Mehrfachbelegung | über 1.500 |
@@ -61,16 +64,19 @@ Daraus ergeben sich folgende Probleme:
 Das System bildet **zwei Planungsphasen** ab, die den fachlichen Kern der Anwendung bilden.
 
 ### Phase A — Langfristige Planung (Jahresraster)
+
 Ziel: Termine werden weitgehend automatisch sinnvoll über Wochen und Monate verteilt. Ergebnis ist ein belastbares Jahresraster, das anschließend die Grundlage für die Veröffentlichung der Kurse in edoobox bildet.
 
 Leitfragen: Welcher Kurs wann? Ist der Prio-Rhythmus eingehalten? Welcher Trainer ist verfügbar? Wo sind Lücken, wo Überlast?
 
 ### Phase B — Kurzfristige Steuerung (2–3 Wochen vor Kursbeginn)
+
 Ziel: Entscheidung über Durchführung, Absage oder Verschiebung auf Basis der tatsächlichen Anmeldezahlen aus edoobox, sowie Auflösung von Mehrfachbelegungen durch Zuordnung weiterer Trainer.
 
 Leitfragen: Wie viele Anmeldungen liegen vor? Ist die Mindestteilnehmerzahl erreicht? Wer führt durch? Wer muss informiert werden?
 
 ### Übergeordnete Ziele
+
 - Eine einzige Quelle der Wahrheit für Verfügbarkeit, Termine, Zuordnungen und Status
 - Vollständige Ablösung der Excel-Verfügbarkeitstabellen
 - Nachvollziehbare, dauerhaft auffindbare Kommunikation zwischen Organisator und Trainern
@@ -81,6 +87,7 @@ Leitfragen: Wie viele Anmeldungen liegen vor? Ist die Mindestteilnehmerzahl erre
 ## 3 Systemabgrenzung
 
 **Nicht Gegenstand des Systems:**
+
 - Teilnehmerverwaltung, Buchungsabwicklung, Zahlungsverkehr und Rechnungsstellung — verbleiben vollständig in edoobox
 - Speicherung personenbezogener Teilnehmerdaten (Namen, Adressen, Kontaktdaten) — ausdrücklich ausgeschlossen; das System verarbeitet ausschließlich aggregierte Kennzahlen
 - Honorarabrechnung und Buchhaltung — verbleiben im bestehenden System (e-conomic). Im Planungssystem werden lediglich Kostenwerte je Termin zur Deckungsrechnung erfasst (siehe T-11); eine Abrechnung findet nicht statt.
@@ -88,6 +95,7 @@ Leitfragen: Wie viele Anmeldungen liegen vor? Ist die Mindestteilnehmerzahl erre
 - Öffentliche Kursanzeige — erfolgt über edoobox. Die Terminanzeige auf der bestehenden WordPress-Website bleibt unverändert und wird weiterhin direkt aus edoobox versorgt.
 
 **Schnittstellen zu Drittsystemen:**
+
 - edoobox REST API (lesend und schreibend)
 - n8n als vorhandenes Ablaufwerkzeug, einschließlich des davon genutzten SQL-Systems (siehe Abschnitt 13.5)
 - Kalendersysteme der Trainer (iCal)
@@ -98,7 +106,7 @@ Leitfragen: Wie viele Anmeldungen liegen vor? Ist die Mindestteilnehmerzahl erre
 ## 4 Rollen und Berechtigungen
 
 | ID | Rolle | Beschreibung | Prio |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | R-01 | **Organisator** | Vollzugriff auf alle Funktionen, Daten und Einstellungen; einzige Rolle mit Zugriff auf Anmeldezahlen und Umsatzdaten | MUSS |
 | R-02 | **Trainer** | Zugriff ausschließlich auf eigene Verfügbarkeit, eigene Termine, eigene Kommunikation und eigene Historie | MUSS |
 | R-03 | **Co-Organisator** | Wie Organisator, jedoch ohne Nutzerverwaltung, ohne Löschrechte und ohne Zugriff auf Umsatzdaten | **entfällt** — derzeit keine Vertretungsregelung erforderlich; die Rollenverwaltung ist jedoch so anzulegen, dass eine weitere Rolle später ohne Umbau ergänzbar bleibt |
@@ -121,7 +129,7 @@ Leitfragen: Wie viele Anmeldungen liegen vor? Ist die Mindestteilnehmerzahl erre
 **S-01 (MUSS)** Das System verwaltet Zeitfenster („Slots") als konfigurierbare Stammdaten:
 
 | Slot-Code | Zeit | Format | Tagesabschnitt |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `HT` | 09:00–13:00 | Halbtagskurs, 4 Stunden | Vormittag |
 | `K1` | 09:00–10:30 | Kurzschulung, 90 Minuten | Vormittag |
 | `K2` | 11:00–12:30 | Kurzschulung, 90 Minuten | Vormittag |
@@ -132,7 +140,7 @@ Leitfragen: Wie viele Anmeldungen liegen vor? Ist die Mindestteilnehmerzahl erre
 **S-02 (MUSS)** Ausschlussregeln zwischen Slots dürfen nicht fest im Programm hinterlegt sein, sondern müssen aus den tatsächlichen Anfangs- und Endzeiten sowie einer konfigurierbaren Mindestpause berechnet werden. Die Mindestpause beträgt standardmäßig 30 Minuten. Daraus ergibt sich:
 
 | Kombination am selben Tag, selber Trainer | Zulässig |
-|---|---|
+| --- | --- |
 | `HT` mit `K1` oder `K2` | nein, Zeitüberlappung |
 | `HT` mit `K3`, `K4` oder `AB` | ja |
 | `K1` mit `K2`, `K3`, `K4`, `AB` | ja |
@@ -162,7 +170,7 @@ Je Kursart sind hinterlegbar: Bezeichnung, zulässige Slots, Dauer, **Mindesttei
 **S-07a (MUSS)** **Kostenkategorien je Trainer.** Je Trainer sind **mindestens fünf Kostenkategorien** hinterlegbar; die Anzahl ist technisch nicht zu begrenzen. Jede Kategorie besteht aus:
 
 | Feld | Beschreibung |
-|---|---|
+| --- | --- |
 | Kategoriename | Frei wählbar, z. B. „halber Tag", „pro Stunde", „verminderter Satz", „Abendkurs" |
 | Betrag | Preis in Netto |
 | Kennzeichen Standard | Genau eine Kategorie je Trainer kann als Vorschlagswert markiert werden |
@@ -261,6 +269,7 @@ Ziel: Trainer müssen jederzeit erkennen können, welche Unterlagen sie für ein
 **L-04 (MUSS)** **Mehrfachbelegung ist ausdrücklich zulässig.** Mehrere Kurse dürfen dasselbe Datum und denselben Slot belegen. Das System zählt den Belegungsgrad und stellt ihn dar (z. B. „2×", „3×"), verhindert die Eingabe jedoch nicht.
 
 **L-05 (MUSS)** **Automatischer Serienplaner.** Das System erzeugt auf Anforderung einen Terminvorschlag für einen gewählten Zeitraum und eine Auswahl von Kursen. Der Vorschlag berücksichtigt:
+
 - den Prio-Rhythmus (28 bzw. 35 Tage) mit konfigurierbarem Toleranzfenster von ± 5 Tagen
 - deutsche Feiertage nach S-10 (zwingender Ausschluss)
 - Betriebsruhezeiten nach S-12 (zwingender Ausschluss in der Grobplanung)
@@ -303,7 +312,7 @@ Ziel: Trainer müssen jederzeit erkennen können, welche Unterlagen sie für ein
 **T-02 (MUSS)** Folgende Statuswerte sind vorzusehen:
 
 | Status | Bedeutung |
-|---|---|
+| --- | --- |
 | **GEPLANT** | Termin im Raster, kein Trainer zugeordnet, für Trainer nicht sichtbar |
 | **RESERVIERT** | Trainer vorgemerkt, Durchführung noch offen |
 | **BESTÄTIGT** | Kurs findet statt, Zuordnung verbindlich |
@@ -392,7 +401,7 @@ Greift weder Regel 1 noch Regel 2, gilt die Kategorie als **ungeklärt**: Sie wi
 Das Regelwerk nach K-10 wurde gegen diesen Bestand geprüft. Alle 978 Einträge werden von einer Regel erfasst; 4,7 Prozent verbleiben planmäßig im Zustand „ungeklärt", weil die Bezeichnung keinen fachlichen Gehalt hat.
 
 | Muster (normalisiert, ohne Groß-/Kleinschreibung) | Einstufung | Anteil |
-|---|---|---|
+| --- | --- | --- |
 | `stornogebuehr`, `diff nach verrechnung` | **erlöswirksam, zählt nicht als Teilnehmer** (siehe K-10d) | 0,8 % |
 | `nachholtermin`, `ersatztermin` | nicht erlöswirksam | — |
 | `inklusive` | nicht erlöswirksam, zählt als Teilnehmer | — |
@@ -416,7 +425,7 @@ Häufigste Einzelbezeichnungen: Standard Preis (174), Kombibuchung (-10%) (109),
 Für Firmenkurse gilt zusätzlich:
 
 | Preiskategorie (Beispiele aus dem Ist-Bestand) | Einstufung | Anmerkung |
-|---|---|---|
+| --- | --- | --- |
 | Kurspreis für max. 4 Personen, Preis für bis zu 4 Personen, Webinarpreis für 5 Personen, Workshop für 2 Stunden für max. 3 Personen | erlöswirksam | Der Betrag gilt für die Gruppe, nicht je Person. Bei der Umrechnung auf Teilnehmer nicht zu vervielfachen |
 | Inklusive | **nicht erlöswirksam** | Zählt als Teilnehmer, trägt aber keinen eigenen Erlös, da im Gruppenpreis enthalten |
 | Preis für jede weitere Person, auch mit Rabattzusatz | erlöswirksam | Je Person zu zählen |
@@ -425,7 +434,7 @@ Für Firmenkurse gilt zusätzlich:
 **K-10d (MUSS)** **Erlös ohne Teilnehmer.** Die Bezeichnungen „Stornogebühr" und „Diff. nach Verrechnung der Stornogebühr" stehen für Beträge, die dem Termin zufließen, ohne dass eine Person teilnimmt. Das System führt daher je Preiskategorie **zwei getrennte Kennzeichen**: erlöswirksam ja/nein und teilnehmerwirksam ja/nein. Damit lassen sich alle vier Kombinationen abbilden:
 
 | Fall | Erlös | Teilnehmer | Beispiel |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Regelfall | ja | ja | Standard Preis, Kombibuchung |
 | Nachholer | nein | ja | Nachholtermin nach Storno |
 | Freiplatz im Gruppenpreis | nein | ja | Inklusive, Organisatorin |
@@ -438,7 +447,7 @@ Für Firmenkurse gilt zusätzlich:
 **K-11 (MUSS)** **Deckungsbeitrag je Termin.** Das System stellt je Termin gegenüber:
 
 | Größe | Herkunft |
-|---|---|
+| --- | --- |
 | Anmeldungen gesamt | edoobox |
 | davon erlöswirksam (zahlende Teilnehmer) | edoobox, gefiltert nach Einstufung K-10 |
 | davon nicht erlöswirksam (Nachholer) | edoobox, gefiltert nach Einstufung K-10 |
@@ -483,7 +492,7 @@ Ziel: Absprachen, Terminänderungen und Anfragen laufen nicht mehr über verstre
 **C-03 (MUSS)** **Strukturierte Vorgänge:** Anfragen werden als Vorgang mit Typ und Status geführt, nicht als freie Nachricht:
 
 | Vorgangstyp | Auslöser |
-|---|---|
+| --- | --- |
 | Rücknahme einer Freigabe | Trainer |
 | Ausfallmeldung | Trainer |
 | Terminwunsch / Bewerbung | Trainer |
@@ -513,6 +522,7 @@ Statuswerte je Vorgang mindestens: offen, in Bearbeitung, erledigt, abgelehnt.
 ## 12 Historie und Nachvollziehbarkeit
 
 **H-01 (MUSS)** **Trainerakte:** Für jeden Trainer existiert eine chronologische Gesamtansicht, die folgende Ereignisse in einem einheitlichen Verlauf zusammenführt:
+
 - eingetragene und zurückgenommene Verfügbarkeiten
 - Zuordnungen zu Terminen
 - alle Statuswechsel seiner Termine
@@ -618,7 +628,7 @@ Maßgeblich für den Erlös ist der Nettobetrag der gebuchten Preiskategorie. Tr
 **E-24a (MUSS)** **Einschränkungen des Altbestands als Vorgabe für den Neubau.** Die Auswertung des bisherigen Ablaufs hat acht Konstruktionsfehler ergeben. Da der Ablauf nicht weitergenutzt wird, sind sie keine Fehlerliste, sondern **Ausschlusskriterien für die Neuentwicklung**: Jeder einzelne Punkt ist im Neubau konstruktiv unmöglich zu machen, nicht nachträglich zu beheben. Die Punkte 1, 3 und 4 lassen sich ausschließlich über die Tabellenstruktur ausschließen, nicht über die Ablauflogik.
 
 | Nr. | Einschränkung | Auswirkung |
-|---|---|---|
+| --- | --- | --- |
 | 1 | Je Buchung wird nur die **erste** Preiskategorie übernommen (Zugriff auf das erste Element der Kategorienliste) | Bei Buchungen mit mehreren Kategorien — insbesondere Firmenkursen mit „Preis für bis max. 4 Personen", „Inklusive" und „Preis für jede weitere Person" — fehlen Erlösanteile. Der Deckungsbeitrag würde systematisch zu niedrig ausgewiesen |
 | 2 | Ebenso wird nur der **erste** Teilnehmer einer Buchung erfasst | Sammelbuchungen mehrerer Personen werden untererfasst |
 | 3 | Buchungen **ohne Transaktion werden übersprungen** | Noch nicht bezahlte, aber verbindliche Anmeldungen fehlen vollständig. Da die Durchführungsentscheidung rund drei Wochen vor Kursbeginn fällt, sind offene Zahlungen der Regelfall, nicht die Ausnahme |
@@ -643,7 +653,7 @@ Der Auftraggeber hat entschieden, die bestehenden n8n-Abläufe **nicht weiterzuv
 **Festgelegte Rahmenbedingungen:**
 
 | Punkt | Festlegung |
-|---|---|
+| --- | --- |
 | Datenbank | PostgreSQL als eigener Container auf dem Hetzner-Server des Auftraggebers, betrieben über Portainer. Betriebsstandort EU |
 | n8n | selbst gehostet auf demselben Server |
 | Verbindung n8n zur Datenbank | ausschließlich über das interne Containernetz, kein veröffentlichter Port |
@@ -657,7 +667,7 @@ Der Auftraggeber hat entschieden, die bestehenden n8n-Abläufe **nicht weiterzuv
 **E-27 (MUSS)** **Trennung von Buchung, Position und Zahlung.** Das Datenmodell führt drei getrennte Tabellen. Diese Trennung ist die einzige Maßnahme, mit der sich die Einschränkungen 1, 3 und 4 aus E-24a konstruktiv ausschließen lassen:
 
 | Tabelle | Inhalt | Schlüssel | Schließt aus |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Buchung | Angebotskennung, Status, Buchungszeit, B2B-Kennzeichen | Buchungskennung | Nr. 3: die Buchung existiert **ohne** Zahlung, verbindliche unbezahlte Anmeldungen bleiben sichtbar |
 | Buchungsposition | **eine Zeile je Preiskategorie** mit Nettobetrag und Anzahl | Buchung + Kategoriekennung | Nr. 1: mehrere Kategorien je Buchung sind abbildbar |
 | Transaktion | Zahlungsvorgänge, ausschließlich für den Abgleich | Transaktionskennung | Nr. 4: Teilzahlungen können den Erlös nicht vervielfachen |
@@ -675,7 +685,7 @@ Der Auftraggeber hat entschieden, die bestehenden n8n-Abläufe **nicht weiterzuv
 **E-28 (MUSS)** **Lesender Zugriff ausschließlich über Sichten.** Die Anwendung greift lesend und ausschließlich über dafür angelegte **Datenbanksichten** zu, nicht auf die Rohtabellen. Vorzusehen sind mindestens drei Sichten:
 
 | Sicht | Inhalt | Bezug |
-|---|---|---|
+| --- | --- | --- |
 | Kennzahlen je Termin | Teilnehmerzahl, Teilnehmer ohne Erlöswirkung, Nettoerlös, Anzahl ungeklärter Positionen, Stand | K-11, K-12 |
 | Preiskategorien je Termin | Anzahl und Betrag je Kategoriebezeichnung samt Einstufung und deren Herkunft | K-09, K-10 |
 | Zahlungsabgleich je Termin | Summe der tatsächlichen Zahlungseingänge gegen erwarteten Erlös | E-24c |
@@ -699,7 +709,7 @@ Die Sichten sind die vereinbarte Schnittstelle. Ändert sich das Schema der Roht
 **E-29 (MUSS)** **Betriebsform.** Die Datenbank läuft als eigener Container auf dem vorhandenen Hetzner-Server des Auftraggebers, verwaltet über Portainer. Ein verwalteter Datenbankdienst eines Dritten wird nicht genutzt. Daraus folgt:
 
 | Punkt | Anforderung |
-|---|---|
+| --- | --- |
 | Netz | Datenbank und n8n liegen in einem gemeinsamen internen Containernetz. Die Datenbank veröffentlicht **keinen** Port nach außen und ist aus dem Internet nicht erreichbar |
 | Auflösung | n8n erreicht die Datenbank über den Containernamen, nicht über eine IP-Adresse |
 | Verwaltungszugang | Zugriff des Auftraggebers ausschließlich über einen SSH-Tunnel zum Server, nicht über einen offenen Datenbankport |
@@ -720,13 +730,13 @@ Die Sichten sind die vereinbarte Schnittstelle. Ändert sich das Schema der Roht
 **E-31 (MUSS)** **Fünf ausführbare Abläufe und ein gemeinsamer Unterworkflow.** Die Datenbeschaffung wird in fachlich getrennten und einzeln abschaltbaren Abläufen umgesetzt. Gemeinsame technische Logik wird nicht kopiert, sondern in einem Unterworkflow gekapselt.
 
 | Kennung | Ablauf | Auslöser | Aufgabe |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | P01 | Operative Ressourcen | alle 15 Minuten, werktags 08:00 bis 23:45 Uhr | Angebote, Datumszeilen, Buchungen, Preiskategorien, Anwesenheiten, Rechnungen und Transaktionen vollständig abgleichen |
 | P02 | Stamm- und Referenzdaten | täglich nachts | Admins, Umsatzsteuer, Länder, Kategorien und Benutzer vollständig abgleichen |
 | P03 | Gesamt- und Löschabgleich | wöchentlich nachts | alle zwölf Ressourcen prüfen und nicht mehr gelieferte Datensätze als gelöscht kennzeichnen |
 | P04 | Qualitätskontrolle | nach P01 bis P03 sowie täglich | Beziehungen, Vollständigkeit, Laufalter und DB-I-Berechenbarkeit prüfen; Abweichungen melden |
 | P05 | Manueller Wiederanlauf | manuell | einzelne Ressourcen oder den vollständigen Abgleich kontrolliert wiederholen |
-| P90 | Ressourcen-Unterworkflow | nur durch P01 bis P05 | Authentifizierung, Seitenabruf, Normalisierung, Hashvergleich, UPSERT und Laufprotokoll vereinheitlichen |
+| P90 | Ressourcen-Unterworkflow | durch P01 bis P05 sowie manuell per Webhook (Sync-Button) | Authentifizierung, Seitenabruf, Normalisierung, Hashvergleich, UPSERT und Laufprotokoll vereinheitlichen |
 
 **E-31a (MUSS)** **Operativer 15-Minuten-Abgleich.** P01 läuft in der Zeitzone `Europe/Berlin` mit dem Zeitplan `*/15 8-23 * * 1-5`. Zwischen 00:00 und 08:00 Uhr sowie am Wochenende findet kein regulärer P01-Lauf statt. Änderungen aus der Pause werden mit dem ersten vollständigen Lauf um 08:00 Uhr nachgezogen. Buchungen und Transaktionen gehören ausdrücklich zum selben 15-Minuten-Intervall wie Angebote und Datumszeilen.
 
@@ -749,6 +759,13 @@ Die Sichten sind die vereinbarte Schnittstelle. Ändert sich das Schema der Roht
 **E-31j (MUSS)** **Manueller Wiederanlauf.** P05 darf nur eine Ressource aus einer festen Auswahlliste oder den vollständigen Abgleich starten. Freie Tabellen- oder SQL-Eingaben sind ausgeschlossen. Jeder manuelle Lauf wird wie ein geplanter Lauf protokolliert.
 
 **E-31k (KANN)** **Spätere Webhook-Erweiterung.** Wenn eine Aktualisierung nahezu in Echtzeit benötigt wird, kann ein abgesicherter Webhook ergänzt werden. Empfang und Verarbeitung sind dann zu trennen. P01 und P03 bleiben unabhängig davon aktiv, damit ausgefallene oder unvollständige Webhook-Zustellungen den Bestand nicht verfälschen.
+
+**E-31l (MUSS)** **Auslöse- und Taktungsregeln für P90.** Der Ressourcen-Unterworkflow wird über zwei Auslösepfade gestartet:
+
+- **Automatischer Sync:** Alle 15 Minuten, strikt begrenzt auf Montag bis Freitag im Zeitfenster von 08:00 bis 22:00 Uhr (Cron: `*/15 8-22 * * 1-5`, Zeitzone: `Europe/Berlin`). Außerhalb dieses Fensters und am Wochenende ruht der automatische Sync.
+- **Manueller Sync:** Jederzeit per Webhook-Aufruf durch den Sync-Button im Header der Weboberfläche (`POST /api/sync/p90` → n8n-Webhook, Quelle `manual_ui`).
+
+**E-31m (MUSS)** **Status-Logik des Syncs.** Der Sync überführt Termine automatisch von `ausgeschrieben` auf `unter Vorbehalt`, sobald die Teilnehmerzahl >= 1 beträgt. Feste Status (`bestätigt`, `abgesagt`) sind manuell geschützt und werden durch den Sync nicht überschrieben. Bei einem Teilnehmerrückgang von > 0 auf 0 bei disponierten Kursen erfolgt eine sofortige E-Mail-Benachrichtigung.
 
 #### 13.5.5 Zugangsdaten
 
@@ -812,6 +829,25 @@ Die Sichten sind die vereinbarte Schnittstelle. Ändert sich das Schema der Roht
 
 **AU-06** *(entfällt)* Ein Terminabruf durch die WordPress-Website ist nicht erforderlich; die öffentliche Terminanzeige bleibt unverändert direkt an edoobox angebunden.
 
+**AU-07 (SOLL)** **Automatisierter Excel-Export für Trainer & Termine (OneDrive).** Täglicher, zeitgesteuerter Export aller Verfügbarkeiten und Kursdaten nach Microsoft OneDrive inklusive fester Dateinamenskonvention. Umsetzung in einer nachgelagerten Phase nach Abschluss der Kernfunktionen (siehe Ausbaustufe 6).
+
+### 15.1 Automatisierter Excel-Export für Trainer & Termine (OneDrive)
+
+- **Turnus & Trigger**: Täglich morgens um 03:00 Uhr automatisiert (z. B. via n8n Scheduled Trigger oder Backend-Cronjob).
+- **Zeitraum**: Rollierender Betrachtungszeitraum ab Tagesdatum (`heute`) bis exakt 6 Monate in die Zukunft (`heute + 6 Monate`).
+- **Inhalt & Datenumfang**:
+  - Alle aktiven Trainer.
+  - Erfasste Trainer-Verfügbarkeiten je Tag/Slot.
+  - Zugeordnete Kurse/Termine inklusive Kursname, Uhrzeit und aktuellem Status (`ausgeschrieben`, `unter Vorbehalt`, `bestätigt`, `abgesagt`).
+- **Format**: Formatierte Microsoft Excel-Arbeitsmappe (`.xlsx`) mit lesbarer Tabellenstruktur.
+- **Dateiname**: `[yyyy-mm-dd] Backup Trainerzeitpläne.xlsx`
+  - Präfix: Dynamisches Tagesdatum im ISO-Format `YYYY-MM-DD`
+  - Beispiel: `2026-10-03 Backup Trainerzeitpläne.xlsx`
+- **Ablageort**: Automatische Speicherung in einem definierten Zielverzeichnis auf Microsoft OneDrive (z. B. via Microsoft Graph API / n8n OneDrive-Knoten).
+- **Priorität / Umsetzungszeitpunkt**: Nachgelagerte Phase (Abschluss der Kernfunktionen).
+
+> Hinweis: Die im Export genannten Statuswerte entsprechen den systeminternen Statuswerten nach T-02; die Bezeichnungen im Export sind an die dortige Terminologie anzugleichen.
+
 ---
 
 ## 16 Nicht-funktionale Anforderungen
@@ -871,7 +907,7 @@ Die Sichten sind die vereinbarte Schnittstelle. Ändert sich das Schema der Roht
 Das System gilt als abnahmefähig, wenn folgende Abläufe fehlerfrei und ohne Umwege durchlaufen werden können:
 
 | Nr. | Abnahmefall |
-|---|---|
+| --- | --- |
 | AK-01 | Ein Trainer trägt einen ganzen Tag als frei ein; der Organisator sieht diese Freigabe unmittelbar. |
 | AK-02 | Der Organisator ordnet dem Vormittag einen Halbtagskurs zu; der Trainer sieht den Status „reserviert" mit Entscheidungsfrist. |
 | AK-03 | Der Versuch, demselben Trainer am selben Tag zusätzlich einen 90-Minuten-Kurs um 9:00 zuzuordnen, wird als Konflikt erkannt. |
@@ -918,6 +954,7 @@ Das System gilt als abnahmefähig, wenn folgende Abläufe fehlerfrei und ohne Um
 ## 19 Lieferumfang und Phasenplan
 
 ### Ausbaustufe 0 — Datenbeschaffung und Datenhaltung (vorgezogen)
+
 Neuer PostgreSQL-Container auf dem eigenen Hetzner-Server ohne veröffentlichten Port, eigene Sicherung mit Ablage außerhalb des Servers, Datenmodell mit getrennter Führung von Buchung, Position und Zahlung, Regelwerk zur Einstufung der Preiskategorien, Auswertungssichten, getrennte Datenbankrollen, fünf produktive n8n-Abläufe plus gemeinsamer Ressourcen-Unterworkflow, kurzlebige Zugriffstoken.
 Umfasst: E-27 bis E-34, DS-10 bis DS-12, K-10 bis K-10d
 Abnahme: AK-29 bis AK-40
@@ -925,26 +962,38 @@ Abnahme: AK-29 bis AK-40
 > Diese Stufe ist unabhängig von den übrigen Stufen und **vor** Ausbaustufe 4 fertigzustellen. Sie ist auch dann von Wert, wenn die Planungsanwendung später beginnt, weil sie die Zahlen für die Durchführungsentscheidung bereits als abfragbare Sicht bereitstellt.
 
 ### Ausbaustufe 1 — Ablösung der Excel-Tabellen
+
 Rollen und Anmeldung, Stammdaten, Slot-System mit allen sechs Slots, Kollisionsprüfung, Verfügbarkeitsverwaltung mit Zeitfenstern, manuelle Zuordnung auch ohne Trainer, Statusmodell mit Protokollierung, Feiertage, Urlaub und Betriebsruhe, Trainersicht auf eigene Termine, Export.
 Umfasst: R-01 bis R-02, R-04 bis R-08, S-01 bis S-09 einschließlich S-04a, S-04b und S-07a, S-10 bis S-15, V-01 bis V-07, V-09 bis V-10, L-01 bis L-04, L-05b, L-09, T-01 bis T-05, T-07, AU-01, NF-01 bis NF-08, DS-01 bis DS-08, DS-12
 
 ### Ausbaustufe 2 — Kommunikation, Dokumente und Kosten
+
 Kommunikationsmodul, Vorgänge, Trainerakte und Terminhistorie, Benachrichtigungen, Entscheidungsliste mit Frist, Ausfall- und Rücknahmeverfahren, Auflösung von Mehrfachbelegungen, Bereich notwendige Dokumente, Kostenerfassung je Trainerzuordnung, Kalenderabonnement.
 Umfasst: C-01 bis C-10, H-01 bis H-08, N-01 bis N-05, D-01 bis D-08, T-06, T-08 bis T-11a, K-01, K-04, K-05, K-07, V-08
 
 ### Ausbaustufe 3 — Automatisierung der Langfristplanung
+
 Serienplaner mit Prio-Rhythmus einschließlich Feiertags-, Urlaubs- und Betriebsruhelogik, Mehrfachbelegung auf Kurs- und Trainerebene, mehrteilige Kurse und Terminverbund, Mehrfachbearbeitung, Rhythmusüberwachung, Kapazitätsübersicht, Auswertungen.
 Umfasst: L-05, L-05a, L-06 bis L-08, L-10 bis L-13, S-02a, T-12, AU-02, AU-03
 
 ### Ausbaustufe 4 — edoobox lesend, Preiskategorien und Deckungsbeitrag
+
 Zuordnung Termin zu Angebot, Übernahme von Anmeldezahlen und Teilnehmergrenzen, Preiskategorien und Nachholererkennung, Nettopreise, Deckungsbeitrag, zweistufige Entscheidungsampel, Anbindung an die Sichten aus Ausbaustufe 0.
 Umfasst: E-01 bis E-14, E-21 bis E-26, K-02, K-03, K-06, K-08 bis K-13, AU-04, AU-05
 
 > Voraussetzung für diese Stufe: Ausbaustufe 0 ist abgenommen und der Prüfpunkt nach E-33 Nummer 6 ist bestanden. Ohne belastbare Datengrundlage ist ein Deckungsbeitrag nicht darstellbar.
 
 ### Ausbaustufe 5 — edoobox schreibend und weitere Automatisierung
+
 Veröffentlichung geplanter Termine nach edoobox, Statusrücknahme bei Absage, ausgehende Schnittstelle für n8n, Terminbewerbung durch Trainer.
 Umfasst: E-15 bis E-20, B-01 bis B-07, K-14
+
+### Ausbaustufe 6 — Automatisierter Excel-Export (nachgelagerte Phase)
+
+Täglicher, zeitgesteuerter Export aller aktiven Trainer, ihrer Verfügbarkeiten je Tag/Slot sowie der zugeordneten Kurse/Termine mit Kursname, Uhrzeit und Status als formatierte Excel-Arbeitsmappe nach Microsoft OneDrive. Rollierender Zeitraum von heute bis heute + 6 Monate, fester Dateiname `[yyyy-mm-dd] Backup Trainerzeitpläne.xlsx`, Ablage in einem definierten OneDrive-Zielverzeichnis.
+Umfasst: AU-07, Abschnitt 15.1
+
+> Diese Stufe wird erst nach Abschluss der Kernfunktionen (Ausbaustufen 1 bis 5) umgesetzt.
 
 **Empfehlung zur Einführung:** Ausbaustufe 0 kann parallel zu Ausbaustufe 1 laufen, da sie keine Berührungspunkte mit der Oberfläche hat. Ausbaustufe 1 zunächst für ein Quartal parallel zu Excel betreiben, danach die Excel-Tabellen abschalten. Die schreibende edoobox-Anbindung erst umsetzen, wenn die lesende Zuordnung über mindestens ein halbes Jahr fehlerfrei gelaufen ist.
 
@@ -957,7 +1006,7 @@ Umfasst: E-15 bis E-20, B-01 bis B-07, K-14
 Die Annahmen A-1 bis A-7 wurden vom Auftraggeber **bestätigt**. A-2, A-3 und A-5 sind aufgrund der Ergänzungen in Version 1.1 präzisiert worden.
 
 | Nr. | Annahme | Betrifft | Stand |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **A-1** | Entscheidungsfrist einheitlich 21 Tage vor Kursbeginn, systemweit konfigurierbar und je Kurs überschreibbar | T-06, K-01 | bestätigt |
 | **A-2** | Maßgeblich ist der Nettopreis je Anmeldung aus dem Kategoriebetrag der Buchungsposition. Buchungs-, Preiskategorie- und Transaktionslisten werden getrennt gespiegelt und verbunden. Rechnungssummen dienen der Kontrolle, ein Näherungswert nur als Ersatz | E-09, E-24, E-27 | bestätigt; Ermittlungsweg in Version 1.6 nach vollständiger Ressourcenprüfung aktualisiert |
 | **A-3** | Berücksichtigt werden ausschließlich deutsche Feiertage, die mindestens drei Bundesländer betreffen. Dänische Feiertage sind ohne Bedeutung | S-10 | bestätigt, korrigiert |
@@ -969,7 +1018,7 @@ Die Annahmen A-1 bis A-7 wurden vom Auftraggeber **bestätigt**. A-2, A-3 und A-
 ### Geklärte Punkte aus Version 1.0
 
 | Frage | Antwort |
-|---|---|
+| --- | --- |
 | Serienmodellierung von Terminen | Nein. Jeder Termin ist eigenständig (T-01a). Mehrteilige Kurse werden lediglich über einen Terminverbund verknüpft (T-12). |
 | Vertretungsregelung für den Organisator | Derzeit nicht erforderlich. Die Rolle Co-Organisator entfällt (R-03). |
 | Sprache der Oberfläche | Ausschließlich Deutsch. Eine Mehrsprachigkeit ist nicht vorzusehen. |
@@ -1002,10 +1051,10 @@ Die Annahmen A-1 bis A-7 wurden vom Auftraggeber **bestätigt**. A-2, A-3 und A-
 
 ## Quellen zur edoobox-Schnittstelle
 
-- edoobox API V2, Authentisierung und Grundlagen: https://v2.docs.edoobox.com/docs/edoobox-api
-- edoobox API, erste Schritte: https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte
-- REST-API-Übersicht, Ressourcen und Limits: https://docs.edoobox.com/knowledge-base/rest-api-basic/
-- Angebote-Ressourcen (Teilnehmerzahlen, Teilnehmergrenzen, Anmeldeschluss): https://docs.edoobox.com/knowledge-base/angeboteressourcen-rest-api/
-- Buchung-Ressourcen (Buchungsstatus, Warteliste): https://docs.edoobox.com/knowledge-base/buchung-ressourcen-rest-api/
-- Rechnung-Ressourcen (Beträge, Rechnungsstatus): https://docs.edoobox.com/knowledge-base/rechnung-ressourcen/
-- edoobox Webhooks: https://www.edoobox.com/de/produkte/webhooks/
+- edoobox API V2, Authentisierung und Grundlagen: <https://v2.docs.edoobox.com/docs/edoobox-api>
+- edoobox API, erste Schritte: <https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte>
+- REST-API-Übersicht, Ressourcen und Limits: <https://docs.edoobox.com/knowledge-base/rest-api-basic/>
+- Angebote-Ressourcen (Teilnehmerzahlen, Teilnehmergrenzen, Anmeldeschluss): <https://docs.edoobox.com/knowledge-base/angeboteressourcen-rest-api/>
+- Buchung-Ressourcen (Buchungsstatus, Warteliste): <https://docs.edoobox.com/knowledge-base/buchung-ressourcen-rest-api/>
+- Rechnung-Ressourcen (Beträge, Rechnungsstatus): <https://docs.edoobox.com/knowledge-base/rechnung-ressourcen/>
+- edoobox Webhooks: <https://www.edoobox.com/de/produkte/webhooks/>

@@ -1,0 +1,11 @@
+# Temporäre Diagnose- und Hilfsskripte (alle Verzeichnisse)
+.tmp_*
+
+# Roo-Konfiguration
+.roo/
+
+# Versehentlich erzeugte SQL-Ausgabe-Dateien
+'category'
+'default'
+'is_active'
+'status'
