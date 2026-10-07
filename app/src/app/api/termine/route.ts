@@ -446,7 +446,18 @@ export async function GET(request: Request) {
                 WHERE b.offer_id = od.offer_id
                   AND b.is_deleted IS NOT TRUE
                   AND b.status = 'gebucht'
-              ),
+                  -- (3) Veraltete Positionen: Wechselt die Preiskategorie einer
+                  --     Buchung nachtraeglich (z. B. "Standard Preis" ->
+                  --     "Kombibuchung (-5%)"), bleibt die alte Position in der
+                  --     Spiegelung liegen, wird aber nicht mehr mitgeliefert und
+                  --     behaelt ihr aelteres last_synced_at. Es zaehlen nur
+                  --     Positionen aus dem juengsten Spiegelungslauf je Buchung.
+                  AND p.last_synced_at = (
+                    SELECT MAX(p2.last_synced_at)
+                    FROM edoobox_raw.booking_position p2
+                    WHERE p2.booking_id = p.booking_id
+                  )
+             ),
               dedup AS (
                 SELECT DISTINCT ON (booking_id, klassenschluessel, amount_net)
                        quantity, amount_net, ist_erloes, ist_teilnehmer

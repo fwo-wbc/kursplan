@@ -269,12 +269,28 @@ export async function GET(request: Request) {
        JOIN edoobox_raw.offer_date od ON od.date_id = tz.date_id
        LEFT JOIN edoobox_raw.offer o ON o.offer_id = od.offer_id
        LEFT JOIN LATERAL (
-         SELECT COALESCE(SUM(p.quantity), 0)::int AS teilnehmer
-         FROM edoobox_raw.booking b
-         JOIN edoobox_raw.booking_position p ON p.booking_id = b.booking_id
-         WHERE b.offer_id = od.offer_id
-           AND b.is_deleted IS NOT TRUE
-           AND b.status = 'gebucht'
+         SELECT COALESCE(SUM(quantity)
+           FILTER (WHERE ist_teilnehmer), 0)::int AS teilnehmer
+         FROM (
+           SELECT DISTINCT ON (b.booking_id, st.quelle, p.amount_net)
+                  p.quantity, st.ist_teilnehmer
+           FROM edoobox_raw.booking b
+           JOIN edoobox_raw.booking_position p ON p.booking_id = b.booking_id
+           CROSS JOIN LATERAL kursplan.einstufung(p.pricecategory_name, p.amount_net)
+                  AS st(ist_erloes, ist_teilnehmer, quelle)
+           WHERE b.offer_id = od.offer_id
+             AND b.is_deleted IS NOT TRUE
+             AND b.status = 'gebucht'
+             -- Nur Positionen des juengsten Spiegelungslaufs je Buchung
+             -- (veraltete Positionen nach Preiskategorie-Wechsel ausblenden).
+             AND p.last_synced_at = (
+               SELECT MAX(p2.last_synced_at)
+               FROM edoobox_raw.booking_position p2
+               WHERE p2.booking_id = p.booking_id
+             )
+           ORDER BY b.booking_id, st.quelle, p.amount_net,
+                    p.last_synced_at DESC NULLS LAST, p.quantity DESC
+         ) dedup
        ) tn ON true
        WHERE tz.trainer_id = $1
          AND (od.date_start AT TIME ZONE 'Europe/Berlin')::date BETWEEN $2::date AND $3::date

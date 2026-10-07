@@ -136,12 +136,28 @@ export async function GET(request: Request) {
        -- Kursabfrage in /api/trainer/zeitplan): nur nicht gelöschte Buchungen
        -- mit Status 'gebucht' zählen.
        LEFT JOIN LATERAL (
-              SELECT COALESCE(SUM(p.quantity), 0)::int AS teilnehmer
-              FROM edoobox_raw.booking b
-              JOIN edoobox_raw.booking_position p ON p.booking_id = b.booking_id
-              WHERE b.offer_id = od.offer_id
-                AND b.is_deleted IS NOT TRUE
-                AND b.status = 'gebucht'
+              SELECT COALESCE(SUM(quantity)
+                FILTER (WHERE ist_teilnehmer), 0)::int AS teilnehmer
+              FROM (
+                SELECT DISTINCT ON (b.booking_id, st.quelle, p.amount_net)
+                       p.quantity, st.ist_teilnehmer
+                FROM edoobox_raw.booking b
+                JOIN edoobox_raw.booking_position p ON p.booking_id = b.booking_id
+                CROSS JOIN LATERAL kursplan.einstufung(p.pricecategory_name, p.amount_net)
+                       AS st(ist_erloes, ist_teilnehmer, quelle)
+                WHERE b.offer_id = od.offer_id
+                  AND b.is_deleted IS NOT TRUE
+                  AND b.status = 'gebucht'
+                  -- Nur Positionen des juengsten Spiegelungslaufs je Buchung
+                  -- (veraltete Positionen nach Preiskategorie-Wechsel ausblenden).
+                  AND p.last_synced_at = (
+                    SELECT MAX(p2.last_synced_at)
+                    FROM edoobox_raw.booking_position p2
+                    WHERE p2.booking_id = p.booking_id
+                  )
+                ORDER BY b.booking_id, st.quelle, p.amount_net,
+                         p.last_synced_at DESC NULLS LAST, p.quantity DESC
+              ) dedup
             ) tn ON true
        -- Lokale Zuweisung des gewünschten Trainers (falls vorhanden). Der
        -- JOIN filtert bereits auf trainer_id, damit ein Kurs mit mehreren
