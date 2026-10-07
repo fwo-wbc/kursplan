@@ -493,7 +493,12 @@ export async function GET(request: Request) {
                NOW() - ($2::int * INTERVAL '1 day')
              )
          AND o.status <> '0'
-       ORDER BY od.date_start ASC, od.date_id ASC`,
+       -- Deterministische Zuweisungs-Reihenfolge: Bei mehreren Zuweisungen
+       -- je Termin (z. B. Altbestaende nach Trainerwechsel) gewinnt stets der
+       -- juengste, gueltige Eintrag. Die JS-Deduplizierung (erste Zeile je
+       -- trainer_id) erhaelt dadurch garantiert die neueste Zuweisung.
+       ORDER BY od.date_start ASC, od.date_id ASC,
+                tz.created_at DESC NULLS LAST, tz.id DESC`,
       [fromDatum, STANDARD_RUECKBLICK_TAGE]
     );
 

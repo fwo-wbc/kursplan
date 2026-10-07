@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import {
-  CalendarDays,
   CalendarRange,
   Users,
   RefreshCw,
@@ -13,8 +12,7 @@ import {
 } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { href: '/', label: 'Kursplanung', icon: CalendarDays },
-  { href: '/trainer/zeitplan', label: 'Dozenten-Planung', icon: CalendarRange },
+  { href: '/trainer/verfuegbarkeit', label: 'Trainerverfügbarkeiten', icon: CalendarRange },
   { href: '/trainer', label: 'Trainer verwalten', icon: Users },
 ];
 

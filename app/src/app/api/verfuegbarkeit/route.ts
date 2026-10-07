@@ -34,6 +34,8 @@ interface ReservierungRow {
   end_time: string;
   kunde: string;
   bemerkung: string | null;
+  frist_ende: string | null;
+  gruppe_code: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +199,9 @@ export async function GET(request: Request) {
          to_char(start_time, 'HH24:MI') AS start_time,
          to_char(end_time, 'HH24:MI') AS end_time,
          kunde,
-         bemerkung
+         bemerkung,
+         to_char(frist_ende, 'YYYY-MM-DD') AS frist_ende,
+         gruppe_code
        FROM public.trainer_reservierung
        WHERE trainer_id = $1
          AND datum >= $2::date
@@ -215,6 +219,8 @@ export async function GET(request: Request) {
         end_time: String(row.end_time),
         kunde: String(row.kunde),
         bemerkung: row.bemerkung == null ? null : String(row.bemerkung),
+        frist_ende: row.frist_ende == null ? null : String(row.frist_ende),
+        gruppe_code: row.gruppe_code == null ? null : String(row.gruppe_code),
       })
     );
 

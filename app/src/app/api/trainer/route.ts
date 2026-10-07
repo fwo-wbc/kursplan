@@ -17,6 +17,7 @@ interface Trainer {
   halbtagessatz: number;
   stundensatz: number;
   reduzierter_satz: number;
+  honorar_90min: number;
 }
 
 /** Erwarteter Request-Body für POST-Sync. */
@@ -32,6 +33,7 @@ interface TrainerSaetzeBody {
   halbtagessatz?: unknown;
   stundensatz?: unknown;
   reduzierter_satz?: unknown;
+  honorar_90min?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +70,7 @@ function mapTrainer(row: Record<string, unknown>): Trainer {
     halbtagessatz: Number(row.halbtagessatz ?? 0),
     stundensatz: Number(row.stundensatz ?? 0),
     reduzierter_satz: Number(row.reduzierter_satz ?? 0),
+    honorar_90min: Number(row.honorar_90min ?? 0),
   };
 }
 
@@ -103,7 +106,7 @@ function parseBetrag(value: unknown): number {
 export async function GET() {
   try {
     const result = await query(
-      `SELECT id, vorname, nachname, kuerzel, is_active, edoobox_admin_id, tagessatz, halbtagessatz, stundensatz, reduzierter_satz
+      `SELECT id, vorname, nachname, kuerzel, is_active, edoobox_admin_id, tagessatz, halbtagessatz, stundensatz, reduzierter_satz, honorar_90min
        FROM public.trainer
        WHERE is_active = true
        ORDER BY kuerzel ASC`
@@ -158,11 +161,18 @@ async function updateSaetze(request: Request) {
   const hasHalbtagessatz = body.halbtagessatz !== undefined;
   const hasStundensatz = body.stundensatz !== undefined;
   const hasReduzierterSatz = body.reduzierter_satz !== undefined;
-  if (!hasTagessatz && !hasHalbtagessatz && !hasStundensatz && !hasReduzierterSatz) {
+  const hasHonorar90min = body.honorar_90min !== undefined;
+  if (
+    !hasTagessatz &&
+    !hasHalbtagessatz &&
+    !hasStundensatz &&
+    !hasReduzierterSatz &&
+    !hasHonorar90min
+  ) {
     return NextResponse.json(
       {
         error:
-          'Mindestens ein Satz (tagessatz, halbtagessatz, stundensatz oder reduzierter_satz) muss übergeben werden.',
+          'Mindestens ein Satz (tagessatz, halbtagessatz, stundensatz, reduzierter_satz oder honorar_90min) muss übergeben werden.',
       },
       { status: 400 }
     );
@@ -172,11 +182,13 @@ async function updateSaetze(request: Request) {
   let halbtagessatz: number | undefined;
   let stundensatz: number | undefined;
   let reduzierterSatz: number | undefined;
+  let honorar90min: number | undefined;
   try {
     if (hasTagessatz) tagessatz = parseBetrag(body.tagessatz);
     if (hasHalbtagessatz) halbtagessatz = parseBetrag(body.halbtagessatz);
     if (hasStundensatz) stundensatz = parseBetrag(body.stundensatz);
     if (hasReduzierterSatz) reduzierterSatz = parseBetrag(body.reduzierter_satz);
+    if (hasHonorar90min) honorar90min = parseBetrag(body.honorar_90min);
   } catch (err: unknown) {
     return NextResponse.json(
       { error: toErrorMessage(err) },
@@ -203,6 +215,10 @@ async function updateSaetze(request: Request) {
     setParts.push(`reduzierter_satz = $${params.length + 1}`);
     params.push(reduzierterSatz);
   }
+  if (honorar90min !== undefined) {
+    setParts.push(`honorar_90min = $${params.length + 1}`);
+    params.push(honorar90min);
+  }
   setParts.push('updated_at = NOW()');
   params.push(idNumber);
 
@@ -211,7 +227,7 @@ async function updateSaetze(request: Request) {
       `UPDATE public.trainer
        SET ${setParts.join(', ')}
        WHERE id = $${params.length}
-       RETURNING id, vorname, nachname, kuerzel, is_active, edoobox_admin_id, tagessatz, halbtagessatz, stundensatz, reduzierter_satz`,
+       RETURNING id, vorname, nachname, kuerzel, is_active, edoobox_admin_id, tagessatz, halbtagessatz, stundensatz, reduzierter_satz, honorar_90min`,
       params
     );
 

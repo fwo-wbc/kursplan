@@ -13,8 +13,8 @@ import {
   Check,
   X,
 } from 'lucide-react';
-import Image from 'next/image';
 import Navigation from '../components/Navigation';
+import HeaderLogo from '../components/HeaderLogo';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -30,6 +30,7 @@ interface Trainer {
   halbtagessatz: number;
   stundensatz: number;
   reduzierter_satz: number;
+  honorar_90min: number;
 }
 
 /** Antwort des POST-Sync-Endpunkts. */
@@ -88,6 +89,7 @@ export default function TrainerPage() {
     halbtagessatz: string;
     stundensatz: string;
     reduzierter_satz: string;
+    honorar_90min: string;
   } | null>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
 
@@ -154,6 +156,7 @@ export default function TrainerPage() {
       halbtagessatz: toInputValue(t.halbtagessatz),
       stundensatz: toInputValue(t.stundensatz),
       reduzierter_satz: toInputValue(t.reduzierter_satz),
+      honorar_90min: toInputValue(t.honorar_90min),
     });
   }, []);
 
@@ -172,6 +175,7 @@ export default function TrainerPage() {
       const halbtagessatz = Number(editDraft.halbtagessatz.replace(',', '.'));
       const stundensatz = Number(editDraft.stundensatz.replace(',', '.'));
       const reduzierter_satz = Number(editDraft.reduzierter_satz.replace(',', '.'));
+      const honorar_90min = Number(editDraft.honorar_90min.replace(',', '.'));
 
       if (
         !Number.isFinite(tagessatz) ||
@@ -181,7 +185,9 @@ export default function TrainerPage() {
         !Number.isFinite(stundensatz) ||
         stundensatz < 0 ||
         !Number.isFinite(reduzierter_satz) ||
-        reduzierter_satz < 0
+        reduzierter_satz < 0 ||
+        !Number.isFinite(honorar_90min) ||
+        honorar_90min < 0
       ) {
         showFeedback('error', 'Bitte gültige, nicht-negative Beträge eingeben.');
         return;
@@ -192,7 +198,7 @@ export default function TrainerPage() {
         const res = await fetch('/api/trainer', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: trainerId, tagessatz, halbtagessatz, stundensatz, reduzierter_satz }),
+          body: JSON.stringify({ id: trainerId, tagessatz, halbtagessatz, stundensatz, reduzierter_satz, honorar_90min }),
         });
 
         if (!res.ok) {
@@ -244,14 +250,7 @@ export default function TrainerPage() {
         </div>
         <div className="flex items-center gap-4 shrink-0">
           <Navigation />
-          <Image
-            src="/wbc_logo-2026-trnsp-1007x145.png"
-            alt="Logo"
-            width={240}
-            height={60}
-            className="h-12 w-auto object-contain"
-            priority
-          />
+          <HeaderLogo />
         </div>
       </header>
 
@@ -389,6 +388,15 @@ export default function TrainerPage() {
                     <Info className="w-3.5 h-3.5 text-slate-400" />
                   </span>
                 </th>
+                <th className="px-3 py-3 font-semibold text-right">
+                  <span
+                    className="inline-flex items-center gap-1"
+                    title="Lokal gepflegter Honorarsatz für Einzeltermine bis 90 Minuten"
+                  >
+                    90-Min.-Satz
+                    <Info className="w-3.5 h-3.5 text-slate-400" />
+                  </span>
+                </th>
                 <th className="px-3 py-3 font-semibold text-right">Aktionen</th>
               </tr>
             </thead>
@@ -507,6 +515,28 @@ export default function TrainerPage() {
                         />
                       ) : (
                         <span className="tabular-nums font-medium">{formatEuros(t.reduzierter_satz)}</span>
+                      )}
+                    </td>
+
+                    {/* 90-Min.-Satz – lokal pflegbar */}
+                    <td className="px-3 py-3 whitespace-nowrap text-right">
+                      {isEditing ? (
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step="0.01"
+                          min="0"
+                          aria-label={`90-Min.-Satz für ${t.kuerzel ?? t.id}`}
+                          value={editDraft?.honorar_90min ?? ''}
+                          onChange={(e) =>
+                            setEditDraft((prev) =>
+                              prev ? { ...prev, honorar_90min: e.target.value } : prev
+                            )
+                          }
+                          className="w-24 px-2 py-1 text-sm text-right border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      ) : (
+                        <span className="tabular-nums font-medium">{formatEuros(t.honorar_90min)}</span>
                       )}
                     </td>
 

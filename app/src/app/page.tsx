@@ -12,8 +12,8 @@ import {
   X,
   ChevronDown,
 } from 'lucide-react';
-import Image from 'next/image';
 import Navigation from './components/Navigation';
+import HeaderLogo from './components/HeaderLogo';
 import { berechneHonorar } from '@/lib/honorar';
 
 // ---------------------------------------------------------------------------
@@ -38,6 +38,7 @@ interface Trainer {
   halbtagessatz: number;
   stundensatz: number;
   reduzierter_satz: number;
+  honorar_90min: number;
 }
 
 /** Trainer-Kurzprofil innerhalb einer Zuweisung. */
@@ -116,6 +117,11 @@ interface KursKonflikt {
   kursKey: string;
   /** Vorformulierter Tooltip-Text der Kollision. */
   text: string;
+  /**
+   * Echter Terminkonflikt: mindestens zwei der überlappenden Termine
+   * besitzen den Status „Bestätigt" (Doppel-Bestätigung desselben Trainers).
+   */
+  echt: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +205,14 @@ const STATUS_CONFIG: Record<string, { label: string; badgeClasses: string }> = {
     label: 'Geschlossen',
     badgeClasses: 'bg-amber-50 text-amber-700 border-amber-200',
   },
+  'Geschlossen (mit TN)': {
+    label: 'Geschlossen (mit TN)',
+    badgeClasses: 'bg-amber-50 text-amber-700 border-amber-200',
+  },
+  'Geschlossen (ohne TN)': {
+    label: 'Geschlossen (ohne TN)',
+    badgeClasses: 'bg-amber-50 text-amber-700 border-amber-200',
+  },
   'Abgesagt': {
     label: 'Abgesagt',
     badgeClasses: 'bg-rose-50 text-rose-700 border-rose-200 line-through opacity-75',
@@ -214,9 +228,9 @@ const STATUS_FILTER_REIHENFOLGE = [
   'Veröffentlicht',
   'Garantierte Durchführung',
   'Freigegeben',
-  'Geschlossen',
+  'Geschlossen (mit TN)',
+  'Geschlossen (ohne TN)',
   'Abgesagt',
-  'Unbekannt',
 ];
 
 /** Status-Optionen für den Kursstatus-Filter, abgeleitet aus STATUS_CONFIG. */
@@ -224,11 +238,12 @@ const STATUS_FILTER_OPTIONS = STATUS_FILTER_REIHENFOLGE
   .filter((value) => STATUS_CONFIG[value])
   .map((value) => ({ value, label: STATUS_CONFIG[value].label }));
 
-/** Vorausgewählte Statuswerte (ausgeschrieben, bestätigt). */
+/** Vorausgewählte Statuswerte (Standard-Filterauswahl). */
 const DEFAULT_STATUS_FILTERS = [
   'Veröffentlicht',
   'Garantierte Durchführung',
   'Freigegeben',
+  'Geschlossen (mit TN)',
 ];
 
 /** Zeitfilter-Optionen für das Jahr (Anforderung: Alle, 2025–2027). */
@@ -549,6 +564,13 @@ function konfliktText(kurs: Kurs): string {
   return kursnr
     ? `Bereits eingeteilt in Kursnr. ${kursnr}`
     : 'Bereits eingeteilt in einem Paralleltermin (Kursnr. unbekannt)';
+}
+
+/** true, wenn der Zuweisungsstatus einer Bestätigung entspricht. */
+function istBestaetigtStatus(
+  status: string | null | undefined
+): boolean {
+  return status === 'bestätigt' || status === 'bestaetigt';
 }
 
 /** Erzeugt den Anzeigetext eines Trainers – ausschließlich das Kürzel. */
@@ -1050,12 +1072,25 @@ export default function Home() {
       }
 
       // Kursstatus filtern (Mehrfachauswahl). Ohne aktive Auswahl wird der
-      // Statusfilter nicht angewendet; Standard ist {1, 2}.
-      if (
-        selectedStatusFilter.length > 0 &&
-        !selectedStatusFilter.includes(kurs.date_status ?? '')
-      ) {
-        return false;
+      // Statusfilter nicht angewendet. Der Status „Geschlossen" wird über
+      // zwei explizite Filter gesteuert: „Geschlossen (mit TN)" (teilnehmer
+      // >= 1) und „Geschlossen (ohne TN)" (teilnehmer === 0). Alle übrigen
+      // Statuswerte werden weiterhin 1:1 abgeglichen.
+      if (selectedStatusFilter.length > 0) {
+        const status = kurs.date_status ?? '';
+        const passtDirekt = selectedStatusFilter.includes(status);
+        const passtGeschlossenMitTn =
+          status === 'Geschlossen' &&
+          selectedStatusFilter.includes('Geschlossen (mit TN)') &&
+          kurs.teilnehmer >= 1;
+        const passtGeschlossenOhneTn =
+          status === 'Geschlossen' &&
+          selectedStatusFilter.includes('Geschlossen (ohne TN)') &&
+          kurs.teilnehmer === 0;
+
+        if (!passtDirekt && !passtGeschlossenMitTn && !passtGeschlossenOhneTn) {
+          return false;
+        }
       }
 
       // Zeitfilter clientseitig über den frühesten Termin-Start des Kurses.
@@ -1157,11 +1192,17 @@ export default function Home() {
         const keyA = kursKey(a);
         const keyB = kursKey(b);
 
+        // Echter Terminkonflikt: beide überlappenden Kurse sind bestätigt
+        // (mindestens zwei überschneidende Termine mit Status „Bestätigt").
+        const echt =
+          istBestaetigtStatus(a.zuweisungen[0]?.status ?? null) &&
+          istBestaetigtStatus(b.zuweisungen[0]?.status ?? null);
+
         if (!karte[keyA]) karte[keyA] = [];
-        karte[keyA].push({ kursKey: keyB, text: konfliktText(b) });
+        karte[keyA].push({ kursKey: keyB, text: konfliktText(b), echt });
 
         if (!karte[keyB]) karte[keyB] = [];
-        karte[keyB].push({ kursKey: keyA, text: konfliktText(a) });
+        karte[keyB].push({ kursKey: keyA, text: konfliktText(a), echt });
       }
     }
 
@@ -1420,7 +1461,10 @@ export default function Home() {
     (kurs) =>
       schliessungHinweis(kurs, heuteIso) !== null ||
       lastMinuteHinweis(kurs, diffTageBisStart(kurs, heuteIso)) !== null ||
-      trainerNichtVerfuegbarHinweis(kurs) !== null
+      trainerNichtVerfuegbarHinweis(kurs) !== null ||
+      (konflikteProKurs[kursKey(kurs)] ?? []).some(
+        (konflikt) => konflikt.echt
+      )
   );
 
   const naechsterKurstagIso = gefilterteKurse.reduce<string | null>(
@@ -1460,14 +1504,7 @@ export default function Home() {
         </div>
         <div className="flex items-center gap-4 shrink-0">
           <Navigation />
-          <Image
-            src="/wbc_logo-2026-trnsp-1007x145.png"
-            alt="Logo"
-            width={240}
-            height={60}
-            className="h-12 w-auto object-contain"
-            priority
-          />
+          <HeaderLogo />
         </div>
       </header>
 
@@ -1802,6 +1839,9 @@ export default function Home() {
                   kursIso > naechsterKurstagIso &&
                   kursIso <= in5TagenIso;
                 const konflikte = konflikteProKurs[key] ?? [];
+                const hatEchtenKonflikt = konflikte.some(
+                  (konflikt) => konflikt.echt
+                );
                 const konfliktTitle =
                   konflikte.length > 0
                     ? konflikte.map((konflikt) => konflikt.text).join('\n')
@@ -1979,9 +2019,17 @@ export default function Home() {
                           <span
                             title={konfliktTitle}
                             aria-label={konfliktTitle ?? 'Konflikt: Trainer-Doppelbelegung'}
-                            className="inline-flex items-center justify-center w-6 h-6 shrink-0 rounded-full bg-amber-100 text-amber-700 cursor-help ring-1 ring-amber-300"
+                            className={`inline-flex items-center justify-center w-6 h-6 shrink-0 rounded-full cursor-help ring-1 ${
+                              hatEchtenKonflikt
+                                ? 'bg-red-100 text-red-600 ring-red-300'
+                                : 'bg-amber-100 text-amber-700 ring-amber-300'
+                            }`}
                           >
-                            <AlertTriangle className="w-3.5 h-3.5" />
+                            <AlertTriangle
+                              className={`w-3.5 h-3.5 ${
+                                hatEchtenKonflikt ? 'text-red-600' : ''
+                              }`}
+                            />
                           </span>
                         )}
                       </div>
@@ -2069,7 +2117,8 @@ export default function Home() {
                       <td className="px-3 py-3 align-top text-center">
                         {(hinweisSchliessung ||
                           hinweisLastMinute ||
-                          hinweisTrainer) && (
+                          hinweisTrainer ||
+                          hatEchtenKonflikt) && (
                           <div className="flex flex-wrap gap-1 items-center justify-center">
                             {hinweisSchliessung && (
                               <span className={hinweisSchliessung.className}>
@@ -2084,6 +2133,11 @@ export default function Home() {
                             {hinweisTrainer && (
                               <span className={hinweisTrainer.className}>
                                 {hinweisTrainer.text}
+                              </span>
+                            )}
+                            {hatEchtenKonflikt && (
+                              <span className="bg-red-600 text-yellow-300 font-semibold px-2 py-0.5 rounded text-xs">
+                                Terminkonflikt
                               </span>
                             )}
                           </div>
