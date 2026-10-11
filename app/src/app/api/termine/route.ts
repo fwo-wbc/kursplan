@@ -113,9 +113,11 @@ interface Kurs {
 
 /**
  * Standard-Rückblick in Tagen, wenn kein ?from= Parameter gesetzt ist.
- * Hält die operative Ansicht performant (letzte 60 Tage bis Zukunft).
+ * Hält die operative Ansicht performant (letzte 365 Tage bis Zukunft).
+ * 365 Tage decken den gesamten historischen Bestand ab (Termine ab
+ * Januar 2026) und erlauben das Zurückblättern bis mindestens 01.01.2026.
  */
-const STANDARD_RUECKBLICK_TAGE = 60;
+const STANDARD_RUECKBLICK_TAGE = 365;
 
 /** Liefert den frühesten Termin-Start eines Kurses als Zeitstempel. */
 function ersterTerminStart(kurs: Kurs): number {

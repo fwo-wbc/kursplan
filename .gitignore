@@ -3,6 +3,12 @@
 .env.local
 .env*.local
 
+# Zugangsdaten / Secrets (niemals einchecken)
+edoobox_token.txt
+n8n_cred_auth.json
+*.token
+*.cred
+
 # Temporäre Diagnose- und Hilfsskripte (alle Verzeichnisse)
 .tmp_*
 

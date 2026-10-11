@@ -1,0 +1,439 @@
+{
+  "name": "P97_Test_Duplicate_Offer",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "7f78ae39-f726-468f-8958-00f335b287ea",
+      "name": "Manuell testen",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-320, -96]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "grant-type", "value": "password" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ expire: $now.plus({ hours: 24 }).toISO() }) }}",
+        "options": {}
+      },
+      "id": "c6c47f89-6ee7-4db1-a3ac-a576a2089928",
+      "name": "Auth edoobox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-100, -96],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "ecGv3wCmKLEUq8fX",
+          "name": "Custom Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://app1.edoobox.com/v2/offer/offer_8d72df08692f_10460260010",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9f3a1c2e-5b4d-4f6a-8c7d-1e2f3a4b5c6d",
+      "name": "Vorlage holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [140, -96]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Token robust aus der Auth-Antwort extrahieren (analog P96):\n// die Antwort ist entweder { data: '<token>' } oder { access_token: '<token>' }.\nconst auth = $('Auth edoobox').first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nif (!token) {\n  throw new Error('Kein Token in der edoobox-Auth-Antwort enthalten.');\n}\n// Kategorie aus der Vorlagen-Antwort extrahieren.\n// GET /v2/offer/{id} liefert { data: { <id>: { record } } } bzw. { data: [] }.\nconst roh = $input.first().json;\nlet d = roh.data ?? roh;\nwhile (d && typeof d === 'object' && !Array.isArray(d)) {\n  const keys = Object.keys(d);\n  if (keys.length === 1 && d[keys[0]] && typeof d[keys[0]] === 'object') {\n    d = d[keys[0]];\n    continue;\n  }\n  break;\n}\nif (Array.isArray(d)) d = d[0] ?? {};\nconst category = d.category;\nif (!category) {\n  throw new Error('Keine Kategorie in der Vorlage gefunden.');\n}\nreturn [{ json: { token, category, name: d.name } }];"
+      },
+      "id": "8e2b9d1f-4c3a-4e5b-9f6a-2b3c4d5e6f7a",
+      "name": "Vorlage normalisieren",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [360, -96]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://app1.edoobox.com/v2/pricecategory/list",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Vorlage normalisieren').first().json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter[offer]",
+              "value": "offer_8d72df08692f_10460260010"
+            },
+            {
+              "name": "limit[start]",
+              "value": "0"
+            },
+            {
+              "name": "limit[reply]",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4a00-8000-000000000001",
+      "name": "Vorlagen-Preise lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [580, -96]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://app1.edoobox.com/v2/date",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Vorlage normalisieren').first().json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "offer",
+              "value": "offer_8d72df08692f_10460260010"
+            },
+            {
+              "name": "limit[start]",
+              "value": "0"
+            },
+            {
+              "name": "limit[reply]",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0002-4a00-8000-000000000002",
+      "name": "Vorlagen-Termine lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [800, -96]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/offer",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Vorlage normalisieren').first().json.token }}"
+            },
+            {
+              "name": "edid",
+              "value": "={{ $('Vorlage normalisieren').first().json.edid || '6aca4a66d65d69000654423106b9d78ddd5c3355926e80bdf7de22dc1' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": false,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"data\": {\n    \"name\": \"TEST-EX-0127\",\n    \"offerdef\": \"offerdef_f9540e6ac1fb_199835\",\n    \"category\": \"category_41b0c0d06429_10460223670\",\n    \"type\": \"offer\",\n    \"mode\": \"Online\",\n    \"status\": 1\n  }\n}",
+        "options": {}
+      },
+      "id": "d7bd658e-dc17-4a87-a7db-02499e164458",
+      "name": "Duplicate Offer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1020, -96]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Neue Offer-ID aus der Duplicate-Antwort extrahieren (analog P96 entpacken).\n// POST /v2/offer/{template}/duplicate liefert { data: { <id>: { record } } }\n// bzw. { data: [] }.\nconst dup = $('Duplicate Offer').first().json;\nconst vorlage = $('Vorlage normalisieren').first().json;\n\nlet d = dup.data ?? dup;\nwhile (d && typeof d === 'object' && !Array.isArray(d)) {\n  const keys = Object.keys(d);\n  if (keys.length === 1 && d[keys[0]] && typeof d[keys[0]] === 'object') {\n    d = d[keys[0]];\n    continue;\n  }\n  break;\n}\nif (Array.isArray(d)) d = d[0] ?? {};\n\nconst newOfferId = d.id ?? d.offer_id ?? dup.offer_id ?? dup.data?.id;\nif (!newOfferId) {\n  throw new Error('Keine neue Angebots-ID in der Duplicate-Antwort gefunden: ' + JSON.stringify(dup).slice(0, 500));\n}\n\nreturn [{\n  json: {\n    token: vorlage.token,\n    category: vorlage.category,\n    name: vorlage.name || d.name,\n    template_offer_id: 'offer_8d72df08692f_10460260010',\n    offer_id: String(newOfferId)\n  }\n}];"
+      },
+      "id": "3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d",
+      "name": "Duplicate normalisieren",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1240, -96]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vorlagen-Preise (Node 'Vorlagen-Preise lesen') in je ein Item { data: { ...pflichtfelder, offer: new_offer_id } } umwandeln.\n// Nur die von edoobox V2 fuer POST /v2/price akzeptierten Pflichtfelder werden weitergereicht:\n//   title, price (bzw. amount), status, offer.\n// Alle uebrigen Vorlagen-Felder (id, offer_id, created_at, updated_at, ...) werden verworfen,\n// da unerwartete Felder bei edoobox zu HTTP 402 ED80100 fuehren.\nfunction extractRows(roh) {\n  let d = roh;\n  if (d && typeof d === 'object' && !Array.isArray(d) && d.data !== undefined) {\n    d = d.data;\n  }\n  if (d && typeof d === 'object' && !Array.isArray(d) && Array.isArray(d.rows)) {\n    return d.rows;\n  }\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') {\n    const entries = Object.entries(d);\n    if (entries.length > 0) {\n      const rows = entries\n        .map(([k, v]) => {\n          if (v && typeof v === 'object' && !Array.isArray(v)) {\n            const rec = (v.record && typeof v.record === 'object') ? v.record : v;\n            return { id: rec.id ?? k, ...rec };\n          }\n          return null;\n        })\n        .filter(Boolean);\n      if (rows.length > 0) return rows;\n    }\n    return [d];\n  }\n  return [];\n}\n\nconst newOfferId = $('Duplicate normalisieren').first().json.offer_id;\nif (!newOfferId) throw new Error('Keine neue Angebots-ID (new_offer_id) vorhanden.');\n\nconst roh = $('Vorlagen-Preise lesen').first().json;\nconst rows = extractRows(roh).filter(r => r && typeof r === 'object');\n\nif (rows.length === 0) {\n  const msg = 'Keine Vorlagen-Preise gefunden. Roh-Payload: ' + JSON.stringify(roh);\n  console.log('[P97 Preise aufbereiten] ' + msg);\n  return [{ json: { warning: true, message: msg, rawPayload: roh } }];\n}\n\n// Whitelist der von edoobox V2 fuer Preise akzeptierten Pflichtfelder.\nconst erlaubteFelder = ['title', 'price', 'amount', 'status'];\n\nreturn rows.map(r => {\n  const felder = {};\n  for (const f of erlaubteFelder) {\n    if (r[f] !== undefined && r[f] !== null) felder[f] = r[f];\n  }\n  // 'price' hat Vorrang vor 'amount' - nur eines der beiden Felder senden.\n  if (felder.price === undefined && felder.amount !== undefined) {\n    felder.price = felder.amount;\n  }\n  delete felder.amount;\n  felder.offer = newOfferId;\n  return { json: { data: felder } };\n});"
+      },
+      "id": "a1b2c3d4-0003-4a00-8000-000000000003",
+      "name": "Preise aufbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, -96]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/pricecategory",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Vorlage normalisieren').first().json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: $json.data }) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0004-4a00-8000-000000000004",
+      "name": "Preis anlegen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, -96],
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://app1.edoobox.com/v2/price?offer={{ $('Duplicate normalisieren').first().json.offer_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Vorlage normalisieren').first().json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0005-4a00-8000-000000000005",
+      "name": "Neue Preise lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1900, -96],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Standard-0-EUR-Preis des neuen Angebots ermitteln: alle Preise des neuen Angebots,\n// die NICHT soeben aus der Vorlage angelegt wurden (IDs aus den POST-Antworten).\nfunction idsAus(body) {\n  const d = body && body.data !== undefined ? body.data : body;\n  if (typeof d === 'string' || typeof d === 'number') return [String(d)];\n  if (!d || typeof d !== 'object') return [];\n  if (Array.isArray(d)) return d.flatMap(x => idsAus({ data: x }));\n  if (d.id !== undefined) return [String(d.id)];\n  return Object.entries(d).map(([k, v]) => (v && typeof v === 'object' && v.id !== undefined) ? String(v.id) : String(k));\n}\n\nconst angelegt = new Set($('Preis anlegen').all().flatMap(i => idsAus(i.json)));\nif (angelegt.size === 0) {\n  throw new Error('Keine IDs der angelegten Preise ermittelbar - Dummy-Loeschung abgebrochen.');\n}\n\nconst roh = $input.first().json;\nconst d = roh.data ?? roh;\nlet rows = [];\nif (Array.isArray(d)) {\n  rows = d;\n} else if (d && typeof d === 'object') {\n  rows = Object.entries(d).map(([k, v]) => (v && typeof v === 'object') ? { id: v.id ?? k, ...v } : null).filter(Boolean);\n}\n\nconst dummies = rows.filter(r => {\n  if (r.id === undefined || angelegt.has(String(r.id))) return false;\n  const betrag = Number(r.price ?? r.amount ?? r.value ?? 0);\n  return !(betrag > 0);\n});\n\nreturn dummies.map(r => ({ json: { price_id: String(r.id) } }));"
+      },
+      "id": "a1b2c3d4-0006-4a00-8000-000000000006",
+      "name": "Dummy-Preis ermitteln",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2120, -192]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://app1.edoobox.com/v2/price/{{ $json.price_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Vorlage normalisieren').first().json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0007-4a00-8000-000000000007",
+      "name": "Dummy-Preis löschen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2340, -192]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vorlagen-Termine (Node 'Vorlagen-Termine lesen') in je ein Item { data: { ...termin_felder, offer: new_offer_id } } umwandeln.\n// Robustes Entpacken aller üblichen edoobox-V2-Rückgabestrukturen:\n//   items[0].json.data (Array), items[0].json.data.rows, items[0].json.rows,\n//   flache Liste items direkt oder Objekt-Map { <id>: { record } }.\nfunction extractRows(roh) {\n  let d = roh;\n  if (d && typeof d === 'object' && !Array.isArray(d) && d.data !== undefined) {\n    d = d.data;\n  }\n  if (d && typeof d === 'object' && !Array.isArray(d) && Array.isArray(d.rows)) {\n    return d.rows;\n  }\n  if (Array.isArray(d)) return d;\n  if (d && typeof d === 'object') {\n    const entries = Object.entries(d);\n    if (entries.length > 0) {\n      const rows = entries\n        .map(([k, v]) => {\n          if (v && typeof v === 'object' && !Array.isArray(v)) {\n            const rec = (v.record && typeof v.record === 'object') ? v.record : v;\n            return { id: rec.id ?? k, ...rec };\n          }\n          return null;\n        })\n        .filter(Boolean);\n      if (rows.length > 0) return rows;\n    }\n    return [d];\n  }\n  return [];\n}\n\nconst newOfferId = $('Duplicate normalisieren').first().json.offer_id;\nif (!newOfferId) throw new Error('Keine neue Angebots-ID (new_offer_id) vorhanden.');\n\nconst roh = $('Vorlagen-Termine lesen').first().json;\nconst rows = extractRows(roh).filter(r => r && typeof r === 'object');\n\nif (rows.length === 0) {\n  const msg = 'Keine Vorlagen-Termine gefunden. Roh-Payload: ' + JSON.stringify(roh);\n  console.log('[P97 Termine aufbereiten] ' + msg);\n  return [{ json: { warning: true, message: msg, rawPayload: roh } }];\n}\n\nreturn rows.map(r => {\n  const { id, offer, ...felder } = r;\n  return { json: { data: { ...felder, offer: newOfferId } } };\n});"
+      },
+      "id": "a1b2c3d4-0008-4a00-8000-000000000008",
+      "name": "Termine aufbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2120, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/date",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Vorlage normalisieren').first().json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: $json.data }) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0009-4a00-8000-000000000009",
+      "name": "Termin anlegen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2340, 0],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "a1b2c3d4-000a-4a00-8000-00000000000a",
+      "name": "Warten vor Preis anlegen",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1570, -96]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manuell testen": {
+      "main": [[{ "node": "Auth edoobox", "type": "main", "index": 0 }]]
+    },
+    "Auth edoobox": {
+      "main": [[{ "node": "Vorlage holen", "type": "main", "index": 0 }]]
+    },
+    "Vorlage holen": {
+      "main": [[{ "node": "Vorlage normalisieren", "type": "main", "index": 0 }]]
+    },
+    "Vorlage normalisieren": {
+      "main": [[{ "node": "Vorlagen-Preise lesen", "type": "main", "index": 0 }]]
+    },
+    "Vorlagen-Preise lesen": {
+      "main": [[{ "node": "Vorlagen-Termine lesen", "type": "main", "index": 0 }]]
+    },
+    "Vorlagen-Termine lesen": {
+      "main": [[{ "node": "Duplicate Offer", "type": "main", "index": 0 }]]
+    },
+    "Duplicate Offer": {
+      "main": [[{ "node": "Duplicate normalisieren", "type": "main", "index": 0 }]]
+    },
+    "Duplicate normalisieren": {
+      "main": [[{ "node": "Preise aufbereiten", "type": "main", "index": 0 }]]
+    },
+    "Preise aufbereiten": {
+      "main": [[{ "node": "Warten vor Preis anlegen", "type": "main", "index": 0 }]]
+    },
+    "Warten vor Preis anlegen": {
+      "main": [[{ "node": "Preis anlegen", "type": "main", "index": 0 }]]
+    },
+    "Preis anlegen": {
+      "main": [[{ "node": "Neue Preise lesen", "type": "main", "index": 0 }]]
+    },
+    "Neue Preise lesen": {
+      "main": [
+        [
+          { "node": "Dummy-Preis ermitteln", "type": "main", "index": 0 },
+          { "node": "Termine aufbereiten", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Dummy-Preis ermitteln": {
+      "main": [[{ "node": "Dummy-Preis löschen", "type": "main", "index": 0 }]]
+    },
+    "Termine aufbereiten": {
+      "main": [[{ "node": "Termin anlegen", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveSuccessfulExecutions": "all"
+  }
+}

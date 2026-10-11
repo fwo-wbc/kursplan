@@ -1,0 +1,1 @@
+MsgBox "Bitte Kursplan-Stand jetzt per Commit und Push sichern!", 64 + 4096, "Kursplan Backup-Erinnerung"
