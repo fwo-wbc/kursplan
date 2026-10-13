@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kurstransfer zu edoobox</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --bg: #f4f6f9; --card: #ffffff; --border: #dde3ea; --text: #1f2933;
+      --muted: #6b7684; --primary: #1a73e8; --primary-dark: #1557b0;
+      --success: #1e8e3e; --success-bg: #e6f4ea; --warn-bg: #fef7e0;
+      --done-bg: #f1f3f5; --done-text: #9aa4b0;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
+    .wrap { max-width: 1200px; margin: 0 auto; }
+    header.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+    header.top h1 { font-size: 1.4rem; margin: 0; }
+    header.top .sub { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+
+    .app-nav { display: flex; align-items: center; gap: 4px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .app-nav a { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; font-size: 0.9rem; font-weight: 500; text-decoration: none; color: #475569; transition: background 0.15s, color 0.15s; }
+    .app-nav a:hover { background: #f1f5f9; color: #0f172a; }
+    .app-nav a.active { background: #2563eb; color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+
+    .toolbar { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .toolbar .spacer { flex: 1 1 auto; }
+    button, .file-btn { font-family: inherit; font-size: 0.95rem; border-radius: 8px; border: 1px solid transparent; padding: 10px 18px; cursor: pointer; transition: background 0.15s, opacity 0.15s; }
+    .file-btn { background: #eef2f7; border-color: var(--border); color: var(--text); display: inline-block; }
+    .file-btn:hover { background: #e2e8f0; }
+    #fileInput { display: none; }
+    #syncBtn { background: var(--primary); color: #fff; font-weight: 600; }
+    #syncBtn:hover:not(:disabled) { background: var(--primary-dark); }
+    #syncBtn:disabled { background: #c3ccd6; cursor: not-allowed; opacity: 0.8; }
+
+    .counter { font-size: 0.95rem; font-weight: 600; color: var(--primary); white-space: nowrap; }
+    .counter.zero { color: var(--muted); font-weight: 400; }
+    .stats { display: flex; gap: 18px; font-size: 0.85rem; color: var(--muted); }
+    .stats b { color: var(--text); }
+
+    .status-msg { font-size: 0.9rem; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; display: none; word-wrap: break-word; }
+    .status-msg.info { display: block; background: #e8f0fe; color: #174ea6; }
+    .status-msg.ok { display: block; background: var(--success-bg); color: var(--success); }
+    .status-msg.err { display: block; background: #fce8e6; color: #c5221f; font-weight: 500; border: 1px solid #f5c6cb; }
+
+    .table-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    thead th { background: #1f4e79; color: #fff; text-align: left; padding: 11px 12px; font-weight: 600; position: sticky; top: 0; z-index: 1; white-space: nowrap; }
+    tbody td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tbody tr:hover:not(.done) { background: #f8fafc; }
+    tbody tr.done { background: var(--done-bg); color: var(--done-text); }
+    tbody tr.done td { color: var(--done-text); }
+    td.col-check { width: 44px; text-align: center; }
+    td.col-date, td.col-time { white-space: nowrap; }
+    td.col-code { font-family: "Consolas", monospace; font-size: 0.85rem; }
+    td.col-id { font-family: "Consolas", monospace; font-size: 0.8rem; color: var(--muted); }
+    td.col-kategorie { max-width: 240px; }
+    td.col-kategorie .col-id { display: block; }
+    input[type="checkbox"] { width: 17px; height: 17px; cursor: pointer; }
+    input[type="checkbox"]:disabled { cursor: not-allowed; }
+
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+    .badge.offen { background: var(--warn-bg); color: #b06000; }
+    .badge.erledigt { background: var(--success-bg); color: var(--success); }
+    .empty { padding: 48px 20px; text-align: center; color: var(--muted); }
+    .empty .big { font-size: 1.05rem; margin-bottom: 6px; color: var(--text); }
+    .drop-active { outline: 3px dashed var(--primary); outline-offset: -6px; }
+
+    .filterbar { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 20px; display: none; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .filterbar.visible { display: flex; }
+    .filterbar label { font-size: 0.9rem; font-weight: 600; }
+    .filterbar select { font-family: inherit; font-size: 0.95rem; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; min-width: 280px; max-width: 100%; }
+    .filterbar .spacer { flex: 1 1 auto; }
+    .filterbar .info { font-size: 0.85rem; color: var(--muted); white-space: nowrap; }
+    .btn-sec { background: #eef2f7; border-color: var(--border); color: var(--text); padding: 8px 14px; font-size: 0.9rem; }
+    .btn-sec:hover:not(:disabled) { background: #e2e8f0; }
+    .btn-sec:disabled { opacity: 0.5; cursor: not-allowed; }
+    tbody tr.filtered-out { display: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="app-nav" aria-label="Hauptnavigation">
+      <a href="../">Zur Kursplanung</a>
+      <a href="index.html" class="active" aria-current="page">Kurstransfer</a>
+    </nav>
+
+    <header class="top">
+      <div>
+        <h1>Kurstransfer zu edoobox</h1>
+        <div class="sub">Kurstermine auswählen & in edoobox eintragen (Standard-Datei: Kurstransfer-Import.xlsx)</div>
+      </div>
+      <div class="stats" id="stats">
+        <span>Gesamt: <b id="statTotal">0</b></span>
+        <span>Offen: <b id="statOpen">0</b></span>
+        <span>Erledigt: <b id="statDone">0</b></span>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <label class="file-btn" for="fileInput">Excel-Datei auswählen</label>
+      <input type="file" id="fileInput" accept=".xlsx,.xls">
+      <button id="reloadBtn" class="file-btn" type="button">Standarddatei laden</button>
+      <button id="hideDoneBtn" class="file-btn" type="button">Erledigte ausblenden</button>
+      <div class="spacer"></div>
+      <span class="counter zero" id="counter">0 Termine ausgewählt</span>
+      <button id="syncBtn" type="button" disabled>In edoobox eintragen</button>
+    </div>
+
+    <div class="filterbar" id="filterBar">
+      <label for="themaFilter">Kursthema:</label>
+      <select id="themaFilter"></select>
+      <button id="markVisibleBtn" class="btn-sec" type="button">Sichtbare offene markieren</button>
+      <button id="unmarkVisibleBtn" class="btn-sec" type="button">Sichtbare abwählen</button>
+      <button id="unmarkAllBtn" class="btn-sec" type="button">Alle abwählen</button>
+      <div class="spacer"></div>
+      <span class="info" id="filterInfo"></span>
+    </div>
+
+    <div class="status-msg" id="statusMsg"></div>
+
+    <div class="table-card" id="tableCard">
+      <div class="empty" id="emptyState">
+        <div class="big">Keine Daten geladen</div>
+        <div>Bitte die Datei <code>Kurstransfer-Import.xlsx</code> auswählen oder die Standarddatei laden.</div>
+      </div>
+      <table id="dataTable" style="display:none;">
+        <thead>
+          <tr>
+            <th class="col-check"></th>
+            <th>Datum</th>
+            <th>Beginn</th>
+            <th>Kurs-Code</th>
+            <th>Kursname</th>
+            <th>Kategorie</th>
+            <th>Status</th>
+            <th>edoobox ID</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    "use strict";
+
+    // --- GLOBALE FEHLERFALLE ---
+    // Wenn das Skript irgendwo abstürzt, wird es ab sofort hier sichtbar!
+    window.addEventListener("error", function(e) {
+      const msgBox = document.getElementById("statusMsg");
+      if (msgBox) {
+        msgBox.style.display = "block";
+        msgBox.className = "status-msg err";
+        msgBox.textContent = "SYSTEM-FEHLER: " + e.message + " (Zeile: " + e.lineno + ")";
+      } else {
+        alert("SYSTEM-FEHLER: " + e.message);
+      }
+    });
+
+    const WEBHOOK_URL = "https://m.webinarcenter.de/webhook/Kurstransfer";
+    const DEFAULT_FILE = "Kurstransfer-Import.xlsx";
+    const SHEET_DEFS = "Kurs_Definitionen";
+    const STORAGE_KEY = "kurstransfer_data";
+
+    let rows = [];
+
+    const fileInput = document.getElementById("fileInput");
+    const reloadBtn = document.getElementById("reloadBtn");
+    const hideDoneBtn = document.getElementById("hideDoneBtn");
+    const syncBtn = document.getElementById("syncBtn");
+    const counterEl = document.getElementById("counter");
+    const statusMsg = document.getElementById("statusMsg");
+    const tableBody = document.getElementById("tableBody");
+    const dataTable = document.getElementById("dataTable");
+    const emptyState = document.getElementById("emptyState");
+    const tableCard = document.getElementById("tableCard");
+    const statTotal = document.getElementById("statTotal");
+    const statOpen = document.getElementById("statOpen");
+    const statDone = document.getElementById("statDone");
+    const filterBar = document.getElementById("filterBar");
+    const themaFilter = document.getElementById("themaFilter");
+    const markVisibleBtn = document.getElementById("markVisibleBtn");
+    const unmarkVisibleBtn = document.getElementById("unmarkVisibleBtn");
+    const unmarkAllBtn = document.getElementById("unmarkAllBtn");
+    const filterInfo = document.getElementById("filterInfo");
+
+    const THEMA_NONE = "(ohne Thema)";
+    let currentThema = ""; // "" = alle Themen
+
+    function themaOf(r) {
+      return (r.kategorieName || r.kategorieId || "").trim() || THEMA_NONE;
+    }
+
+    function updateThemaOptions() {
+      if (!themaFilter) return;
+      const stats = new Map();
+      for (const r of rows) {
+        const t = themaOf(r);
+        const s = stats.get(t) || { total: 0, open: 0 };
+        s.total++;
+        if (!r.done) s.open++;
+        stats.set(t, s);
+      }
+      if (currentThema && !stats.has(currentThema)) currentThema = "";
+
+      const themen = Array.from(stats.keys()).sort((a, b) => a.localeCompare(b, "de"));
+      themaFilter.innerHTML = "";
+      const optAll = document.createElement("option");
+      optAll.value = "";
+      optAll.textContent = "Alle Themen (" + themen.length + ") – " + rows.length + " Termine";
+      themaFilter.appendChild(optAll);
+      for (const t of themen) {
+        const s = stats.get(t);
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = t + " – " + s.open + " offen / " + s.total + " gesamt";
+        themaFilter.appendChild(opt);
+      }
+      themaFilter.value = currentThema;
+      if (filterBar) filterBar.classList.toggle("visible", rows.length > 0);
+    }
+
+    function applyThemaFilter() {
+      if (!tableBody) return;
+      let visible = 0;
+      let visibleOpen = 0;
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      for (const tr of tableBody.querySelectorAll("tr")) {
+        const row = byId.get(tr.dataset.id);
+        const show = !currentThema || (row && themaOf(row) === currentThema);
+        tr.classList.toggle("filtered-out", !show);
+        if (show) {
+          visible++;
+          if (row && !row.done) visibleOpen++;
+        }
+      }
+      if (filterInfo) filterInfo.textContent = visible + " Termine sichtbar (" + visibleOpen + " offen)";
+      if (markVisibleBtn) markVisibleBtn.disabled = visibleOpen === 0;
+    }
+
+    function setVisibleChecked(checked) {
+      if (!tableBody) return;
+      const cbs = tableBody.querySelectorAll('tr:not(.filtered-out) input[type="checkbox"]:not(:disabled)');
+      for (const cb of cbs) cb.checked = checked;
+      updateSelectionUI();
+    }
+
+    function showStatus(text, kind) {
+      if(!statusMsg) return;
+      statusMsg.textContent = text;
+      statusMsg.className = "status-msg " + (kind || "info");
+    }
+
+    function hideStatus() {
+      if(!statusMsg) return;
+      statusMsg.className = "status-msg";
+      statusMsg.textContent = "";
+    }
+
+    function pad2(n) { return String(n).padStart(2, "0"); }
+
+    function formatDate(value) {
+      if (value instanceof Date && !isNaN(value)) {
+        return pad2(value.getDate()) + "." + pad2(value.getMonth() + 1) + "." + value.getFullYear();
+      }
+      if (typeof value === "number" && value > 0) {
+        const d = XLSX.SSF.parse_date_code(value);
+        if (d) return pad2(d.d) + "." + pad2(d.m) + "." + d.y;
+      }
+      return value == null ? "" : String(value).trim();
+    }
+
+    function cellText(v) {
+      if (v == null) return "";
+      if (v instanceof Date) return formatDate(v);
+      return String(v).trim();
+    }
+
+    function toIsoDate(datum, beginn) {
+      const d = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(String(datum || "").trim());
+      if (!d) return null;
+      const t = /^(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(String(beginn || "").trim());
+      const hh = t ? pad2(t[1]) : "00";
+      const mm = t ? t[2] : "00";
+      const ss = t && t[3] ? t[3] : "00";
+      return d[3] + "-" + pad2(d[2]) + "-" + pad2(d[1]) + "T" + hh + ":" + mm + ":" + ss + ".000Z";
+    }
+
+    function rowKey(r) { return r.datum + "|" + r.beginn + "|" + r.kursCode; }
+
+    function saveRowsToStorage() {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch (err) {}
+    }
+
+    function restoreDoneFlags() {
+      let stored = [];
+      try { stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch (err) { stored = []; }
+      if (!Array.isArray(stored) || stored.length === 0) return;
+      const doneKeys = new Set(stored.filter((r) => r && r.done).map((r) => rowKey(r)));
+      for (const row of rows) {
+        if (doneKeys.has(rowKey(row))) row.done = true;
+      }
+    }
+
+    function parseWorkbook(arrayBuffer) {
+      if(typeof XLSX === 'undefined') throw new Error("Die Excel-Bibliothek (XLSX) konnte nicht geladen werden. Bitte Internetverbindung oder Werbeblocker prüfen.");
+      
+      const wb = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
+      const defMap = new Map();
+      const defSheet = wb.Sheets[SHEET_DEFS];
+      
+      if (defSheet) {
+        const defRows = XLSX.utils.sheet_to_json(defSheet, { header: 1, defval: "", blankrows: false });
+        if (defRows.length > 1) {
+          const h = defRows[0].map((x) => String(x).trim());
+          const iCode = h.indexOf("Kurs_Code");
+          const iName = h.indexOf("Kursname");
+          const iKat = h.indexOf("Kategorie_ID");
+          const iKatName = h.indexOf("Kategorie_Name");
+          const iOffer = h.indexOf("Vorlage_Offer_ID");
+          for (let r = 1; r < defRows.length; r++) {
+            const code = cellText(defRows[r][iCode]);
+            if (!code) continue;
+            defMap.set(code, {
+              kursname: cellText(defRows[r][iName]),
+              kategorieId: iKat >= 0 ? cellText(defRows[r][iKat]) : "",
+              kategorieName: iKatName >= 0 ? cellText(defRows[r][iKatName]) : "",
+              vorlageOfferId: iOffer >= 0 ? cellText(defRows[r][iOffer]) : "",
+            });
+          }
+        }
+      }
+
+      let termSheetName = wb.SheetNames.find(n => n !== SHEET_DEFS);
+      if (!termSheetName) termSheetName = wb.SheetNames[0];
+      const termSheet = wb.Sheets[termSheetName];
+      if (!termSheet) throw new Error('Die Excel-Datei ist komplett leer.');
+      
+      const termRows = XLSX.utils.sheet_to_json(termSheet, { header: 1, defval: "", blankrows: false });
+      if (termRows.length < 2) throw new Error('Das Arbeitsblatt "' + termSheetName + '" enthält keine Datenzeilen.');
+
+      const h = termRows[0].map((x) => String(x).trim());
+      const iDatum = h.indexOf("Datum");
+      const iBeginn = h.indexOf("Beginn");
+      const iCode1 = h.indexOf("Kurs_Code");
+      const iCode2 = h.indexOf("Kurs_Code_Prio2");
+      const iCode3 = h.indexOf("Kurs_Code_Prio3");
+      const iStatus = h.indexOf("Sync_Status");
+      const iEdoId = h.indexOf("edoobox_ID");
+
+      if (iDatum < 0 || iCode1 < 0) {
+        throw new Error('Die zwingenden Spalten "Datum" und/oder "Kurs_Code" fehlen im Blatt "' + termSheetName + '".');
+      }
+
+      const result = [];
+      let seq = 0;
+      for (let r = 1; r < termRows.length; r++) {
+        const row = termRows[r];
+        const datum = formatDate(row[iDatum]);
+        const beginn = iBeginn >= 0 ? cellText(row[iBeginn]) : "";
+        const status = (iStatus >= 0 ? cellText(row[iStatus]) : "") || "Offen";
+        const edooboxId = iEdoId >= 0 ? cellText(row[iEdoId]) : "";
+
+        const codes = [iCode1, iCode2, iCode3].filter((i) => i >= 0).map((i) => cellText(row[i])).filter((c) => c !== "");
+
+        for (const code of codes) {
+          const def = defMap.get(code);
+          result.push({
+            id: "row-" + (seq++),
+            datum: datum,
+            beginn: beginn,
+            kursCode: code,
+            kursname: def ? def.kursname : "",
+            status: status,
+            edooboxId: edooboxId,
+            vorlageOfferId: def ? def.vorlageOfferId : "",
+            kategorieId: def ? def.kategorieId : "",
+            kategorieName: def ? def.kategorieName : "",
+            done: status.toLowerCase() === "erledigt",
+          });
+        }
+      }
+      return result;
+    }
+
+    function render() {
+      if (rows.length === 0) {
+        dataTable.style.display = "none";
+        emptyState.style.display = "block";
+        updateThemaOptions();
+        updateStats();
+        updateSelectionUI();
+        return;
+      }
+
+      emptyState.style.display = "none";
+      dataTable.style.display = "table";
+
+      const frag = document.createDocumentFragment();
+      for (const row of rows) {
+        const tr = document.createElement("tr");
+        tr.dataset.id = row.id;
+        if (row.done) tr.classList.add("done");
+
+        const tdCheck = document.createElement("td");
+        tdCheck.className = "col-check";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.dataset.id = row.id;
+        cb.checked = row.done;
+        cb.disabled = row.done;
+        tdCheck.appendChild(cb);
+        tr.appendChild(tdCheck);
+
+        const tdDate = document.createElement("td");
+        tdDate.className = "col-date";
+        tdDate.textContent = row.datum;
+        tr.appendChild(tdDate);
+
+        const tdTime = document.createElement("td");
+        tdTime.className = "col-time";
+        tdTime.textContent = row.beginn;
+        tr.appendChild(tdTime);
+
+        const tdCode = document.createElement("td");
+        tdCode.className = "col-code";
+        tdCode.textContent = row.kursCode;
+        tr.appendChild(tdCode);
+
+        const tdName = document.createElement("td");
+        tdName.textContent = row.kursname || "—";
+        tr.appendChild(tdName);
+
+        const tdKat = document.createElement("td");
+        tdKat.className = "col-kategorie";
+        if (row.kategorieName || row.kategorieId) {
+          const katName = document.createElement("div");
+          katName.textContent = row.kategorieName || "—";
+          tdKat.appendChild(katName);
+          if (row.kategorieId) {
+            const katId = document.createElement("div");
+            katId.className = "col-id";
+            katId.textContent = row.kategorieId;
+            tdKat.appendChild(katId);
+          }
+        } else {
+          tdKat.textContent = "—";
+        }
+        tr.appendChild(tdKat);
+
+        const tdStatus = document.createElement("td");
+        const badge = document.createElement("span");
+        badge.className = "badge " + (row.done ? "erledigt" : "offen");
+        badge.textContent = row.done ? "✓ Erledigt" : "Offen";
+        tdStatus.appendChild(badge);
+        tr.appendChild(tdStatus);
+
+        const tdId = document.createElement("td");
+        tdId.className = "col-id";
+        tdId.textContent = row.edooboxId || "—";
+        tr.appendChild(tdId);
+
+        frag.appendChild(tr);
+      }
+
+      tableBody.innerHTML = "";
+      tableBody.appendChild(frag);
+
+      updateThemaOptions();
+      applyThemaFilter();
+      updateStats();
+      updateSelectionUI();
+    }
+
+    function updateStats() {
+      const total = rows.length;
+      const done = rows.filter((r) => r.done).length;
+      if(statTotal) statTotal.textContent = String(total);
+      if(statDone) statDone.textContent = String(done);
+      if(statOpen) statOpen.textContent = String(total - done);
+    }
+
+    function getSelectedOpen() {
+      if(!tableBody) return [];
+      const checked = tableBody.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)');
+      const ids = new Set(Array.from(checked).map((c) => c.dataset.id));
+      return rows.filter((r) => ids.has(r.id) && !r.done);
+    }
+
+    function updateSelectionUI() {
+      const selected = getSelectedOpen();
+      const n = selected.length;
+      if(counterEl) {
+        counterEl.textContent = n + (n === 1 ? " Termin ausgewählt" : " Termine ausgewählt");
+        counterEl.classList.toggle("zero", n === 0);
+      }
+      if(syncBtn) syncBtn.disabled = n === 0;
+    }
+
+    function loadFromArrayBuffer(arrayBuffer, sourceLabel) {
+      showStatus("Lese Daten aus " + sourceLabel + "...", "info");
+      try {
+        rows = parseWorkbook(arrayBuffer);
+        restoreDoneFlags();
+        render();
+        if (rows.length === 0) {
+          showStatus("Die Excel-Datei enthält keine belegten Kurstermine.", "info");
+        } else {
+          showStatus(rows.length + " Kurstermine aus " + sourceLabel + " geladen.", "ok");
+        }
+      } catch (err) {
+        rows = [];
+        render();
+        showStatus("Fehler beim Lesen der Datei: " + err.message, "err");
+        console.error(err);
+      }
+    }
+
+    function handleFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => loadFromArrayBuffer(e.target.result, file.name);
+      reader.onerror = () => showStatus("Datei konnte vom Browser nicht gelesen werden.", "err");
+      reader.readAsArrayBuffer(file);
+    }
+
+    async function loadDefaultFile() {
+      showStatus("Lade Standarddatei …", "info");
+      try {
+        const res = await fetch(encodeURI(DEFAULT_FILE), { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const buf = await res.arrayBuffer();
+        loadFromArrayBuffer(buf, "Standarddatei");
+      } catch (err) {
+        showStatus("Standarddatei konnte nicht automatisch geladen werden (" + err.message + "). Bitte wähle sie manuell aus.", "info");
+      }
+    }
+
+    async function syncToEdoobox() {
+      const selected = getSelectedOpen();
+      if (selected.length === 0) return;
+
+      const invalid = selected.filter(
+        (r) => !/^category_\w+$/.test(String(r.kategorieId || "").trim()) || !/^offer_\w+$/.test(String(r.vorlageOfferId || "").trim())
+      );
+      if (invalid.length > 0) {
+        showStatus("Übertragung abgebrochen: Kategorie-ID oder Vorlagen-ID fehlt/ungültig bei Kurs_Code: " + [...new Set(invalid.map((r) => r.kursCode))].join(", "), "err");
+        return;
+      }
+
+      const counters = {};
+      const kurse = selected.map((r) => {
+        const isoDate = toIsoDate(r.datum, r.beginn);
+        const d = new Date(isoDate);
+        const mm = pad2(d.getMonth() + 1);
+        const yy = String(d.getFullYear()).slice(-2);
+        const mmyy = `${mm}${yy}`;
+
+        const baseNumber = String(r.kursCode).trim();
+        const counterKey = `${baseNumber}-${mmyy}`;
+
+        if (!counters[counterKey]) counters[counterKey] = 1;
+        else counters[counterKey]++;
+
+        const finalNumber = `${baseNumber}-${mmyy}-${counters[counterKey]}`;
+
+        return {
+          sourceOfferId: String(r.vorlageOfferId).trim(),
+          category: String(r.kategorieId).trim(),
+          number: finalNumber,
+          name: r.kursname,
+          date_start: isoDate,
+        };
+      });
+
+      syncBtn.disabled = true;
+      const originalLabel = syncBtn.textContent;
+      syncBtn.textContent = "Übertrage …";
+      showStatus("Übertrage " + kurse.length + " Termine an n8n …", "info");
+
+      try {
+        const res = await fetch(WEBHOOK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kurse: kurse }),
+        });
+
+        if (!res.ok) throw new Error("Server antwortete mit HTTP " + res.status);
+
+        const doneIds = new Set(selected.map((r) => r.id));
+        for (const row of rows) {
+          if (doneIds.has(row.id)) row.done = true;
+        }
+
+        saveRowsToStorage();
+        render();
+        showStatus(kurse.length + " Termine erfolgreich an n8n übertragen.", "ok");
+      } catch (err) {
+        showStatus("Übertragung fehlgeschlagen: " + err.message, "err");
+        updateSelectionUI();
+      } finally {
+        syncBtn.textContent = originalLabel;
+        updateSelectionUI();
+      }
+    }
+
+    // --- EVENT LISTENER (Gesichert) ---
+    if(fileInput) {
+      fileInput.addEventListener("change", (e) => {
+        handleFile(e.target.files && e.target.files[0]);
+        fileInput.value = ""; 
+      });
+    }
+    if(reloadBtn) reloadBtn.addEventListener("click", loadDefaultFile);
+    if(hideDoneBtn) {
+      hideDoneBtn.addEventListener("click", () => {
+        const count = rows.filter(r => r.done).length;
+        if (count === 0) return alert("Es gibt momentan keine erledigten Kurse.");
+        if (confirm("Möchtest du wirklich alle " + count + " erledigten Kurse ausblenden?")) {
+          rows = rows.filter((r) => !r.done);
+          saveRowsToStorage(); 
+          render();
+          showStatus("Erledigte Kurse wurden ausgeblendet.", "ok");
+        }
+      });
+    }
+    if(syncBtn) syncBtn.addEventListener("click", syncToEdoobox);
+    if(themaFilter) {
+      themaFilter.addEventListener("change", () => {
+        currentThema = themaFilter.value;
+        applyThemaFilter();
+      });
+    }
+    if(markVisibleBtn) markVisibleBtn.addEventListener("click", () => setVisibleChecked(true));
+    if(unmarkVisibleBtn) unmarkVisibleBtn.addEventListener("click", () => setVisibleChecked(false));
+    if(unmarkAllBtn) {
+      unmarkAllBtn.addEventListener("click", () => {
+        if (!tableBody) return;
+        for (const cb of tableBody.querySelectorAll('input[type="checkbox"]:not(:disabled)')) cb.checked = false;
+        updateSelectionUI();
+      });
+    }
+    if(tableBody) {
+      tableBody.addEventListener("change", (e) => {
+        if (e.target && e.target.matches('input[type="checkbox"]')) updateSelectionUI();
+      });
+    }
+    if(tableCard) {
+      ["dragenter", "dragover"].forEach((ev) => tableCard.addEventListener(ev, (e) => { e.preventDefault(); tableCard.classList.add("drop-active"); }));
+      ["dragleave", "drop"].forEach((ev) => tableCard.addEventListener(ev, (e) => { e.preventDefault(); tableCard.classList.remove("drop-active"); }));
+      tableCard.addEventListener("drop", (e) => { handleFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]); });
+    }
+
+    window.addEventListener("DOMContentLoaded", loadDefaultFile);
+  </script>
+</body>
+</html>

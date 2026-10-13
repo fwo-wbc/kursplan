@@ -1,0 +1,147 @@
+{
+  "quelle": "Jahres-Kursplanung_MS_Office.xlsx / Blatt 'Kurs_Definitionen'",
+  "stand": "2027",
+  "beschreibung": "Mapping Kurs_Code -> edoobox-Kategorie (ID + Name) und Vorlagen-Offer-ID. Single Source of Truth ist das Excel-Blatt 'Kurs_Definitionen'; diese Datei ist eine statische Kopie fuer die UI.",
+  "kategorien": [
+    {
+      "kursCode": "xls-gl-m1",
+      "kursname": "Excel Grundlagen Modul 1: Basiswissen & KI",
+      "kategorieId": "category_cba26fc247a0_4287075190",
+      "kategorieName": "Excel GL M1",
+      "vorlageOfferId": "offer_f7d26c266c1a_10079580340"
+    },
+    {
+      "kursCode": "xls-gl-m2",
+      "kursname": "Excel Grundlagen Modul 2: Zeitsparende Techniken, Zahlenformate & KI",
+      "kategorieId": "category_b6c69b49d5cb_5661790135",
+      "kategorieName": "Excel GL M2",
+      "vorlageOfferId": "offer_47bc0a80c77f_10079671190"
+    },
+    {
+      "kursCode": "xls-ab-m1",
+      "kursname": "Excel Aufbau Modul 1: Logikfunktionen, XVERWEIS & KI",
+      "kategorieId": "category_d56c2197d695_8247708195",
+      "kategorieName": "Excel AB M1",
+      "vorlageOfferId": "offer_9ba610263a0f_10079762040"
+    },
+    {
+      "kursCode": "xls-pivot-komp",
+      "kursname": "Excel: Mit Pivot-Tabellen Daten auswerten (inkl. KI)",
+      "kategorieId": "category_9db1016f2ef2_4393660410",
+      "kategorieName": "Excel - Pivot-Tabellen (kompakt)",
+      "vorlageOfferId": "offer_1cc9a9a95915_10154231785"
+    },
+    {
+      "kursCode": "out-gl",
+      "kursname": "Outlook Grundlagen (kompakt)",
+      "kategorieId": "category_de5473f2a891_4394814205",
+      "kategorieName": "Outlook Grundlagen",
+      "vorlageOfferId": "offer_17fea7f8061a_10088183835"
+    },
+    {
+      "kursCode": "out-ab",
+      "kursname": "Outlook Aufbau (kompakt)",
+      "kategorieId": "category_19990b2ab29c_7368525490",
+      "kategorieName": "Outlook Aufbau",
+      "vorlageOfferId": "offer_1033197d9dc5_10088238345"
+    },
+    {
+      "kursCode": "ppt-gl-komp",
+      "kursname": "PowerPoint Grundlagen (kompakt)",
+      "kategorieId": "category_86933aca401a_4369230845",
+      "kategorieName": "PowerPoint Grundlagen (kompakt)",
+      "vorlageOfferId": "offer_2f104b6e01be_10088301940"
+    },
+    {
+      "kursCode": "ppt-ab-komp",
+      "kursname": "PowerPoint Aufbau (kompakt)",
+      "kategorieId": "category_35669a3eef94_7223801440",
+      "kategorieName": "PowerPoint Aufbau (kompakt)",
+      "vorlageOfferId": "offer_d2ca859ace53_10088374620"
+    },
+    {
+      "kursCode": "xls-ab-m2",
+      "kursname": "Excel Aufbau Modul 2: Bedingungen, Logik-Formeln, Diagramme & KI",
+      "kategorieId": "category_d4244a55bc4e_8811704995",
+      "kategorieName": "Excel AB M2",
+      "vorlageOfferId": "offer_236366f5548c_10154140935"
+    },
+    {
+      "kursCode": "xls-pq-gl",
+      "kursname": "Excel: Daten einlesen mit Power Query (Grundlagen)",
+      "kategorieId": "category_fea673d28fee_5661926410",
+      "kategorieName": "Excel - Power Query Grundlagen",
+      "vorlageOfferId": "offer_1d9142ce8b2e_10155576365"
+    },
+    {
+      "kursCode": "xls-umfang",
+      "kursname": "Excel: Große Tabellen im Griff",
+      "kategorieId": "category_2e3b48532c31_4393733090",
+      "kategorieName": "Excel - Große Tabellen",
+      "vorlageOfferId": "offer_96630b1f47b8_10154186360"
+    },
+    {
+      "kursCode": "xls-gl-m3",
+      "kursname": "Excel Grundlagen Modul 3: Professionelle Datenaufbereitung & KI",
+      "kategorieId": "category_0cb624b43f98_8811714080",
+      "kategorieName": "Excel GL M3",
+      "vorlageOfferId": "offer_e6eae691d9a1_10154004660"
+    },
+    {
+      "kursCode": "xls-gl-m4",
+      "kursname": "Excel Grundlagen Modul 4: Tabellenverknüpfungen, Zellenschutz & KI",
+      "kategorieId": "category_a14bf04a5f66_4989999810",
+      "kategorieName": "Excel GL M4",
+      "vorlageOfferId": "offer_28e512e190b5_10154077340"
+    },
+    {
+      "kursCode": "ppt-ds",
+      "kursname": "PowerPoint - Designvorlagen",
+      "kategorieId": "category_8297cc1dac67_4421387830",
+      "kategorieName": "PowerPoint - Designvorlagen erstellen",
+      "vorlageOfferId": "offer_575947ff258e_10154295380"
+    },
+    {
+      "kursCode": "ppt-vb",
+      "kursname": "PowerPoint - Präsentation vorbereiten",
+      "kategorieId": "category_bd10e8707d87_4422759665",
+      "kategorieName": "PPoint - Eine Präsentation richtig vorbereiten",
+      "vorlageOfferId": "offer_bfc6b19338a3_10154322635"
+    },
+    {
+      "kursCode": "wrd-ab-komp",
+      "kursname": "Word Aufbau (kompakt)",
+      "kategorieId": "category_ae4fabfd0acd_4287102445",
+      "kategorieName": "Word Aufbau (kompakt)",
+      "vorlageOfferId": "offer_b5b0ef7b4410_10088501810"
+    },
+    {
+      "kursCode": "wrd-dokvorl",
+      "kursname": "Word - Dokumentvorlagen erstellen",
+      "kategorieId": "category_15cf432edf8d_5109231350",
+      "kategorieName": "Word - Dokumentvorlagen erstellen",
+      "vorlageOfferId": "offer_c3eb3432172f_10219916335"
+    },
+    {
+      "kursCode": "wrd-gl-komp",
+      "kursname": "Word Grundlagen (kompakt)",
+      "kategorieId": "category_3a27e78a1da1_4287084275",
+      "kategorieName": "Word Grundlagen kompakt",
+      "vorlageOfferId": "offer_bd4938f08741_10088456385"
+    },
+    {
+      "kursCode": "wrd-serie",
+      "kursname": "Word - Seriendruck",
+      "kategorieId": "category_41b0c0d06429_10460223670",
+      "kategorieName": "Vorlagen für offene Kurse",
+      "vorlageOfferId": "offer_8d72df08692f_10460260010"
+    },
+    {
+      "kursCode": "wrd-umfang",
+      "kursname": "Word - Umfangreiche Dokumente",
+      "kategorieId": "category_a520baeacc58_4391407330",
+      "kategorieName": "Word - Umfangreiche Dokumente",
+      "vorlageOfferId": "offer_879f1b4ccbfd_10154358975"
+    }
+  ]
+}

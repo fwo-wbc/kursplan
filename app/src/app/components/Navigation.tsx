@@ -9,11 +9,18 @@ import {
   RefreshCw,
   Check,
   TriangleAlert,
+  ArrowRightLeft,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
   { href: '/trainer/verfuegbarkeit', label: 'Trainerverfügbarkeiten', icon: CalendarRange },
   { href: '/trainer', label: 'Trainer verwalten', icon: Users },
+  {
+    href: '/Kurstransfer/index.html',
+    label: 'Kurstransfer',
+    icon: ArrowRightLeft,
+    external: true,
+  },
 ];
 
 type SyncStatus = 'idle' | 'loading' | 'success' | 'error';
@@ -111,6 +118,21 @@ export default function Navigation() {
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href;
+
+          // Statische HTML-Datei (Kurstransfer) liegt außerhalb der Next.js-Routen
+          // und wird deshalb als normales <a>-Element gerendert.
+          if (item.external) {
+            return (
+              <a
+                key={item.href}
+                href={item.href}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              >
+                <Icon className="w-4 h-4" />
+                {item.label}
+              </a>
+            );
+          }
 
           return (
             <Link

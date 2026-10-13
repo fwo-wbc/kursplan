@@ -12,6 +12,11 @@ n8n_cred_auth.json
 # Temporäre Diagnose- und Hilfsskripte (alle Verzeichnisse)
 .tmp_*
 
+# Lokale SQLite-Datenbanken (niemals einchecken)
+*.sqlite
+*.sqlite3
+*.db
+
 # Roo-Konfiguration
 .roo/
 
