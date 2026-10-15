@@ -11,6 +11,8 @@ import {
   FilterX,
   X,
   ChevronDown,
+  User,
+  FileText,
 } from 'lucide-react';
 import Navigation from './components/Navigation';
 import HeaderLogo from './components/HeaderLogo';
@@ -1454,19 +1456,6 @@ export default function Home() {
   in5Tagen.setDate(in5Tagen.getDate() + 5);
   const in5TagenIso = toIsoDate(in5Tagen);
 
-  // Dynamische Ausblendung: Die Hinweis-Spalte wird nur gerendert, wenn
-  // mindestens ein gefilterter Kurs einen Schließungs-, Last-Minute- oder
-  // Trainer-nicht-verfügbar-Hinweis auslöst.
-  const zeigeHinweisSpalte = gefilterteKurse.some(
-    (kurs) =>
-      schliessungHinweis(kurs, heuteIso) !== null ||
-      lastMinuteHinweis(kurs, diffTageBisStart(kurs, heuteIso)) !== null ||
-      trainerNichtVerfuegbarHinweis(kurs) !== null ||
-      (konflikteProKurs[kursKey(kurs)] ?? []).some(
-        (konflikt) => konflikt.echt
-      )
-  );
-
   const naechsterKurstagIso = gefilterteKurse.reduce<string | null>(
     (fruehester, kurs) => {
       if (istKursAusgenommen(kurs)) return fruehester;
@@ -1808,11 +1797,6 @@ export default function Home() {
                     {def.label}
                   </th>
                 ))}
-                {zeigeHinweisSpalte && (
-                  <th className="sticky top-0 z-10 bg-slate-50 px-3 py-3 font-semibold whitespace-nowrap text-center">
-                    Hinweis
-                  </th>
-                )}
               </tr>
             </thead>
             <tbody>
@@ -1879,12 +1863,13 @@ export default function Home() {
                 const effektivesHonorar = istHonorarManuell
                   ? manualHonorar
                   : autoHonorar;
+                const hatUmsatz = (kurs.einnahmen ?? 0) > 0;
                 const deckungsbeitrag =
-                  effektivesHonorar !== null
+                  effektivesHonorar !== null && hatUmsatz
                     ? kurs.einnahmen - effektivesHonorar
                     : null;
                 const marge =
-                  kurs.einnahmen > 0 && deckungsbeitrag !== null
+                  hatUmsatz && deckungsbeitrag !== null
                     ? (deckungsbeitrag / kurs.einnahmen) * 100
                     : null;
 
@@ -1937,6 +1922,33 @@ export default function Home() {
                           ))}
                         </div>
                       )}
+                      {(hinweisSchliessung ||
+                        hinweisLastMinute ||
+                        hinweisTrainer ||
+                        hatEchtenKonflikt) && (
+                        <div className="mt-1 flex flex-wrap gap-1 items-center">
+                          {hinweisSchliessung && (
+                            <span className={hinweisSchliessung.className}>
+                              {hinweisSchliessung.text}
+                            </span>
+                          )}
+                          {hinweisLastMinute && (
+                            <span className={hinweisLastMinute.className}>
+                              {hinweisLastMinute.text}
+                            </span>
+                          )}
+                          {hinweisTrainer && (
+                            <span className={hinweisTrainer.className}>
+                              {hinweisTrainer.text}
+                            </span>
+                          )}
+                          {hatEchtenKonflikt && (
+                            <span className="bg-red-600 text-yellow-300 font-semibold px-2 py-0.5 rounded text-xs">
+                              Terminkonflikt
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
 
                     {/* Kursstatus */}
@@ -1964,8 +1976,8 @@ export default function Home() {
 
                     {/* Dozentenhonorar (Inline-Edit & Reset) */}
                     <HonorarZelle
-                      honorar={effektivesHonorar}
-                      manuell={istHonorarManuell}
+                      honorar={hatUmsatz ? effektivesHonorar : null}
+                      manuell={istHonorarManuell && hatUmsatz}
                       disabled={!hatTrainer}
                       onSave={(wert) => handleHonorarChange(kurs, wert)}
                     />
@@ -2097,53 +2109,39 @@ export default function Home() {
                     {/* Options-Haken: Einladungslink, Last Minute, Abgerechnet */}
                     {OPTIONEN_DEFINITIONEN.map((def) => (
                       <td key={def.key} className="px-2 py-3 text-center align-top">
-                        <input
-                          type="checkbox"
-                          checked={optionen[def.key]}
-                          onChange={(e) =>
-                            handleOptionChange(kurs, def.key, e.target.checked)
-                          }
-                          title={def.title}
-                          aria-label={def.label}
-                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        />
+                        <div className="inline-flex items-center justify-center gap-1">
+                          {def.key === 'einladungslink' && (
+                            <span
+                              title="Dozent informiert & beauftragt"
+                              aria-label="Dozent informiert & beauftragt"
+                              className="inline-flex"
+                            >
+                              <User className="w-3.5 h-3.5 text-slate-400" />
+                            </span>
+                          )}
+                          {def.key === 'abgerechnet' && (
+                            <span
+                              title="Kurslink & Unterlagen bereitgestellt"
+                              aria-label="Kurslink & Unterlagen bereitgestellt"
+                              className="inline-flex"
+                            >
+                              <FileText className="w-3.5 h-3.5 text-slate-400" />
+                            </span>
+                          )}
+                          <input
+                            type="checkbox"
+                            checked={optionen[def.key]}
+                            onChange={(e) =>
+                              handleOptionChange(kurs, def.key, e.target.checked)
+                            }
+                            title={def.title}
+                            aria-label={def.label}
+                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          />
+                        </div>
                       </td>
                     ))}
 
-                    {/* Hinweis-Spalte: automatisierte Schließungs-, Last-Minute-
-                        und Trainer-Verfügbarkeits-Prüfung. Ohne zutreffenden
-                        Hinweis bleibt die Zelle komplett leer. */}
-                    {zeigeHinweisSpalte && (
-                      <td className="px-3 py-3 align-top text-center">
-                        {(hinweisSchliessung ||
-                          hinweisLastMinute ||
-                          hinweisTrainer ||
-                          hatEchtenKonflikt) && (
-                          <div className="flex flex-wrap gap-1 items-center justify-center">
-                            {hinweisSchliessung && (
-                              <span className={hinweisSchliessung.className}>
-                                {hinweisSchliessung.text}
-                              </span>
-                            )}
-                            {hinweisLastMinute && (
-                              <span className={hinweisLastMinute.className}>
-                                {hinweisLastMinute.text}
-                              </span>
-                            )}
-                            {hinweisTrainer && (
-                              <span className={hinweisTrainer.className}>
-                                {hinweisTrainer.text}
-                              </span>
-                            )}
-                            {hatEchtenKonflikt && (
-                              <span className="bg-red-600 text-yellow-300 font-semibold px-2 py-0.5 rounded text-xs">
-                                Terminkonflikt
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    )}
                   </tr>
                 );
               })}
