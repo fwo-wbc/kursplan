@@ -24,33 +24,54 @@
     .app-nav a:hover { background: #f1f5f9; color: #0f172a; }
     .app-nav a.active { background: #2563eb; color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
 
-    .toolbar { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .toolbar { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
     .toolbar .spacer { flex: 1 1 auto; }
+    .btn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     button, .file-btn { font-family: inherit; font-size: 0.95rem; border-radius: 8px; border: 1px solid transparent; padding: 10px 18px; cursor: pointer; transition: background 0.15s, opacity 0.15s; }
-    .file-btn { background: #eef2f7; border-color: var(--border); color: var(--text); display: inline-block; }
-    .file-btn:hover { background: #e2e8f0; }
+    .file-btn { display: inline-block; }
     #fileInput { display: none; }
-    #syncBtn { background: var(--primary); color: #fff; font-weight: 600; }
-    #syncBtn:hover:not(:disabled) { background: var(--primary-dark); }
-    #syncBtn:disabled { background: #c3ccd6; cursor: not-allowed; opacity: 0.8; }
 
-    .counter { font-size: 0.95rem; font-weight: 600; color: var(--primary); white-space: nowrap; }
-    .counter.zero { color: var(--muted); font-weight: 400; }
+    /* Gruppe Datei (Neutral) */
+    .btn-neutral { background: #ffffff; border: 1px solid #cbd5e1; color: #334155; }
+    .btn-neutral:hover:not(:disabled) { background: #f1f5f9; }
+
+    /* Gruppe Ansicht (Toggle) */
+    .btn-toggle { background: #f1f5f9; border: 1px solid #cbd5e1; color: #475569; }
+    .btn-toggle:hover:not(:disabled) { background: #e2e8f0; }
+    .btn-toggle.active { background: #e2e8f0; border-color: #94a3b8; color: #0f172a; font-weight: 600; }
+
+    /* Gruppe Status (Admin/Aktion) */
+    .bulk-group { display: flex; gap: 8px; align-items: center; }
+    #bulk-status-select { font-family: inherit; font-size: 0.9rem; padding: 8px 12px; border: 1px solid #c7d2fe; border-radius: 8px; background: #f1f5f9; color: #334155; cursor: pointer; }
+    .btn-bulk { background: #f1f5f9; border: 1px solid #c7d2fe; color: #334155; }
+    .btn-bulk:hover:not(:disabled) { background: #e2e8f0; }
+    .btn-bulk:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Gruppe Hauptaktion (Primary) */
+    #btn-sync-edoobox { background: #0284c7; border: 1px solid #0284c7; color: #fff; font-weight: 600; }
+    #btn-sync-edoobox:hover:not(:disabled) { background: #0369a1; border-color: #0369a1; }
+    #btn-sync-edoobox:disabled { background: #c3ccd6; border-color: #c3ccd6; cursor: not-allowed; opacity: 0.8; }
+
+    /* Subline unter der Button-Reihe */
+    .toolbar-subline { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 0.875rem; gap: 12px; }
+    #selection-count { font-weight: 400; color: var(--muted); white-space: nowrap; }
+    #selection-count.highlight { font-weight: 700; color: var(--primary); }
+    #status-inline-message { color: var(--muted); text-align: right; transition: opacity 0.4s ease; word-wrap: break-word; }
+    #status-inline-message.ok { color: var(--success); }
+    #status-inline-message.err { color: #c5221f; font-weight: 500; }
+    #status-inline-message.info { color: #174ea6; }
+    #status-inline-message.fade-out { opacity: 0; }
+
     .stats { display: flex; gap: 18px; font-size: 0.85rem; color: var(--muted); }
     .stats b { color: var(--text); }
-
-    .status-msg { font-size: 0.9rem; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; display: none; word-wrap: break-word; }
-    .status-msg.info { display: block; background: #e8f0fe; color: #174ea6; }
-    .status-msg.ok { display: block; background: var(--success-bg); color: var(--success); }
-    .status-msg.err { display: block; background: #fce8e6; color: #c5221f; font-weight: 500; border: 1px solid #f5c6cb; }
 
     .table-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     thead th { background: #1f4e79; color: #fff; text-align: left; padding: 11px 12px; font-weight: 600; position: sticky; top: 0; z-index: 1; white-space: nowrap; }
     tbody td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-    tbody tr:hover:not(.done) { background: #f8fafc; }
-    tbody tr.done { background: var(--done-bg); color: var(--done-text); }
-    tbody tr.done td { color: var(--done-text); }
+    tbody tr:hover:not(.is-erledigt) { background: #f8fafc; }
+    tbody tr.is-erledigt { background: var(--done-bg); color: var(--done-text); }
+    tbody tr.is-erledigt td { color: var(--done-text); }
     td.col-check { width: 44px; text-align: center; }
     td.col-date, td.col-time { white-space: nowrap; }
     td.col-code { font-family: "Consolas", monospace; font-size: 0.85rem; }
@@ -61,13 +82,15 @@
     input[type="checkbox"]:disabled { cursor: not-allowed; }
 
     .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+    button.badge { border: 1px solid transparent; cursor: pointer; font-family: inherit; line-height: inherit; }
+    button.badge:hover { filter: brightness(0.94); }
     .badge.offen { background: var(--warn-bg); color: #b06000; }
     .badge.erledigt { background: var(--success-bg); color: var(--success); }
     .empty { padding: 48px 20px; text-align: center; color: var(--muted); }
     .empty .big { font-size: 1.05rem; margin-bottom: 6px; color: var(--text); }
     .drop-active { outline: 3px dashed var(--primary); outline-offset: -6px; }
 
-    .filterbar { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 20px; display: none; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .filterbar { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; display: none; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
     .filterbar.visible { display: flex; }
     .filterbar label { font-size: 0.9rem; font-weight: 600; }
     .filterbar select { font-family: inherit; font-size: 0.95rem; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; min-width: 280px; max-width: 100%; }
@@ -99,13 +122,25 @@
     </header>
 
     <div class="toolbar">
-      <label class="file-btn" for="fileInput">Excel-Datei auswählen</label>
-      <input type="file" id="fileInput" accept=".xlsx,.xls">
-      <button id="reloadBtn" class="file-btn" type="button">Standarddatei laden</button>
-      <button id="hideDoneBtn" class="file-btn" type="button">Erledigte ausblenden</button>
-      <div class="spacer"></div>
-      <span class="counter zero" id="counter">0 Termine ausgewählt</span>
-      <button id="syncBtn" type="button" disabled>In edoobox eintragen</button>
+      <div class="btn-row">
+        <label class="file-btn btn-neutral" id="btn-select-file" for="fileInput">Excel-Datei auswählen</label>
+        <input type="file" id="fileInput" accept=".xlsx,.xls">
+        <button id="btn-load-default" class="btn-neutral" type="button">Standarddatei laden</button>
+        <button id="btn-toggle-done" class="btn-toggle" type="button">Erledigte ausblenden</button>
+        <div class="bulk-group">
+          <select id="bulk-status-select" aria-label="Zielstatus für Auswahl">
+            <option value="erledigt">Zielstatus: Erledigt</option>
+            <option value="offen">Zielstatus: Offen</option>
+          </select>
+          <button id="btn-bulk-status-apply" class="btn-bulk" type="button" disabled>Status anwenden</button>
+        </div>
+        <div class="spacer"></div>
+        <button id="btn-sync-edoobox" type="button" disabled>In edoobox eintragen</button>
+      </div>
+      <div class="toolbar-subline">
+        <span id="selection-count">0 Termine ausgewählt</span>
+        <span id="status-inline-message" role="status" aria-live="polite"></span>
+      </div>
     </div>
 
     <div class="filterbar" id="filterBar">
@@ -117,8 +152,6 @@
       <div class="spacer"></div>
       <span class="info" id="filterInfo"></span>
     </div>
-
-    <div class="status-msg" id="statusMsg"></div>
 
     <div class="table-card" id="tableCard">
       <div class="empty" id="emptyState">
@@ -149,11 +182,10 @@
     // --- GLOBALE FEHLERFALLE ---
     // Wenn das Skript irgendwo abstürzt, wird es ab sofort hier sichtbar!
     window.addEventListener("error", function(e) {
-      const msgBox = document.getElementById("statusMsg");
+      const msgBox = document.getElementById("status-inline-message");
       if (msgBox) {
-        msgBox.style.display = "block";
-        msgBox.className = "status-msg err";
         msgBox.textContent = "SYSTEM-FEHLER: " + e.message + " (Zeile: " + e.lineno + ")";
+        msgBox.className = "err";
       } else {
         alert("SYSTEM-FEHLER: " + e.message);
       }
@@ -162,16 +194,14 @@
     const WEBHOOK_URL = "https://m.webinarcenter.de/webhook/Kurstransfer";
     const DEFAULT_FILE = "Kurstransfer-Import.xlsx";
     const SHEET_DEFS = "Kurs_Definitionen";
-    const STORAGE_KEY = "kurstransfer_data";
-
     let rows = [];
 
     const fileInput = document.getElementById("fileInput");
-    const reloadBtn = document.getElementById("reloadBtn");
-    const hideDoneBtn = document.getElementById("hideDoneBtn");
-    const syncBtn = document.getElementById("syncBtn");
-    const counterEl = document.getElementById("counter");
-    const statusMsg = document.getElementById("statusMsg");
+    const reloadBtn = document.getElementById("btn-load-default");
+    const hideDoneBtn = document.getElementById("btn-toggle-done");
+    const syncBtn = document.getElementById("btn-sync-edoobox");
+    const counterEl = document.getElementById("selection-count");
+    const statusMsg = document.getElementById("status-inline-message");
     const tableBody = document.getElementById("tableBody");
     const dataTable = document.getElementById("dataTable");
     const emptyState = document.getElementById("emptyState");
@@ -185,6 +215,8 @@
     const unmarkVisibleBtn = document.getElementById("unmarkVisibleBtn");
     const unmarkAllBtn = document.getElementById("unmarkAllBtn");
     const filterInfo = document.getElementById("filterInfo");
+    const bulkStatusSelect = document.getElementById("bulk-status-select");
+    const bulkStatusBtn = document.getElementById("btn-bulk-status-apply");
 
     const THEMA_NONE = "(ohne Thema)";
     let currentThema = ""; // "" = alle Themen
@@ -242,21 +274,44 @@
 
     function setVisibleChecked(checked) {
       if (!tableBody) return;
-      const cbs = tableBody.querySelectorAll('tr:not(.filtered-out) input[type="checkbox"]:not(:disabled)');
-      for (const cb of cbs) cb.checked = checked;
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      const cbs = tableBody.querySelectorAll('tr:not(.filtered-out) input[type="checkbox"]');
+      for (const cb of cbs) {
+        // "Sichtbare offene markieren": nur offene Zeilen anhaken.
+        // "Sichtbare abwählen": alle sichtbaren Zeilen abwählen.
+        if (checked) {
+          const row = byId.get(cb.dataset.id);
+          if (row && row.done) continue;
+        }
+        cb.checked = checked;
+      }
       updateSelectionUI();
     }
 
-    function showStatus(text, kind) {
-      if(!statusMsg) return;
+    let statusTimeout = null;
+
+    function showStatus(text, kind, persist) {
+      if (!statusMsg) return;
       statusMsg.textContent = text;
-      statusMsg.className = "status-msg " + (kind || "info");
+      statusMsg.className = kind || "info";
+      if (statusTimeout) clearTimeout(statusTimeout);
+      statusTimeout = null;
+      if (!persist) {
+        statusTimeout = setTimeout(() => {
+          statusMsg.classList.add("fade-out");
+          setTimeout(() => {
+            statusMsg.textContent = "";
+            statusMsg.className = "";
+          }, 400);
+        }, 6000);
+      }
     }
 
     function hideStatus() {
-      if(!statusMsg) return;
-      statusMsg.className = "status-msg";
+      if (!statusMsg) return;
+      if (statusTimeout) clearTimeout(statusTimeout);
       statusMsg.textContent = "";
+      statusMsg.className = "";
     }
 
     function pad2(n) { return String(n).padStart(2, "0"); }
@@ -288,19 +343,161 @@
       return d[3] + "-" + pad2(d[2]) + "-" + pad2(d[1]) + "T" + hh + ":" + mm + ":" + ss + ".000Z";
     }
 
-    function rowKey(r) { return r.datum + "|" + r.beginn + "|" + r.kursCode; }
-
-    function saveRowsToStorage() {
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch (err) {}
+    function getRowKey(r) {
+      const d = String((r && r.datum) || "").trim();
+      const b = String((r && r.beginn) || "").trim();
+      const k = String((r && r.kursCode) || "").trim();
+      // Kein Key mit leeren Segmenten (z.B. "01.01.2027||") erzeugen.
+      // Nur vollständige Keys "DD.MM.YYYY|HH:MM|kurs_code" sind abgleichsfähig.
+      return d && b && k ? d + "|" + b + "|" + k : "";
     }
 
-    function restoreDoneFlags() {
-      let stored = [];
-      try { stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch (err) { stored = []; }
-      if (!Array.isArray(stored) || stored.length === 0) return;
-      const doneKeys = new Set(stored.filter((r) => r && r.done).map((r) => rowKey(r)));
+    let statusMap = new Map(); // kurs_key -> 'erledigt' | 'offen'
+
+    async function loadKursStatus() {
+      try {
+        // Cache-Busting: Query-Parameter + no-store verhindern sowohl den
+        // Browser-Cache als auch zwischengeschaltete Proxy-Caches.
+        const res = await fetch("/api/kurs-status?t=" + Date.now(), { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        const eintraege = Array.isArray(data && data.eintraege) ? data.eintraege : [];
+        statusMap = new Map(eintraege.filter((e) => e && e.kurs_key).map((e) => [e.kurs_key, e.status]));
+      } catch (err) {
+        console.error("Kursstatus konnte nicht geladen werden:", err);
+        statusMap = new Map();
+      }
+      if (rows.length > 0) {
+        applyServerStatus();
+        render();
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Sperrzustand: Lädt die serverseitige Transfersperre (kurstransfer_lock).
+    // Wenn beim Laden bereits eine Übertragung läuft (z. B. nach einem
+    // Seiten-Reload), bleibt die UI gesperrt, bis die Sperre wieder
+    // aufgehoben wird.
+    // ---------------------------------------------------------------------
+    async function loadKursLock() {
+      try {
+        const res = await fetch("/api/kurs-lock", { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        if (data && data.gesperrt) {
+          setUiLocked(true);
+          syncBtn.textContent = "Übertragung läuft …";
+          showStatus(
+            "Eine Übertragung nach edoobox ist gerade aktiv. Aus diesem Grund ist die Seite gesperrt. Bitte warte, bis die Übertragung abgeschlossen ist.",
+            "info",
+            true
+          );
+          // Warteschleife starten, bis n8n die Sperre wieder aufhebt
+          waitForLockRelease();
+        }
+      } catch (err) {
+        console.error("Sperrzustand konnte nicht geladen werden:", err);
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Setzt (bzw. hebt) die serverseitige Transfersperre auf/auf.
+    // ---------------------------------------------------------------------
+    async function setServerLock(locked) {
+      try {
+        const res = await fetch("/api/kurs-lock", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_locked: locked }),
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+      } catch (err) {
+        console.error("Sperre konnte " + (locked ? "gesetzt" : "freigegeben") + " werden:", err);
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Warteschleife: Pollt den serverseitigen Sperrzustand alle 2,5 Sekunden,
+    // bis die Sperre aufgehoben ist (gesperrt === false). Erst dann werden
+    // die Kursdaten neu geladen, die UI entsperrt und die Erfolgsmeldung
+    // angezeigt. Verhindert doppelte Intervalle über lockPollTimer.
+    // ---------------------------------------------------------------------
+    let lockPollTimer = null;
+
+    // ---------------------------------------------------------------------
+    // Filterzustand sichern/wiederherstellen, damit nach einem Re-Render
+    // (z. B. nach Abschluss einer Übertragung) die aktuelle Ansicht stabil
+    // bleibt und nicht auf "Alle Kurse" zurückspringt.
+    // ---------------------------------------------------------------------
+    function captureFilterState() {
+      return {
+        thema: currentThema,
+        hideDone: !!(hideDoneBtn && hideDoneBtn.classList.contains("active")),
+      };
+    }
+
+    function restoreFilterState(state) {
+      if (!state) return;
+      currentThema = state.thema || "";
+      if (themaFilter) {
+        const exists = Array.from(themaFilter.options).some((o) => o.value === currentThema);
+        if (!exists) currentThema = "";
+        themaFilter.value = currentThema;
+      }
+      applyThemaFilter();
+    }
+
+    function waitForLockRelease() {
+      if (lockPollTimer) return;
+      lockPollTimer = setInterval(async () => {
+        try {
+          const res = await fetch("/api/kurs-lock", { cache: "no-store" });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const data = await res.json();
+          if (data && data.gesperrt === false) {
+            clearInterval(lockPollTimer);
+            lockPollTimer = null;
+
+            // 1) Aktive Filter-Einstellungen sichern (Kursthema, "Erledigte ausblenden").
+            const filterState = captureFilterState();
+
+            // 2) Statuswerte neu laden und Tabelle im DOM neu rendern – KEIN Seiten-Reload.
+            await loadKursStatus();
+
+            // 3) Filterzustand exakt wiederherstellen, damit die Ansicht stabil bleibt.
+            restoreFilterState(filterState);
+
+            // 4) UI entsperren und Erfolgsmeldung anzeigen.
+            setUiLocked(false);
+            syncBtn.textContent = "In edoobox eintragen";
+            showStatus("Die Übertragung wurde erfolgreich abgeschlossen.", "ok");
+
+            // 5) Selektion bereinigen: Häkchen der übertragenen (jetzt erledigten)
+            //    Kurse entfernen; offene Kurse bleiben unangetastet.
+            if (tableBody) {
+              for (const cb of tableBody.querySelectorAll('input[type="checkbox"]:not(:disabled)')) {
+                cb.checked = false;
+              }
+            }
+
+            // 6) Zähler in der Toolbar aktualisieren.
+            updateStats();
+            updateSelectionUI();
+          }
+        } catch (err) {
+          console.error("Sperrzustand konnte nicht abgefragt werden:", err);
+        }
+      }, 2500);
+    }
+
+    function applyServerStatus() {
       for (const row of rows) {
-        if (doneKeys.has(rowKey(row))) row.done = true;
+        const status = statusMap.get(getRowKey(row));
+        // Nur bei übereinstimmender Zeile (Server-Eintrag vorhanden) überschreiben.
+        // Ohne Server-Eintrag bleibt der aus der Excel-Datei gelesene Status erhalten.
+        if (status) {
+          row.done = status === "erledigt";
+        }
       }
     }
 
@@ -363,6 +560,10 @@
         const status = (iStatus >= 0 ? cellText(row[iStatus]) : "") || "Offen";
         const edooboxId = iEdoId >= 0 ? cellText(row[iEdoId]) : "";
 
+        // Ohne gültiges Datum UND gültige Uhrzeit keine Kurszeile erzeugen.
+        // Verhindert Abgleich-Keys mit leeren Segmenten (z.B. "01.01.2027||").
+        if (!datum || !beginn) continue;
+
         const codes = [iCode1, iCode2, iCode3].filter((i) => i >= 0).map((i) => cellText(row[i])).filter((c) => c !== "");
 
         for (const code of codes) {
@@ -402,15 +603,17 @@
       for (const row of rows) {
         const tr = document.createElement("tr");
         tr.dataset.id = row.id;
-        if (row.done) tr.classList.add("done");
+        if (row.done) tr.classList.add("is-erledigt");
 
         const tdCheck = document.createElement("td");
         tdCheck.className = "col-check";
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.dataset.id = row.id;
-        cb.checked = row.done;
-        cb.disabled = row.done;
+        // Checkboxen sind immer aktiv anwählbar – auch bei Status "Erledigt".
+        // So lassen sich erledigte Zeilen markieren und z. B. über
+        // "Zielstatus: Offen" wieder öffnen. Standardmäßig nicht vorgehakt.
+        cb.checked = false;
         tdCheck.appendChild(cb);
         tr.appendChild(tdCheck);
 
@@ -451,9 +654,12 @@
         tr.appendChild(tdKat);
 
         const tdStatus = document.createElement("td");
-        const badge = document.createElement("span");
+        const badge = document.createElement("button");
+        badge.type = "button";
         badge.className = "badge " + (row.done ? "erledigt" : "offen");
         badge.textContent = row.done ? "✓ Erledigt" : "Offen";
+        badge.title = "Status wechseln";
+        badge.addEventListener("click", () => toggleKursStatus(row));
         tdStatus.appendChild(badge);
         tr.appendChild(tdStatus);
 
@@ -482,28 +688,165 @@
       if(statOpen) statOpen.textContent = String(total - done);
     }
 
-    function getSelectedOpen() {
+    // Alle markierten Zeilen (offen UND erledigt) – Grundlage für
+    // "Zielstatus: Offen", das auch erledigte Zeilen wieder öffnen können muss.
+    function getSelectedRows() {
       if(!tableBody) return [];
-      const checked = tableBody.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)');
+      const checked = tableBody.querySelectorAll('input[type="checkbox"]:checked');
       const ids = new Set(Array.from(checked).map((c) => c.dataset.id));
-      return rows.filter((r) => ids.has(r.id) && !r.done);
+      return rows.filter((r) => ids.has(r.id));
+    }
+
+    // Nur markierte Zeilen mit aktuellem Status "Offen" – ausschließlich für
+    // den Transfer nach edoobox (syncToEdoobox), damit erledigte Kurse nicht
+    // versehentlich erneut übertragen werden.
+    function getSelectedOpen() {
+      return getSelectedRows().filter((r) => !r.done);
     }
 
     function updateSelectionUI() {
-      const selected = getSelectedOpen();
+      const selected = getSelectedRows();
       const n = selected.length;
+      const nOpen = selected.filter((r) => !r.done).length;
       if(counterEl) {
         counterEl.textContent = n + (n === 1 ? " Termin ausgewählt" : " Termine ausgewählt");
-        counterEl.classList.toggle("zero", n === 0);
+        counterEl.classList.toggle("highlight", n > 0);
       }
-      if(syncBtn) syncBtn.disabled = n === 0;
+      if(syncBtn) syncBtn.disabled = uiLocked || nOpen === 0;
+      if(bulkStatusBtn) bulkStatusBtn.disabled = uiLocked || n === 0;
+    }
+
+    function updateRowUI(kursKey, status) {
+      const done = status === "erledigt";
+      for (const row of rows) {
+        if (getRowKey(row) !== kursKey) continue;
+        row.done = done;
+        const tr = tableBody.querySelector('tr[data-id="' + row.id + '"]');
+        if (!tr) continue;
+        tr.classList.toggle("is-erledigt", done);
+        const cb = tr.querySelector('input[type="checkbox"]');
+        if (cb) {
+          // Checkbox nach Statuswechsel nicht deaktivieren und nicht vorhaken –
+          // Auswahl bleibt explizit durch den Benutzer.
+          cb.checked = false;
+          cb.disabled = false;
+        }
+        const badge = tr.querySelector(".badge");
+        if (badge) {
+          badge.className = "badge " + (done ? "erledigt" : "offen");
+          badge.textContent = done ? "✓ Erledigt" : "Offen";
+        }
+      }
+    }
+
+    async function toggleKursStatus(row) {
+      const kursTitel = row.kursname || row.kursCode;
+      const kursKey = getRowKey(row);
+      const neuerStatus = row.done ? "offen" : "erledigt";
+
+      // Sicherheitsabfrage beim manuellen Zurücksetzen auf "Offen": Es wird
+      // ausdrücklich bestätigt, dass die Angebote nicht nach edoobox übertragen
+      // wurden. Nur bei OK wird die Statusänderung ausgeführt.
+      const bestaetigt = row.done
+        ? window.confirm("Bestätige, dass die markierten Kursangebote nicht nach edoobox übertragen wurden")
+        : window.confirm("Möchtest du '" + kursTitel + "' manuell als 'ERLEDIGT' markieren?");
+      if (!bestaetigt) return;
+
+      try {
+        const res = await fetch("/api/kurs-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kurs_key: kursKey, status: neuerStatus }),
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+
+        row.done = neuerStatus === "erledigt";
+        statusMap.set(kursKey, neuerStatus);
+        updateRowUI(kursKey, neuerStatus);
+        updateStats();
+        updateSelectionUI();
+        showStatus("Status für '" + kursTitel + "' auf '" + (row.done ? "ERLEDIGT" : "OFFEN") + "' gesetzt.", "ok");
+      } catch (err) {
+        showStatus("Status konnte nicht gespeichert werden: " + err.message, "err");
+      }
+    }
+
+    async function applyBulkStatus() {
+      // Alle markierten Zeilen verarbeiten – auch erledigte. Dadurch kann
+      // "Zielstatus: Offen" erledigte Zeilen wieder öffnen, und
+      // "Zielstatus: Erledigt" ist auf bereits erledigten Zeilen idempotent.
+      const selected = getSelectedRows();
+      if (selected.length === 0) return;
+
+      const zielStatus = bulkStatusSelect ? bulkStatusSelect.value : "erledigt";
+      if (zielStatus !== "erledigt" && zielStatus !== "offen") return;
+
+      const anzahl = selected.length;
+      // Beim Zurücksetzen auf "Offen" (Zielstatus: Offen) wird eine
+      // Sicherheitsabfrage mit exaktem Wortlaut vorgeschaltet. Nur bei OK wird
+      // die Statusänderung ausgeführt – bei Abbruch passiert nichts.
+      const bestaetigt = zielStatus === "erledigt"
+        ? window.confirm("Möchtest du den Status von " + anzahl + " ausgewählten Kursen wirklich auf 'ERLEDIGT' setzen?")
+        : window.confirm("Bestätige, dass die markierten Kursangebote nicht nach edoobox übertragen wurden");
+      if (!bestaetigt) return;
+
+      if (bulkStatusBtn) bulkStatusBtn.disabled = true;
+      showStatus("Aktualisiere " + anzahl + " Kurse...", "info");
+
+      const fehlgeschlageneStatus = [];
+      const ergebnisse = await Promise.all(selected.map(async (row) => {
+        const kursKey = getRowKey(row);
+        try {
+          const res = await fetch("/api/kurs-status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kurs_key: kursKey, status: zielStatus }),
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            console.error("Status-Update fehlgeschlagen für " + kursKey + ": HTTP " + res.status, errData);
+            fehlgeschlageneStatus.push(res.status);
+            return false;
+          }
+          statusMap.set(kursKey, zielStatus);
+          updateRowUI(kursKey, zielStatus);
+          return true;
+        } catch (err) {
+          console.error("Status-Update fehlgeschlagen für " + kursKey + ":", err);
+          return false;
+        }
+      }));
+
+      const erfolgreichCount = ergebnisse.filter(Boolean).length;
+
+      if (tableBody) {
+        for (const cb of tableBody.querySelectorAll('input[type="checkbox"]:not(:disabled)')) cb.checked = false;
+      }
+      updateStats();
+      updateSelectionUI();
+
+      const httpHinweis = fehlgeschlageneStatus.length > 0
+        ? " (Server-Antwort: HTTP " + fehlgeschlageneStatus.join(", ") + ")"
+        : "";
+
+      if (erfolgreichCount === anzahl) {
+        if (anzahl === 1) {
+          showStatus("Die Statusänderung wurde erfolgreich durchgeführt.", "ok");
+        } else {
+          showStatus("Der Status für alle " + anzahl + " ausgewählten Kurse wurde erfolgreich auf '" + zielStatus + "' geändert.", "ok");
+        }
+      } else if (erfolgreichCount > 0) {
+        showStatus(erfolgreichCount + " von " + anzahl + " Kursen wurden aktualisiert. Bei den restlichen Kursen ist ein Fehler aufgetreten." + httpHinweis, "err");
+      } else {
+        showStatus("Die Statusänderung konnte nicht durchgeführt werden." + httpHinweis, "err");
+      }
     }
 
     function loadFromArrayBuffer(arrayBuffer, sourceLabel) {
       showStatus("Lese Daten aus " + sourceLabel + "...", "info");
       try {
         rows = parseWorkbook(arrayBuffer);
-        restoreDoneFlags();
+        applyServerStatus();
         render();
         if (rows.length === 0) {
           showStatus("Die Excel-Datei enthält keine belegten Kurstermine.", "info");
@@ -538,9 +881,38 @@
       }
     }
 
+    let uiLocked = false;
+
+    function setUiLocked(locked) {
+      uiLocked = locked;
+      const controls = [syncBtn, bulkStatusBtn, bulkStatusSelect, fileInput, reloadBtn, hideDoneBtn, markVisibleBtn, unmarkVisibleBtn, unmarkAllBtn];
+      for (const el of controls) {
+        if (el) el.disabled = locked;
+      }
+      if (tableBody) {
+        // Checkboxen werden nur noch bei aktiver Transfersperre deaktiviert –
+        // nicht mehr abhängig vom Status "Erledigt".
+        for (const cb of tableBody.querySelectorAll('input[type="checkbox"]')) {
+          cb.disabled = locked;
+        }
+      }
+      if (!locked) {
+        updateSelectionUI();
+        applyThemaFilter();
+      }
+    }
+
     async function syncToEdoobox() {
+      // Nur offene Kurse übertragen: erledigte, versehentlich markierte Zeilen
+      // werden NICHT erneut an edoobox geschickt.
       const selected = getSelectedOpen();
-      if (selected.length === 0) return;
+      if (selected.length === 0) {
+        const allSelected = getSelectedRows();
+        if (allSelected.length > 0) {
+          showStatus("Keine offenen Kurse ausgewählt. Erledigte Kurse werden nicht erneut an edoobox übertragen.", "info");
+        }
+        return;
+      }
 
       const invalid = selected.filter(
         (r) => !/^category_\w+$/.test(String(r.kategorieId || "").trim()) || !/^offer_\w+$/.test(String(r.vorlageOfferId || "").trim())
@@ -572,15 +944,37 @@
           number: finalNumber,
           name: r.kursname,
           date_start: isoDate,
+          // Kurs-Key-Felder für den sofortigen Status-Batch in n8n (Start-Batch)
+          kurs_key: `${r.datum}|${r.beginn}|${baseNumber}`,
+          datum: r.datum,
+          beginn: r.beginn,
+          kursCode: baseNumber,
         };
       });
 
-      syncBtn.disabled = true;
-      const originalLabel = syncBtn.textContent;
-      syncBtn.textContent = "Übertrage …";
-      showStatus("Übertrage " + kurse.length + " Termine an n8n …", "info");
+      // Sofortige optische Statusaktualisierung: alle ausgewählten Zeilen als
+      // "Erledigt" markieren, Auswahl entfernen und UI sofort neu rendern,
+      // während die Übertragung an n8n im Hintergrund anläuft.
+      for (const r of selected) {
+        r.done = true;
+      }
+      if (tableBody) {
+        for (const cb of tableBody.querySelectorAll('input[type="checkbox"]:checked')) {
+          cb.checked = false;
+        }
+      }
+      render();
+      updateStats();
+
+      // UI sperren und serverseitige Transfersperre setzen (bleibt aktiv,
+      // bis n8n die Übertragung abgeschlossen und die Sperre aufgehoben hat)
+      setUiLocked(true);
+      syncBtn.textContent = "Übertragung läuft...";
+      showStatus("Übertragung nach edoobox läuft. Bitte warten...", "info", true);
 
       try {
+        await setServerLock(true);
+
         const res = await fetch(WEBHOOK_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -589,20 +983,22 @@
 
         if (!res.ok) throw new Error("Server antwortete mit HTTP " + res.status);
 
-        const doneIds = new Set(selected.map((r) => r.id));
-        for (const row of rows) {
-          if (doneIds.has(row.id)) row.done = true;
-        }
-
-        saveRowsToStorage();
-        render();
-        showStatus(kurse.length + " Termine erfolgreich an n8n übertragen.", "ok");
+        // Lock bleibt aktiv: Warteschleife starten, bis n8n die Sperre aufhebt
+        showStatus("Übertragung nach edoobox läuft. Bitte warten...", "info", true);
+        waitForLockRelease();
       } catch (err) {
-        showStatus("Übertragung fehlgeschlagen: " + err.message, "err");
-        updateSelectionUI();
-      } finally {
-        syncBtn.textContent = originalLabel;
-        updateSelectionUI();
+        console.error("Übertragung an n8n fehlgeschlagen:", err);
+        // Optimistischen Status zurücknehmen: betroffene Zeilen wieder auf "offen"
+        for (const r of selected) {
+          r.done = false;
+        }
+        render();
+        updateStats();
+        // Keine Übertragung aktiv: Sperre wieder freigeben und UI entsperren
+        await setServerLock(false);
+        setUiLocked(false);
+        syncBtn.textContent = "In edoobox eintragen";
+        showStatus("Fehler bei der Übertragung nach edoobox.", "err");
       }
     }
 
@@ -620,13 +1016,14 @@
         if (count === 0) return alert("Es gibt momentan keine erledigten Kurse.");
         if (confirm("Möchtest du wirklich alle " + count + " erledigten Kurse ausblenden?")) {
           rows = rows.filter((r) => !r.done);
-          saveRowsToStorage(); 
           render();
+          hideDoneBtn.classList.add("active");
           showStatus("Erledigte Kurse wurden ausgeblendet.", "ok");
         }
       });
     }
     if(syncBtn) syncBtn.addEventListener("click", syncToEdoobox);
+    if(bulkStatusBtn) bulkStatusBtn.addEventListener("click", applyBulkStatus);
     if(themaFilter) {
       themaFilter.addEventListener("change", () => {
         currentThema = themaFilter.value;
@@ -653,7 +1050,11 @@
       tableCard.addEventListener("drop", (e) => { handleFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]); });
     }
 
-    window.addEventListener("DOMContentLoaded", loadDefaultFile);
+    window.addEventListener("DOMContentLoaded", () => {
+      loadKursStatus();
+      loadKursLock();
+      loadDefaultFile();
+    });
   </script>
 </body>
 </html>
