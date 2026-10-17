@@ -86,6 +86,7 @@
     button.badge:hover { filter: brightness(0.94); }
     .badge.offen { background: var(--warn-bg); color: #b06000; }
     .badge.erledigt { background: var(--success-bg); color: var(--success); }
+    .badge.fehler { background: #fce8e6; color: #c5221f; }
     .empty { padding: 48px 20px; text-align: center; color: var(--muted); }
     .empty .big { font-size: 1.05rem; margin-bottom: 6px; color: var(--text); }
     .drop-active { outline: 3px dashed var(--primary); outline-offset: -6px; }
@@ -112,7 +113,7 @@
     <header class="top">
       <div>
         <h1>Kurstransfer zu edoobox</h1>
-        <div class="sub">Kurstermine auswählen & in edoobox eintragen (Standard-Datei: Kurstransfer-Import.xlsx)</div>
+        <div class="sub">Kurstermine auswählen & in edoobox eintragen (Standard-Datei: Kurstransfer-MS-Office.xlsx)</div>
       </div>
       <div class="stats" id="stats">
         <span>Gesamt: <b id="statTotal">0</b></span>
@@ -156,7 +157,7 @@
     <div class="table-card" id="tableCard">
       <div class="empty" id="emptyState">
         <div class="big">Keine Daten geladen</div>
-        <div>Bitte die Datei <code>Kurstransfer-Import.xlsx</code> auswählen oder die Standarddatei laden.</div>
+        <div>Bitte die Datei <code>Kurstransfer-MS-Office.xlsx</code> auswählen oder die Standarddatei laden.</div>
       </div>
       <table id="dataTable" style="display:none;">
         <thead>
@@ -192,7 +193,7 @@
     });
 
     const WEBHOOK_URL = "https://m.webinarcenter.de/webhook/Kurstransfer";
-    const DEFAULT_FILE = "Kurstransfer-Import.xlsx";
+    const DEFAULT_FILE = "Planungstabellen Excel/Kurstransfer-MS-Office.xlsx";
     const SHEET_DEFS = "Kurs_Definitionen";
     let rows = [];
 
@@ -352,7 +353,10 @@
       return d && b && k ? d + "|" + b + "|" + k : "";
     }
 
-    let statusMap = new Map(); // kurs_key -> 'erledigt' | 'offen'
+    let statusMap = new Map(); // kurs_key -> 'erledigt' | 'offen' | 'fehler'
+    // kurs_keys der zuletzt an n8n übertragenen Kurse – dient der Fehlerauswertung
+    // nach Abschluss der Übertragung (Status "fehler" in kurstransfer_status).
+    let lastTransferKeys = [];
 
     async function loadKursStatus() {
       try {
@@ -467,10 +471,22 @@
             // 3) Filterzustand exakt wiederherstellen, damit die Ansicht stabil bleibt.
             restoreFilterState(filterState);
 
-            // 4) UI entsperren und Erfolgsmeldung anzeigen.
+            // 4) UI entsperren und Ergebnis melden. Fehlgeschlagene Übertragungen
+            //    (n8n setzt Status "fehler") werden NICHT mehr als Erfolg ausgegeben.
             setUiLocked(false);
             syncBtn.textContent = "In edoobox eintragen";
-            showStatus("Die Übertragung wurde erfolgreich abgeschlossen.", "ok");
+            const fehlerKeys = lastTransferKeys.filter((k) => statusMap.get(k) === "fehler");
+            if (fehlerKeys.length > 0) {
+              showStatus(
+                "Übertragung fehlgeschlagen für: " + fehlerKeys.join(", ") +
+                ". Bitte n8n-Protokoll prüfen und die betroffenen Kurse erneut übertragen.",
+                "err",
+                true
+              );
+            } else {
+              showStatus("Die Übertragung wurde erfolgreich abgeschlossen.", "ok");
+            }
+            lastTransferKeys = [];
 
             // 5) Selektion bereinigen: Häkchen der übertragenen (jetzt erledigten)
             //    Kurse entfernen; offene Kurse bleiben unangetastet.
@@ -497,6 +513,9 @@
         // Ohne Server-Eintrag bleibt der aus der Excel-Datei gelesene Status erhalten.
         if (status) {
           row.done = status === "erledigt";
+          // Fehlgeschlagene Übertragungen (n8n setzt "fehler") sichtbar machen,
+          // statt sie stillschweigend als "Offen" anzuzeigen.
+          row.fehler = status === "fehler";
         }
       }
     }
@@ -516,7 +535,10 @@
           const iName = h.indexOf("Kursname");
           const iKat = h.indexOf("Kategorie_ID");
           const iKatName = h.indexOf("Kategorie_Name");
-          const iOffer = h.indexOf("Vorlage_Offer_ID");
+          // Hinweis: Die historische Spalte "Vorlage_Offer_ID" (ehemals Spalte E)
+          // wird bewusst NICHT mehr gelesen. Die Klon-Basis für den edoobox-
+          // Duplicate-Call wird stattdessen dynamisch über die Kategorie des
+          // Kurses ermittelt (GET /api/edoobox/basis?category_id=...).
           for (let r = 1; r < defRows.length; r++) {
             const code = cellText(defRows[r][iCode]);
             if (!code) continue;
@@ -524,7 +546,6 @@
               kursname: cellText(defRows[r][iName]),
               kategorieId: iKat >= 0 ? cellText(defRows[r][iKat]) : "",
               kategorieName: iKatName >= 0 ? cellText(defRows[r][iKatName]) : "",
-              vorlageOfferId: iOffer >= 0 ? cellText(defRows[r][iOffer]) : "",
             });
           }
         }
@@ -576,7 +597,6 @@
             kursname: def ? def.kursname : "",
             status: status,
             edooboxId: edooboxId,
-            vorlageOfferId: def ? def.vorlageOfferId : "",
             kategorieId: def ? def.kategorieId : "",
             kategorieName: def ? def.kategorieName : "",
             done: status.toLowerCase() === "erledigt",
@@ -656,9 +676,9 @@
         const tdStatus = document.createElement("td");
         const badge = document.createElement("button");
         badge.type = "button";
-        badge.className = "badge " + (row.done ? "erledigt" : "offen");
-        badge.textContent = row.done ? "✓ Erledigt" : "Offen";
-        badge.title = "Status wechseln";
+        badge.className = "badge " + (row.done ? "erledigt" : (row.fehler ? "fehler" : "offen"));
+        badge.textContent = row.done ? "✓ Erledigt" : (row.fehler ? "⚠ Fehler" : "Offen");
+        badge.title = row.fehler ? "Übertragung fehlgeschlagen – erneut versuchen" : (row.hinweis || "Status wechseln");
         badge.addEventListener("click", () => toggleKursStatus(row));
         tdStatus.appendChild(badge);
         tr.appendChild(tdStatus);
@@ -721,6 +741,7 @@
       for (const row of rows) {
         if (getRowKey(row) !== kursKey) continue;
         row.done = done;
+        row.fehler = false;
         const tr = tableBody.querySelector('tr[data-id="' + row.id + '"]');
         if (!tr) continue;
         tr.classList.toggle("is-erledigt", done);
@@ -902,6 +923,32 @@
       }
     }
 
+    // ---------------------------------------------------------------------
+    // Ermittelt die Klon-Basis ("Rolling Template") für eine Kategorie
+    // dynamisch über die API (GET /api/edoobox/basis?category_id=…).
+    // Liefert das zeitlich jüngste Angebot der Kategorie als { offer_id,
+    // offer_number, name }. Wirft bei Fehlern eine aussagekräftige Meldung.
+    // ---------------------------------------------------------------------
+    async function fetchBasisForCategory(categoryId) {
+      const res = await fetch(
+        "/api/edoobox/basis?category_id=" + encodeURIComponent(categoryId),
+        { cache: "no-store" }
+      );
+      if (!res.ok) {
+        let msg = "HTTP " + res.status;
+        try {
+          const data = await res.json();
+          if (data && data.error) msg = data.error;
+        } catch (_) { /* Antwort war kein JSON */ }
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      if (!data || !data.offer_id) {
+        throw new Error("Kein Basis-Angebot in Kategorie gefunden");
+      }
+      return data;
+    }
+
     async function syncToEdoobox() {
       // Nur offene Kurse übertragen: erledigte, versehentlich markierte Zeilen
       // werden NICHT erneut an edoobox geschickt.
@@ -914,32 +961,164 @@
         return;
       }
 
+      // Pflichtfeld ist nur noch die Kategorie-ID. Die Klon-Basis (Vorlagen-ID)
+      // wird NICHT mehr aus der Excel gelesen, sondern dynamisch über die
+      // Kategorie ermittelt (Rolling Template).
       const invalid = selected.filter(
-        (r) => !/^category_\w+$/.test(String(r.kategorieId || "").trim()) || !/^offer_\w+$/.test(String(r.vorlageOfferId || "").trim())
+        (r) => !/^category_\w+$/.test(String(r.kategorieId || "").trim())
       );
       if (invalid.length > 0) {
-        showStatus("Übertragung abgebrochen: Kategorie-ID oder Vorlagen-ID fehlt/ungültig bei Kurs_Code: " + [...new Set(invalid.map((r) => r.kursCode))].join(", "), "err");
+        showStatus("Übertragung abgebrochen: Kategorie-ID fehlt/ungültig bei Kurs_Code: " + [...new Set(invalid.map((r) => r.kursCode))].join(", "), "err");
         return;
       }
 
-      const counters = {};
-      const kurse = selected.map((r) => {
+      // Klon-Basis je Kategorie dynamisch ermitteln. Pro Kategorie wird nur
+      // ein Request ausgeführt (Cache über basisByCategory).
+      const basisByCategory = new Map();
+      try {
+        const kategorien = [...new Set(selected.map((r) => String(r.kategorieId).trim()))];
+        for (const kat of kategorien) {
+          basisByCategory.set(kat, await fetchBasisForCategory(kat));
+        }
+      } catch (err) {
+        showStatus("Übertragung abgebrochen: " + err.message, "err");
+        return;
+      }
+
+      // Kurz anzeigen, welches Basis-Angebot als Klon-Vorlage gewählt wurde.
+      const basisLabels = [...basisByCategory.values()].map((b) => b.offer_number || b.offer_id);
+
+      // ---------------------------------------------------------------------
+      // Kollisionsprüfung VOR dem n8n-Webhook-Aufruf:
+      // Für jede ausgewählte Zeile wird in edoobox_raw geprüft, ob bereits ein
+      // AKTIVES Angebot (is_deleted IS NOT TRUE) desselben Kurs-Codes an exakt
+      // diesem Datum existiert. Duplikate werden NICHT an n8n gesendet, sondern
+      // direkt als "Erledigt" markiert (Hinweis: "Bereits in edoobox vorhanden").
+      // Es darf kein zweiter Kurs für denselben Tag angelegt werden.
+      // ---------------------------------------------------------------------
+      let checkByKey = new Map();
+      try {
+        const checkRes = await fetch("/api/kurstransfer/check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            zeilen: selected.map((r) => ({
+              kursCode: String(r.kursCode).trim(),
+              datum: String(r.datum).trim(),
+              beginn: String(r.beginn).trim(),
+            })),
+          }),
+        });
+        if (!checkRes.ok) {
+          let msg = "HTTP " + checkRes.status;
+          try {
+            const d = await checkRes.json();
+            if (d && d.error) msg = d.error;
+          } catch (_) { /* Antwort war kein JSON */ }
+          throw new Error(msg);
+        }
+        const checkData = await checkRes.json();
+        checkByKey = new Map(
+          (Array.isArray(checkData.eintraege) ? checkData.eintraege : [])
+            .filter((e) => e && e.kurs_key)
+            .map((e) => [e.kurs_key, e])
+        );
+      } catch (err) {
+        showStatus("Übertragung abgebrochen: Kollisionsprüfung fehlgeschlagen (" + err.message + ").", "err");
+        return;
+      }
+
+      // Zeilen klassifizieren: Duplikate (DB-Kollision ODER gleicher Tag im
+      // selben Import) werden nicht übertragen.
+      const duplikatKeys = new Set();
+      const geseheneTage = new Map(); // kursCode|datum -> true
+      for (const r of selected) {
+        const check = checkByKey.get(getRowKey(r));
+        if (!check || check.gueltig === false) {
+          showStatus("Übertragung abgebrochen: Kein Prüfergebnis für " + getRowKey(r) + ".", "err");
+          return;
+        }
+        const datumKey = String(r.kursCode).trim() + "|" + String(r.datum).trim();
+        const kollisionDb = check.kollision === true;
+        const kollisionBatch = geseheneTage.has(datumKey);
+        geseheneTage.set(datumKey, true);
+        if (kollisionDb || kollisionBatch) duplikatKeys.add(getRowKey(r));
+      }
+
+      const duplikate = selected.filter((r) => duplikatKeys.has(getRowKey(r)));
+      const zuTransfer = selected.filter((r) => !duplikatKeys.has(getRowKey(r)));
+
+      // Duplikate sofort als "Erledigt" markieren und den Hinweis dauerhaft in
+      // kurstransfer_status persistieren. Für diese Zeilen KEIN n8n-Aufruf.
+      if (duplikate.length > 0) {
+        await Promise.all(duplikate.map(async (r) => {
+          const key = getRowKey(r);
+          const check = checkByKey.get(key);
+          r.done = true;
+          r.fehler = false;
+          r.hinweis = check && check.kollision === true
+            ? "Bereits in edoobox vorhanden"
+            : "Gleicher Tag im Import – als Erledigt markiert";
+          statusMap.set(key, "erledigt");
+          try {
+            await fetch("/api/kurs-status", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ kurs_key: key, status: "erledigt", hinweis: r.hinweis }),
+            });
+          } catch (err) {
+            console.error("Duplikat-Status konnte nicht gespeichert werden (" + key + "):", err);
+          }
+        }));
+      }
+
+      // ---------------------------------------------------------------------
+      // Zähler-Logik (-1, -2, …) auf Basis der bereits in edoobox_raw
+      // vorhandenen AKTIVEN Angebote mit diesem Kürzel im selben Monat (MMYY).
+      // Die Nummer wird nur für abweichende Tage im selben Monat vergeben; ein
+      // zweiter Termin am selben Tag ist oben bereits als Duplikat abgefangen.
+      // MMYY wird bewusst aus dem Datums-String (DD.MM.YYYY) abgeleitet und
+      // NICHT über das lokal interpretierte Date-Objekt, damit Frontend und
+      // Serverprüfung identisch rechnen (kein UTC-/Ortszeit-Überlauf).
+      // ---------------------------------------------------------------------
+      const counters = {}; // counterKey -> { naechster, daten: {datumKey: nr} }
+      const kurse = zuTransfer.map((r) => {
         const isoDate = toIsoDate(r.datum, r.beginn);
-        const d = new Date(isoDate);
-        const mm = pad2(d.getMonth() + 1);
-        const yy = String(d.getFullYear()).slice(-2);
+        const datumParsed = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(String(r.datum).trim());
+        const mm = datumParsed ? pad2(Number(datumParsed[2])) : "";
+        const yy = datumParsed ? String(Number(datumParsed[3])).slice(-2) : "";
         const mmyy = `${mm}${yy}`;
 
         const baseNumber = String(r.kursCode).trim();
         const counterKey = `${baseNumber}-${mmyy}`;
+        const datumKey = `${baseNumber}|${String(r.datum).trim()}`;
 
-        if (!counters[counterKey]) counters[counterKey] = 1;
-        else counters[counterKey]++;
+        // Basis-Zähler aus der DB: Anzahl bestehender aktiver Angebote im Monat.
+        const check = checkByKey.get(getRowKey(r));
+        const basisAnzahl = check && typeof check.monatAnzahl === "number"
+          ? check.monatAnzahl
+          : 0;
 
-        const finalNumber = `${baseNumber}-${mmyy}-${counters[counterKey]}`;
+        if (!counters[counterKey]) {
+          counters[counterKey] = { naechster: basisAnzahl + 1, daten: {} };
+        }
+        const zaehler = counters[counterKey];
+        if (!(datumKey in zaehler.daten)) {
+          zaehler.daten[datumKey] = zaehler.naechster;
+          zaehler.naechster++;
+        }
+
+        const finalNumber = `${baseNumber}-${mmyy}-${zaehler.daten[datumKey]}`;
+
+        const basis = basisByCategory.get(String(r.kategorieId).trim());
+        const basisOfferId = String(basis.offer_id).trim();
 
         return {
-          sourceOfferId: String(r.vorlageOfferId).trim(),
+          // n8n liest die Vorlagen-ID als "kurs.sourceOfferId || kurs.basis".
+          // Beide Felder werden gesendet, damit der Payload unabhängig von der
+          // n8n-Erwartung ({{ $json.basis }}) korrekt greift.
+          basis: basisOfferId,
+          sourceOfferId: basisOfferId,
           category: String(r.kategorieId).trim(),
           number: finalNumber,
           name: r.kursname,
@@ -952,10 +1131,14 @@
         };
       });
 
-      // Sofortige optische Statusaktualisierung: alle ausgewählten Zeilen als
-      // "Erledigt" markieren, Auswahl entfernen und UI sofort neu rendern,
+      // Kurs-Keys der übertragenen Kurse merken, um nach Abschluss der
+      // Übertragung fehlgeschlagene Kurse (Status "fehler") melden zu können.
+      lastTransferKeys = kurse.map((k) => k.kurs_key);
+
+      // Sofortige optische Statusaktualisierung: die zu übertragenden Zeilen
+      // als "Erledigt" markieren, Auswahl entfernen und UI sofort neu rendern,
       // während die Übertragung an n8n im Hintergrund anläuft.
-      for (const r of selected) {
+      for (const r of zuTransfer) {
         r.done = true;
       }
       if (tableBody) {
@@ -968,17 +1151,35 @@
 
       // UI sperren und serverseitige Transfersperre setzen (bleibt aktiv,
       // bis n8n die Übertragung abgeschlossen und die Sperre aufgehoben hat)
+
+      // Wurden alle ausgewählten Zeilen als Duplikat abgefangen, gibt es nichts
+      // an n8n zu senden: kein Webhook, keine Sperre, nur Abschluss im UI.
+      if (kurse.length === 0) {
+        showStatus(
+          "Keine Übertragung nötig: Alle " + duplikate.length + " ausgewählte(n) Termin(e) sind bereits in edoobox vorhanden und wurden als 'Erledigt' markiert.",
+          "info"
+        );
+        return;
+      }
+
       setUiLocked(true);
       syncBtn.textContent = "Übertragung läuft...";
-      showStatus("Übertragung nach edoobox läuft. Bitte warten...", "info", true);
+      const duplikatHinweis = duplikate.length > 0
+        ? " (" + duplikate.length + " Duplikat(e) als 'Erledigt' markiert)"
+        : "";
+      showStatus("Basis: " + basisLabels.join(", ") + " – Übertragung nach edoobox läuft. Bitte warten..." + duplikatHinweis, "info", true);
 
       try {
         await setServerLock(true);
 
+        const payload = { kurse: kurse };
+        // TEMPORÄRES LOGGING: vollständigen Request-Body vor dem Senden anzeigen.
+        console.log("Sende an n8n:", payload);
+
         const res = await fetch(WEBHOOK_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kurse: kurse }),
+          body: JSON.stringify(payload),
         });
 
         if (!res.ok) throw new Error("Server antwortete mit HTTP " + res.status);
@@ -988,8 +1189,10 @@
         waitForLockRelease();
       } catch (err) {
         console.error("Übertragung an n8n fehlgeschlagen:", err);
-        // Optimistischen Status zurücknehmen: betroffene Zeilen wieder auf "offen"
-        for (const r of selected) {
+        // Optimistischen Status zurücknehmen: nur die zu übertragenden Zeilen
+        // wieder auf "offen" setzen. Bereits als Duplikat markierte Zeilen
+        // ("Erledigt" + Hinweis) bleiben bewusst erhalten.
+        for (const r of zuTransfer) {
           r.done = false;
         }
         render();

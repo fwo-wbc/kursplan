@@ -587,6 +587,26 @@ interface KursHinweis {
 }
 
 /**
+ * Firmenkurse / Coachings erkennen: Die Kursnummer beginnt mit einer Ziffer
+ * (z. B. "2250...", Regex /^\d/). Für diese Kurse wird das „Last Minute"-Badge
+ * nicht angezeigt.
+ */
+function istFirmenkurs(kurs: Kurs): boolean {
+  const erweitert = kurs as Kurs & {
+    kursnummer?: string | null;
+    nummer?: string | null;
+    offer_number?: string | null;
+  };
+  const nummer =
+    kurs.kursnr?.trim() ||
+    erweitert.kursnummer?.trim() ||
+    erweitert.nummer?.trim() ||
+    erweitert.offer_number?.trim() ||
+    '';
+  return /^\d/.test(nummer);
+}
+
+/**
  * Dynamische Hinweis-Regeln je Kurs. Reihenfolge = Anzeigereihenfolge:
  * 1. Kurs abgesagt, 2. Last Minute, 3. Einladungslink, 4. Abgerechnet,
  * 5. Belegung (Ausgebucht / nur noch wenige Plätze), 6. fehlender Trainer.
@@ -602,7 +622,9 @@ function kursHinweise(kurs: Kurs): KursHinweis[] {
     });
   }
 
-  if (optionen.last_minute) {
+  // Last-Minute-Badge nur rendern, wenn NICHT Firmenkurs/Coaching
+  // (Kursnummer beginnt nicht mit einer Ziffer).
+  if (optionen.last_minute && !istFirmenkurs(kurs)) {
     hinweise.push({
       text: 'Last Minute',
       className: 'bg-violet-50 text-violet-700 border-violet-200',
@@ -695,6 +717,41 @@ function schliessungHinweis(kurs: Kurs, heuteIso: string): KursHinweis | null {
   return null;
 }
 
+/**
+ * Hinweis „TN-Liste vorhanden?“: Nur für Firmenkurse (Kursnummer beginnt mit
+ * der Ziffer "2") mit genau 1 eingebuchtem Teilnehmer. Coachings ("9...")
+ * und offene Kurse (Buchstaben) erhalten diesen Hinweis in keinem Fall.
+ */
+function tnListeHinweis(kurs: Kurs): KursHinweis | null {
+  const erweitert = kurs as Kurs & {
+    kursnummer?: string | null;
+    nummer?: string | null;
+    offer_number?: string | null;
+    teilnehmer_anzahl?: number | null;
+    buchungen?: number | null;
+    participants?: number | null;
+  };
+  const nummer =
+    kurs.kursnr?.trim() ||
+    erweitert.kursnummer?.trim() ||
+    erweitert.nummer?.trim() ||
+    erweitert.offer_number?.trim() ||
+    '';
+  const istFirmenkurs = /^2/.test(nummer);
+  const teilnehmer = Number(
+    erweitert.teilnehmer_anzahl ??
+      kurs.teilnehmer ??
+      erweitert.buchungen ??
+      erweitert.participants ??
+      0
+  );
+  if (!istFirmenkurs || teilnehmer !== 1) return null;
+  return {
+    text: 'TN-Liste vorhanden?',
+    className: 'bg-amber-100 text-amber-800 border-amber-300',
+  };
+}
+
 /** Differenz in Tagen zwischen heute und dem frühesten Kursstart (ISO-Tage). */
 function diffTageBisStart(kurs: Kurs, heuteIso: string): number {
   const start = kursStartDate(kurs);
@@ -713,6 +770,9 @@ function diffTageBisStart(kurs: Kurs, heuteIso: string): number {
  * das grüne „Last Minute"-Badge. Alle übrigen Kurse liefern null.
  */
 function lastMinuteHinweis(kurs: Kurs, diffTage: number): KursHinweis | null {
+  // Firmenkurse / Coachings (Kursnummer beginnt mit einer Ziffer) erhalten
+  // grundsätzlich kein „Last Minute"-Badge.
+  if (istFirmenkurs(kurs)) return null;
   if (!(diffTage >= 0 && diffTage <= 14)) return null;
   if (
     !['Veröffentlicht', 'Garantierte Durchführung'].includes(
@@ -1778,6 +1838,7 @@ export default function Home() {
           <table className="w-full text-left text-sm min-w-[1280px]">
             <thead>
               <tr className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500">
+                <th className="sticky top-0 z-10 bg-slate-50 px-3 py-3 font-semibold whitespace-nowrap text-center w-14">KW</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-3 py-3 font-semibold whitespace-nowrap">Datum & Zeit</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-3 py-3 font-semibold whitespace-nowrap">Kurs</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-3 py-3 font-semibold whitespace-nowrap">Status</th>
@@ -1855,6 +1916,7 @@ export default function Home() {
                 const hinweisSchliessung = schliessungHinweis(kurs, heuteIso);
                 const hinweisLastMinute = lastMinuteHinweis(kurs, diffTage);
                 const hinweisTrainer = trainerNichtVerfuegbarHinweis(kurs);
+                const hinweisTnListe = tnListeHinweis(kurs);
 
                 // Honorar: manueller Wert hat Vorrang, sonst Modell-A-Vorschlag.
                 const autoHonorar = berechneKursHonorar(kurs, zuweisung, trainerMap);
@@ -1888,6 +1950,13 @@ export default function Home() {
                             : 'bg-slate-100/75 hover:bg-slate-100'
                     }`}
                   >
+                    {/* Kalenderwoche (ISO-8601, ermittelt über den Kursstart) */}
+                    <td className="px-2 py-3 text-center whitespace-nowrap align-top">
+                      <span className="inline-flex items-center justify-center min-w-[2rem] text-sm tabular-nums text-slate-600">
+                        {startDatum ? getIsoWeek(startDatum) : '–'}
+                      </span>
+                    </td>
+
                     {/* Datum & Zeit */}
                     <td className="px-3 py-3 align-top">
                       <div className="font-medium text-slate-800 whitespace-nowrap">
@@ -1925,6 +1994,7 @@ export default function Home() {
                       {(hinweisSchliessung ||
                         hinweisLastMinute ||
                         hinweisTrainer ||
+                        hinweisTnListe ||
                         hatEchtenKonflikt) && (
                         <div className="mt-1 flex flex-wrap gap-1 items-center">
                           {hinweisSchliessung && (
@@ -1940,6 +2010,11 @@ export default function Home() {
                           {hinweisTrainer && (
                             <span className={hinweisTrainer.className}>
                               {hinweisTrainer.text}
+                            </span>
+                          )}
+                          {hinweisTnListe && (
+                            <span className={hinweisTnListe.className}>
+                              {hinweisTnListe.text}
                             </span>
                           )}
                           {hatEchtenKonflikt && (

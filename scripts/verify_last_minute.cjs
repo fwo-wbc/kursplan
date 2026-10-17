@@ -28,8 +28,24 @@ function kursStartIso(kurs) {
   return earliest ? toIsoDate(earliest) : null;
 }
 
+/** Identische Logik zu istFirmenkurs() in der App (Firmenkurse/Coachings). */
+function istFirmenkurs(kurs) {
+  const nummer =
+    (kurs.kursnr ?? '').trim() ||
+    (kurs.kursnummer ?? '').trim() ||
+    (kurs.nummer ?? '').trim() ||
+    (kurs.offer_number ?? '').trim() ||
+    '';
+  return /^\d/.test(nummer);
+}
+
 /** Identische Logik zu lastMinuteHinweis() in der App. */
 function lastMinuteTreffer(kurs, heuteIso) {
+  // Firmenkurse / Coachings (Kursnummer beginnt mit einer Ziffer) erhalten
+  // grundsaetzlich kein „Last Minute"-Badge.
+  if (istFirmenkurs(kurs)) {
+    return { badge: false, grund: `Firmenkurs/Coaching (Kursnr=${kurs.kursnr})` };
+  }
   const kursIso = kursStartIso(kurs);
   if (!kursIso) return { badge: false, grund: 'kein Startdatum' };
 
@@ -108,6 +124,40 @@ function getJson(url) {
     console.log(
       `  -> Last-Minute-Badge: ${ergebnis.badge ? 'JA (gruen)' : 'NEIN'}  (${ergebnis.grund})`
     );
+  }
+
+  // Zusaetzliche Pruefung: Kurse, die (nach den bisherigen Kriterien) das
+  // Badge erhalten wuerden - mit und ohne Firmenkurs-Ausschluss.
+  const badgeKandidaten = [];
+  for (const kurs of kurse) {
+    if (istFirmenkurs(kurs)) continue; // nur Nicht-Firmenkurse betrachten
+    const ergebnis = lastMinuteTreffer(kurs, heuteIso);
+    if (ergebnis.badge) {
+      badgeKandidaten.push(kurs.kursnr);
+    }
+  }
+  console.log('\nLast-Minute-Badge-Kandidaten (nach neuem Firmenkurs-Ausschluss):');
+  console.log(`  -> ${badgeKandidaten.length} Kurse (Nicht-Firmenkurse) mit Badge:`);
+  for (const kursnr of badgeKandidaten) console.log(`     - ${kursnr}`);
+
+  // Gegenprobe: Wuerde irgendein Firmenkurs (Kursnr beginnt mit Ziffer)
+  // faelschlich das Badge erhalten?
+  const firmenKurseMitBadge = [];
+  for (const kurs of kurse) {
+    if (!istFirmenkurs(kurs)) continue;
+    const ergebnis = lastMinuteTreffer(kurs, heuteIso);
+    if (ergebnis.badge) firmenKurseMitBadge.push(kurs.kursnr);
+  }
+  console.log('\nGegenprobe Firmenkurse (Kursnr beginnt mit Ziffer):');
+  console.log(
+    `  -> ${firmenKurseMitBadge.length} Firmenkurse wuerden das Badge erhalten ` +
+      '(muss 0 sein)'
+  );
+  if (firmenKurseMitBadge.length > 0) {
+    console.error('  FEHLER: Firmenkurse erhalten weiterhin das Last-Minute-Badge!');
+    process.exit(1);
+  } else {
+    console.log('  OK: Kein Firmenkurs erhaelt das Last-Minute-Badge.');
   }
 })().catch((err) => {
   console.error('FEHLER:', err.message);

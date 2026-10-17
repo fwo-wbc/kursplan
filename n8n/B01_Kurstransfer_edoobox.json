@@ -1,0 +1,689 @@
+{
+  "name": "B01_Kurstransfer_edoobox",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "Kurstransfer",
+        "options": {}
+      },
+      "id": "4a4ccbbb-3aa7-45a2-b895-e36e29a1d369",
+      "name": "Webhook",
+      "webhookId": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        7120,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhookItem = $input.first().json;\nlet body = webhookItem.body || webhookItem;\n\nif (typeof body === 'string') {\n  try { body = JSON.parse(body); } catch (e) { body = {}; }\n}\n\nlet kurse = (body && Array.isArray(body.kurse)) ? body.kurse : [];\nif (kurse.length === 0 && body && body.name) {\n  kurse = [body];\n}\n\nif (kurse.length === 0) {\n  throw new Error('Keine Kurse im Webhook-Body für den Status-Start-Batch gefunden.');\n}\n\n// kurs_key je Kurs sicherstellen (Format: datum|beginn|kursCode)\nconst batchKurse = kurse.map(k => {\n  const key = k.kurs_key || ((k.datum && k.beginn && k.kursCode)\n    ? (k.datum + '|' + k.beginn + '|' + k.kursCode)\n    : null);\n  return { kurs_key: key };\n});\n\nconst invalid = batchKurse.filter(k => !k.kurs_key);\nif (invalid.length > 0) {\n  throw new Error('Mindestens ein Kurs ohne kurs_key/datum/beginn/kursCode im Status-Start-Batch.');\n}\n\nreturn [{ json: { batchKurse } }];"
+      },
+      "id": "ef12a3b4-5678-4c9d-a1b2-3456c7d8e9f0",
+      "name": "Kurse für Status-Batch aufbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7328,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO kurstransfer_status (kurs_key, status, updated_at)\nVALUES \n{{ $json.batchKurse.map(k => \"('\" + k.kurs_key + \"', 'erledigt', NOW())\").join(', ') }}\nON CONFLICT (kurs_key) \nDO UPDATE SET \n    status = 'erledigt',\n    updated_at = NOW();",
+        "options": {}
+      },
+      "id": "fa23b4c5-6789-4d0e-b2c3-4567d8e9f0a1",
+      "name": "Postgres: Status Erledigt (Start-Batch)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        7520,
+        880
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "eXRRFRowW6RCTJvp",
+          "name": "PostgreSQL Kursplan – n8n_writer"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"expire\": \"{{ $now.plus({ hours: 1 }).toISO() }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "30f63433-15de-4d14-a21d-6e7de2481c7b",
+      "name": "edoobox Auth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        7328,
+        688
+      ],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "ecGv3wCmKLEUq8fX",
+          "name": "Custom Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const authItem = $input.first().json;\nlet webhookData = $('Webhook').first().json.body || {};\n\nif (typeof webhookData === 'string') {\n  try { webhookData = JSON.parse(webhookData); } catch(e) {}\n}\n\nlet authBody = authItem.body || authItem;\nif (typeof authBody === 'string') {\n  try { authBody = JSON.parse(authBody); } catch (e) { authBody = {}; }\n}\n\nconst token = authBody.token || authBody.access_token || (authBody.data && authBody.data.token) || authItem.token;\nconst edid = authBody.edid || (authBody.data && authBody.data.edid) || (authItem.headers && authItem.headers.edid);\n\nif (!token) throw new Error('Kein Token in der Antwort von edoobox Auth1 gefunden.');\n\nconst kurse = webhookData.kurse || [];\n\nif (kurse.length === 0) {\n  if (webhookData.name) {\n    kurse.push(webhookData);\n  } else {\n    throw new Error('Es wurden keine Kurse gefunden!');\n  }\n}\n\n// Wir reichen die vom Dashboard vorbereitete Nummer direkt sauber an edoobox weiter\nreturn kurse.map(kurs => ({\n  json: {\n    ...kurs,\n    number: kurs.number, // Nutzt exakt die Nummer aus dem Dashboard (inkl. -MMYY-X)\n    token: token,\n    edid: edid || '6aca451c89c867O0O22475357ce9a0318e614f7537d76e12ff1fcf1bf'\n  }\n}));"
+      },
+      "id": "bdc450c8-b05f-43c0-84dc-f31a1e094dfe",
+      "name": "Array & Auth vorbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7520,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "cc40eba3-3e82-4d90-9244-30d692f1fb69",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        7712,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const kurs = $input.first().json;\n\nreturn [\n  {\n    json: {\n      basis: kurs.sourceOfferId || kurs.basis,\n      category: kurs.category,\n      number: kurs.number,\n      name: kurs.name,\n      date_start: kurs.date_start,\n      copy_dates: true,\n      status: 1,\n      token: kurs.token,\n      edid: kurs.edid,\n      kurs_key: kurs.kurs_key,\n      datum: kurs.datum,\n      beginn: kurs.beginn,\n      kursCode: kurs.kursCode\n    }\n  }\n];"
+      },
+      "id": "d72200e3-bade-4211-84b8-83ccf77d8ed3",
+      "name": "Auth & Konfiguration aufbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7920,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://app1.edoobox.com/v2/offer/{{ $json.basis }}/copy",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "edid",
+              "value": "={{ $json.edid }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: { category: $json.category, copy_dates: $json.copy_dates, date_start: $json.date_start, names: null, number: $json.number, tags: '' } }) }}",
+        "options": {}
+      },
+      "id": "653c8ba0-ce0e-4fcb-afa8-3816c43b1114",
+      "name": "Offer kopieren (/copy)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        8096,
+        688
+      ],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "ecGv3wCmKLEUq8fX",
+          "name": "Custom Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst config = $('Auth & Konfiguration aufbereiten').item.json;\n\nconst newId = (response.data && response.data.id) || response.id;\n\nif (!newId) {\n  throw new Error('Keine neue Angebots-ID in der Antwort von edoobox gefunden.');\n}\n\nreturn [\n  {\n    json: {\n      success: response.success,\n      new_offer_id: newId,\n      basis: config.basis,\n      category: config.category,\n      number: config.number,\n      name: config.name,\n      token: config.token,\n      edid: config.edid,\n      kurs_key: config.kurs_key,\n      datum: config.datum,\n      beginn: config.beginn,\n      kursCode: config.kursCode,\n      raw_response: response\n    }\n  }\n];"
+      },
+      "id": "c7a6f500-9872-4aed-936f-1da7da91cf0d",
+      "name": "ID extrahieren & normalisieren",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8464,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO kurstransfer_status (kurs_key, status, edoobox_offer_id, updated_at)\nVALUES (\n  '{{ $json.kurs_key || ($json.datum + \"|\" + $json.beginn + \"|\" + $json.kursCode) }}',\n  'erledigt',\n  '{{ $json.new_offer_id }}',\n  NOW()\n)\nON CONFLICT (kurs_key) \nDO UPDATE SET \n    status = 'erledigt',\n    edoobox_offer_id = EXCLUDED.edoobox_offer_id,\n    updated_at = NOW();",
+        "options": {}
+      },
+      "id": "1722e12c-d1a3-428f-8124-50700b0540c5",
+      "name": "Postgres: Status Erledigt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        8272,
+        688
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "eXRRFRowW6RCTJvp",
+          "name": "PostgreSQL Kursplan – n8n_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO kurstransfer_status (kurs_key, status, edoobox_offer_id, updated_at)\nVALUES (\n  '{{ $json.kurs_key || ($json.datum + \"|\" + $json.beginn + \"|\" + $json.kursCode) }}',\n  'fehler',\n  '{{ $json.id || $json.offer_id || $json.data?.id }}',\n  NOW()\n)\nON CONFLICT (kurs_key) \nDO UPDATE SET \n    status = 'fehler',\n    edoobox_offer_id = EXCLUDED.edoobox_offer_id,\n    updated_at = NOW();",
+        "options": {}
+      },
+      "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+      "name": "Postgres: Status Fehler",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        8272,
+        880
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "eXRRFRowW6RCTJvp",
+          "name": "PostgreSQL Kursplan – n8n_writer"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "e4f38c0b-e174-47c4-a72c-1970c9943a32",
+      "name": "Warten (Eventual Consistency)",
+      "webhookId": "ed0be6a1-3662-48b7-b80a-08ba453b9910",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        8640,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://app1.edoobox.com/v2/text/list",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "={{ JSON.stringify([{property: 'resource_id', value: $json.new_offer_id}, {property: 'resource', value: 'offer'}]) }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "edid",
+              "value": "={{ $json.edid }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "28a607f0-36c2-4c5a-bb7d-ed52718d02ca",
+      "name": "Text-ID abrufen (GET)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        8848,
+        688
+      ],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "ecGv3wCmKLEUq8fX",
+          "name": "Custom Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst prev = $('ID extrahieren & normalisieren').item.json;\n\nlet textId = null;\n\nif (response && response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {\n  const keys = Object.keys(response.data);\n  if (keys.length > 0) {\n    textId = keys[0]; \n  }\n} else if (response && Array.isArray(response.data)) {\n  if (response.data.length > 0) {\n    textId = response.data[0].id;\n  }\n} else if (Array.isArray(response)) {\n  if (response.length > 0) {\n    textId = response[0].id;\n  }\n}\n\nif (!textId) {\n  throw new Error('Keine Text-ID gefunden! Komplette Response war: ' + JSON.stringify(response));\n}\n\nreturn [{\n  json: {\n    basis: prev.basis,\n    category: prev.category,\n    number: prev.number,\n    name: prev.name,\n    new_offer_id: prev.new_offer_id,\n    text_id: textId,\n    token: prev.token,\n    edid: prev.edid\n  }\n}];"
+      },
+      "id": "5d1b651d-ff93-469d-af4b-56517851109f",
+      "name": "Text-ID extrahieren",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9040,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://app1.edoobox.com/v2/text/{{ $json.text_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "edid",
+              "value": "={{ $json.edid }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: { id: $json.text_id, language: 'de', resource: 'offer', resource_id: $json.new_offer_id, value: $json.name } }) }}",
+        "options": {}
+      },
+      "id": "2185e175-ec35-487c-a5bc-a504fc40c8b7",
+      "name": "Titel umbenennen (PUT)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        9232,
+        688
+      ],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "ecGv3wCmKLEUq8fX",
+          "name": "Custom Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://app1.edoobox.com/v2/offer/{{ $('Text-ID extrahieren').item.json.new_offer_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Text-ID extrahieren').item.json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "edid",
+              "value": "={{ $('Text-ID extrahieren').item.json.edid }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: { id: $('Text-ID extrahieren').item.json.new_offer_id, status: 1, tags: '' } }) }}",
+        "options": {}
+      },
+      "id": "2b2eb20f-1ba8-44d5-93c2-09b3d0935777",
+      "name": "Angebot veröffentlichen (PUT)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        9440,
+        688
+      ],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "ecGv3wCmKLEUq8fX",
+          "name": "Custom Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://app1.edoobox.com/v2/offer/{{ $('Text-ID extrahieren').item.json.new_offer_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Text-ID extrahieren').item.json.token }}"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "edid",
+              "value": "={{ $('Text-ID extrahieren').item.json.edid }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8079dbeb-dd51-4ad9-96d1-e1ebd30cfdc1",
+      "name": "Neues Angebot prüfen (GET)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        9632,
+        688
+      ],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "ecGv3wCmKLEUq8fX",
+          "name": "Custom Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE kurstransfer_lock \nSET is_locked = false, updated_at = NOW() \nWHERE id = 1;",
+        "options": {}
+      },
+      "id": "f1a2b3c4-d5e6-4f7a-8b9c-0d1e2f3a4b5c",
+      "name": "Postgres: Lock aufheben",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        7712,
+        880
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "eXRRFRowW6RCTJvp",
+          "name": "PostgreSQL Kursplan – n8n_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE kurstransfer_lock \nSET is_locked = false, updated_at = NOW() \nWHERE id = 1;",
+        "options": {}
+      },
+      "id": "f2a2b3c4-d5e6-4f7a-8b9c-0d1e2f3a4b5d",
+      "name": "Postgres: Lock aufheben (Fehler)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        8272,
+        1072
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "eXRRFRowW6RCTJvp",
+          "name": "PostgreSQL Kursplan – n8n_writer"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Kurse für Status-Batch aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kurse für Status-Batch aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Status Erledigt (Start-Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Status Erledigt (Start-Batch)": {
+      "main": [
+        [
+          {
+            "node": "edoobox Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "edoobox Auth": {
+      "main": [
+        [
+          {
+            "node": "Array & Auth vorbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Array & Auth vorbereiten": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Lock aufheben",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Auth & Konfiguration aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth & Konfiguration aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "Offer kopieren (/copy)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer kopieren (/copy)": {
+      "main": [
+        [
+          {
+            "node": "ID extrahieren & normalisieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Status Fehler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Status Fehler": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Lock aufheben (Fehler)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ID extrahieren & normalisieren": {
+      "main": [
+        [
+          {
+            "node": "Warten (Eventual Consistency)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Postgres: Status Erledigt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Warten (Eventual Consistency)": {
+      "main": [
+        [
+          {
+            "node": "Text-ID abrufen (GET)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text-ID abrufen (GET)": {
+      "main": [
+        [
+          {
+            "node": "Text-ID extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text-ID extrahieren": {
+      "main": [
+        [
+          {
+            "node": "Titel umbenennen (PUT)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Titel umbenennen (PUT)": {
+      "main": [
+        [
+          {
+            "node": "Angebot veröffentlichen (PUT)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Angebot veröffentlichen (PUT)": {
+      "main": [
+        [
+          {
+            "node": "Neues Angebot prüfen (GET)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Neues Angebot prüfen (GET)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "687d9cf5-4f86-4b74-ac4b-1d041d56d219",
+  "meta": {
+    "instanceId": "b6742177a0503e9b8bc2b2decd4db29accda845e27648911c41bb6afe1d6ad68"
+  },
+  "nodeGroups": [],
+  "id": "4wdC1BJi6gyaZQel",
+  "tags": []
+}

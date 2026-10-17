@@ -121,7 +121,7 @@ function parseWorkbook(buffer) {
 }
 
 async function main() {
-  const file = process.argv[2] || path.join(__dirname, '..', 'app', 'public', 'Kurstransfer', 'Kurstransfer-Import.xlsx');
+  const file = process.argv[2] || path.join(__dirname, '..', 'app', 'public', 'Kurstransfer', 'Planungstabellen Excel', 'Kurstransfer-MS-Office.xlsx');
   const buffer = fs.readFileSync(file);
   const rows = parseWorkbook(buffer);
   console.log('Excel-Zeilen (Frontend-Parsing):', rows.length);
