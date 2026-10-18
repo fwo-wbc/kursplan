@@ -109,6 +109,10 @@ interface Kurs {
   trainer_verfuegbar: boolean | null;
   /** Persistente Options-Haken (Einladungslink, Last Minute, abgerechnet). */
   optionen: KursOptionen;
+  /** Aktuelles Trainerkürzel der ersten Zuweisung ('n. v.' wenn keiner). */
+  trainer_kuerzel?: string | null;
+  /** true, wenn der Kurs eine aktive Trainer-Zuweisung besitzt. */
+  hat_trainer?: boolean;
 }
 
 /**
@@ -375,7 +379,7 @@ export async function GET(request: Request) {
          tz.honorar_manuell  AS honorar_manuell,
          t.vorname           AS trainer_vorname,
          t.nachname          AS trainer_nachname,
-         t.kuerzel           AS trainer_kuerzel,
+         COALESCE(t.kuerzel, 'n. v.') AS trainer_kuerzel,
          t.edoobox_admin_id  AS lokale_edoobox_admin_id,
          dl.admin_id         AS edoo_admin_id,
          edoo_t.id           AS edoo_trainer_id,
@@ -592,11 +596,15 @@ export async function GET(request: Request) {
         });
       }
 
-      // Lokale Zuweisung: Nur relevant, wenn kein edoobox-Leiter existiert
-      // (Fallback fuer manuell angelegte Termine) oder der zugewiesene
-      // Trainer dem edoobox-Leiter entspricht. Abweichende Altbestaende
-      // (z. B. nach einem Leiterwechsel in edoobox) werden verworfen, damit
-      // die Anzeige stets dem aktuellen edoobox-Stand folgt.
+      // Lokale Zuweisung: Nur relevant, wenn der zugewiesene Trainer dem
+      // edoobox-Leiter entspricht (dann liefert sie Status/Honorar/Notiz fuer
+      // den Leiter). Da diese Abfrage ausschliesslich bestehende edoobox-
+      // Termine (od.date_id) liefert, wird ein veralteter Eintrag aus
+      // public.trainer_zuweisung bei fehlendem edoobox-Leiter (dl.admin_id
+      // ist null, z. B. Trainer in edoobox entzogen) NICHT als Trainer
+      // uebernommen – der Kurs bleibt dann 'n. v.'. Der Fallback auf lokale
+      // Zuweisungen gilt nur fuer rein lokale Termine, die diese Abfrage
+      // nicht liefert.
       const passtZuLeiter =
         row.edoo_admin_id !== null &&
         row.lokale_edoobox_admin_id !== null &&
@@ -606,7 +614,7 @@ export async function GET(request: Request) {
         row.zuweisung_id !== null &&
         row.trainer_id !== null &&
         !build.lokaleZuweisungen.has(row.trainer_id) &&
-        (row.edoo_admin_id === null || passtZuLeiter)
+        passtZuLeiter
       ) {
         build.lokaleZuweisungen.set(row.trainer_id, {
           id: row.zuweisung_id,
@@ -666,8 +674,11 @@ export async function GET(request: Request) {
     // Edoobox-Leiter sind die primäre Trainerquelle. Eine passende lokale
     // Zuweisung (gleicher Trainer) liefert Status/Honorar/Notiz für den
     // Leiter; abweichende Altbestände wurden bereits im Loop verworfen.
-    // Existiert kein edoobox-Leiter (manuell angelegte Termine), bleiben die
-    // lokalen Zuweisungen als Fallback sichtbar.
+    // Existiert kein edoobox-Leiter (dl.admin_id null, z. B. Trainer in
+    // edoobox entzogen), wird bewusst KEIN veralteter Trainer aus
+    // public.trainer_zuweisung übernommen – der Kurs erscheint als 'n. v.'.
+    // Lokale Zuweisungen als Fallback gelten nur für rein lokale Termine,
+    // die diese edoobox-Abfrage nicht liefert.
     const kurse: Kurs[] = Array.from(kursMap.values()).map((build) => {
       build.kurs.termine = Array.from(build.termineMap.values()).sort((a, b) => {
         const zeitA = a.date_start ? new Date(a.date_start).getTime() : 0;
@@ -703,6 +714,9 @@ export async function GET(request: Request) {
     // Zuweisung, wie im Frontend verwendet).
     for (const kurs of kurse) {
       kurs.zuweisung_status = kurs.zuweisungen[0]?.status ?? null;
+      const ersteZuweisung = kurs.zuweisungen[0] ?? null;
+      kurs.trainer_kuerzel = ersteZuweisung?.trainer?.kuerzel?.trim() || 'n. v.';
+      kurs.hat_trainer = ersteZuweisung !== null && ersteZuweisung.trainer_id !== null;
     }
 
     // trainer_verfuegbar je Kurs ableiten: Ohne relevante Zuweisung (kein

@@ -255,6 +255,13 @@ function formatUhrzeit(zeit: string | null): string {
   return min === '00' ? stunde : `${stunde}:${min}`;
 }
 
+/** Kürzt einen Angebotstitel für die Anzeige: Alles ab dem ersten Doppelpunkt
+ *  (inkl. des Doppelpunkts) entfällt; der Rest wird getrimmt.
+ *  Beispiel: "Excel Grundlagen Modul 4: Tabellenverknüpfungen" → "Excel Grundlagen Modul 4". */
+function kuerzeAngebotstitel(titel: string | null): string {
+  return titel ? titel.split(':')[0].trim() : '';
+}
+
 /** Rangfolge für den primären Kurs: bestätigt > unter Vorbehalt > ausgeschrieben > abgesagt. */
 function statusRang(status: string | null): number {
   switch (statusLabel(status).toLowerCase()) {
@@ -1848,8 +1855,11 @@ function VerfuegbarkeitContent() {
             if (!haupt) return null;
 
             const uhrzeit = `${formatUhrzeit(haupt.start_time)}-${formatUhrzeit(haupt.end_time)}`;
-            const titel = haupt.kursname ?? 'Kurs';
-            const vollerText = `${uhrzeit} ${titel}`;
+            // Anzeige-Titel: alles ab dem ersten Doppelpunkt entfällt; der
+            // Button-Tooltip (vollerText) zeigt weiterhin den vollständigen Titel.
+            const vollerTitel = haupt.kursname ?? 'Kurs';
+            const titel = kuerzeAngebotstitel(haupt.kursname) || 'Kurs';
+            const vollerText = `${uhrzeit} ${vollerTitel}`;
             const mehrfach = sortierteGruppe.length > 1;
             const abgesagteInGruppe = sortierteGruppe.filter(
               (k) => !istAktiverStatus(k.zuweisung_status)
@@ -2274,7 +2284,7 @@ function VerfuegbarkeitContent() {
                     )}`}
                     title={kurs.kursname ?? 'Kurs'}
                   >
-                    {kurs.kursname ?? 'Kurs'}
+                    {kuerzeAngebotstitel(kurs.kursname) || 'Kurs'}
                   </span>
                 </div>
               ))}

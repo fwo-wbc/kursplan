@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   CalendarRange,
   Users,
@@ -51,7 +51,7 @@ function SyncButton() {
       // Deshalb garantierter Voll-Reload nach kurzer Verzögerung, damit der
       // Nutzer kurz das grüne Erfolgs-Icon sieht.
       setTimeout(() => {
-        window.location.reload();
+        window.dispatchEvent(new CustomEvent('kursplan:reload-silent'));
       }, 600);
     } catch {
       // Fehler oder Timeout: Ladezustand zuverlässig beenden.
@@ -67,6 +67,16 @@ function SyncButton() {
       }, 2500)
     );
   }
+
+  // Auf den Hintergrund-Sync-Auslöser aus page.tsx reagieren
+  // (kursplan:trigger-sync) und den bestehenden Sync automatisch starten.
+  useEffect(() => {
+    const onTriggerSync = () => {
+      void handleSync();
+    };
+    window.addEventListener('kursplan:trigger-sync', onTriggerSync);
+    return () => window.removeEventListener('kursplan:trigger-sync', onTriggerSync);
+  }, [handleSync]);
 
   const isLoading = status === 'loading';
   const Icon =
@@ -90,8 +100,8 @@ function SyncButton() {
       className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium border transition ${
         status === 'success'
           ? 'border-green-300 bg-green-50 text-green-700'
-          : status === 'error'
-            ? 'border-red-300 bg-red-50 text-red-700'
+          : status === 'loading' || status === 'error'
+            ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
             : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
       } disabled:opacity-60 disabled:cursor-not-allowed`}
     >
@@ -99,8 +109,8 @@ function SyncButton() {
         className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''} ${
           status === 'success'
             ? 'text-green-600'
-            : status === 'error'
-              ? 'text-red-600'
+            : status === 'loading' || status === 'error'
+              ? 'text-white'
               : 'text-slate-500'
         }`}
       />
@@ -114,6 +124,7 @@ export default function Navigation() {
 
   return (
     <>
+      <SyncButton />
       <nav className="flex items-center gap-1" aria-label="Hauptnavigation">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
@@ -151,7 +162,6 @@ export default function Navigation() {
           );
         })}
       </nav>
-      <SyncButton />
     </>
   );
 }

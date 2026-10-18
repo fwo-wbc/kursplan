@@ -33,6 +33,8 @@ type ZuweisungStatus =
 /** Trainer-Stammdaten aus GET /api/trainer. */
 interface Trainer {
   id: number;
+  vorname: string;
+  nachname: string;
   kuerzel: string | null;
   is_active: boolean;
   edoobox_admin_id: string | null;
@@ -105,6 +107,10 @@ interface Kurs {
   trainer_verfuegbar?: boolean | null;
   /** Persistente Options-Haken (Einladungslink, Last Minute, abgerechnet). */
   optionen?: KursOptionen;
+  /** Aktuelles Trainerkürzel der ersten Zuweisung ('n. v.' wenn keiner). */
+  trainer_kuerzel?: string | null;
+  /** true, wenn der Kurs eine aktive Trainer-Zuweisung besitzt. */
+  hat_trainer?: boolean;
 }
 
 /** Pro Kurs angezeigtes Auto-Save-Feedback. */
@@ -580,6 +586,27 @@ function trainerAnzeige(t: { kuerzel: string | null }): string {
   return t.kuerzel?.trim() ?? '';
 }
 
+/** Kürzt einen Angebotstitel für die Anzeige: Alles ab dem ersten Doppelpunkt
+ *  (inkl. des Doppelpunkts) entfällt; der Rest wird getrimmt.
+ *  Beispiel: "Excel Grundlagen Modul 4: Tabellenverknüpfungen" → "Excel Grundlagen Modul 4". */
+function kuerzeAngebotstitel(titel: string | null): string {
+  return titel ? titel.split(':')[0].trim() : '';
+}
+
+/**
+ * Beschriftung einer Trainer-<option> im Format „[Kürzel] – [Vorname/Name]“,
+ * z. B. „FW – Frank“. Fehlt der Name, wird nur das Kürzel angezeigt.
+ */
+function trainerLabel(t: Trainer): string {
+  const kuerzel = t.kuerzel?.trim() ?? '';
+  const name = [t.vorname, t.nachname]
+    .map((teil) => (typeof teil === 'string' ? teil.trim() : ''))
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  return kuerzel ? (name ? `${kuerzel} – ${name}` : kuerzel) : name;
+}
+
 /** Ein einzelner Hinweis-Badge eines Kurses. */
 interface KursHinweis {
   text: string;
@@ -998,6 +1025,10 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Record<string, Feedback>>({});
+  // Kurs-Schlüssel, für die gerade eine Trainer-Umzuweisung (P98) läuft.
+  const [savingTrainerKeys, setSavingTrainerKeys] = useState<Set<string>>(
+    new Set()
+  );
   const [selectedTrainerFilter, setSelectedTrainerFilter] = useState<string>('ALL');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string[]>(
     DEFAULT_STATUS_FILTERS
@@ -1059,8 +1090,8 @@ export default function Home() {
   }, []);
 
   // Kurse und Trainer-Stammdaten parallel laden.
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
+  const loadData = useCallback(async (silent = false) => {
+    if (silent !== true) setIsLoading(true);
     setError(null);
 
     try {
@@ -1080,8 +1111,10 @@ export default function Home() {
       setTrainer(trainerData);
 
       // Nach erfolgreichem Laden einmalig zur aktuellen Zeile springen,
-      // sobald das DOM die Tabelle gerendert hat.
-      if (kurseData.length > 0) {
+      // sobald das DOM die Tabelle gerendert hat. Beim stillen Reload
+      // (nach P90-Sync, silent = true) wird NICHT gescrollt, damit die
+      // aktuelle Seitenposition erhalten bleibt.
+      if (!silent && kurseData.length > 0) {
         setTimeout(() => scrollToToday(false), 80);
       }
     } catch (err: unknown) {
@@ -1096,6 +1129,9 @@ export default function Home() {
 
   useEffect(() => {
     loadData();
+    const onSilentReload = () => loadData(true);
+    window.addEventListener('kursplan:reload-silent', onSilentReload);
+    return () => window.removeEventListener('kursplan:reload-silent', onSilentReload);
   }, [loadData]);
 
   // Alle in den geladenen Kursen vorkommenden Tags, alphabetisch sortiert.
@@ -1116,6 +1152,16 @@ export default function Home() {
     for (const t of trainer) map.set(t.id, t);
     return map;
   }, [trainer]);
+
+  // Aktive Trainer mit gültigem Kürzel – Grundlage für die <option>-Liste
+  // der interaktiven Trainer-Auswahl in jeder Kurszeile.
+  const aktiveTrainer = useMemo(
+    () =>
+      trainer.filter(
+        (t) => t.is_active && (t.kuerzel?.trim() ?? '') !== ''
+      ),
+    [trainer]
+  );
 
   // Gefilterte Kursliste basierend auf den aktiven Filtern.
   const gefilterteKurse = useMemo(() => {
@@ -1495,6 +1541,123 @@ export default function Home() {
     [patchKurs, showFeedback]
   );
 
+  // Interaktive Trainer-Umzuweisung (P98): Nach Sicherheitsabfrage wird die
+  // Änderung über /api/trainer-zuweisung an den n8n-Workflow weitergeleitet.
+  // Bei Erfolg werden Kürzel (und ggf. der neue Titel) lokal übernommen,
+  // bei Abbruch bzw. Fehler bleibt die Zeile unverändert.
+  const handleTrainerChange = useCallback(
+    async (kurs: Kurs, neuesKuerzel: string) => {
+      const key = kursKey(kurs);
+      const aktuelleZuweisung = kurs.zuweisungen[0] ?? null;
+      const altesKuerzel = aktuelleZuweisung?.trainer?.kuerzel?.trim() ?? '';
+
+      // Nur tatsächliche Wechsel auslösen; gleiche Auswahl ignoriert.
+      // Ein Wechsel auf 'n. v.' hebt die Zuweisung auf und ist nur relevant,
+      // wenn bisher kein 'n. v.' zugewiesen war.
+      if (altesKuerzel === neuesKuerzel) return;
+
+      // Sicherheitsabfrage: Das Aufheben der Zuweisung ('n. v.') erhält einen
+      // eigenen Wortlaut; reguläre Trainerwechsel behalten die bisherige
+      // Abfrage.
+      if (neuesKuerzel === 'n. v.') {
+        const ok = window.confirm(
+          `Möchtest du die Trainerzuweisung für das Kursangebot "${kurs.offer_name || ''}" wirklich aufheben? Das Trainerkürzel wird dabei aus den Titeln in edoobox entfernt.`
+        );
+        if (!ok) return; // Controlled Select bleibt beim alten Kürzel.
+      } else {
+        const ok = window.confirm(
+          `Möchtest du den Trainer für das Kursangebot "${kurs.offer_name || ''}" wirklich auf ${neuesKuerzel} ändern? Der Titel in edoobox wird dabei ebenfalls angepasst.`
+        );
+        if (!ok) return; // Controlled Select bleibt beim alten Kürzel.
+      }
+
+      const offerId = kurs.offer_id?.trim() ?? '';
+      if (offerId === '') {
+        showFeedback(
+          key,
+          'error',
+          'Fehler bei der Trainerzuweisung: offer_id fehlt.'
+        );
+        return;
+      }
+
+      // Auswahl für die Dauer des Vorgangs sperren (disabled + Ladezustand).
+      setSavingTrainerKeys((prev) => new Set(prev).add(key));
+
+      try {
+        const res = await fetch('/api/trainer-zuweisung', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            offer_id: offerId,
+            neuer_trainer_kuerzel: neuesKuerzel,
+            altes_trainer_kuerzel: altesKuerzel,
+          }),
+        });
+
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          trainer_kuerzel?: string | null;
+        };
+
+        if (!res.ok) {
+          throw new Error(data.error ?? `HTTP ${res.status}`);
+        }
+
+        // Nach erfolgreichem POST den Hintergrund-Sync anstoßen (die
+        // Navigation hört auf 'kursplan:trigger-sync' und startet den Sync).
+        window.dispatchEvent(new CustomEvent('kursplan:trigger-sync'));
+
+        // Zeile lokal aktualisieren: das Kürzel wird direkt auf die getroffene
+        // Auswahl gesetzt (bei Aufhebung 'n. v.'). Der Angebotstitel
+        // (offer_name) bleibt unverändert.
+        patchKurs(key, (k) => {
+          const bisherige = k.zuweisungen[0] ?? null;
+          const neueZuweisung: Zuweisung = {
+            ...(bisherige ?? {
+              id: null,
+              trainer_id: null,
+              status: null,
+              notiz: null,
+              honorar_manuell: null,
+              trainer: null,
+            }),
+            // Sofortige lokale Aktualisierung des Zuweisungs-Status:
+            // 'n. v.' hebt die Zuweisung auf (Status null), jede Trainer-
+            // Zuweisung setzt 'ausgeschrieben', sofern kein Status stand.
+            status:
+              neuesKuerzel === 'n. v.'
+                ? null
+                : (bisherige?.status ?? 'ausgeschrieben'),
+            trainer: {
+              kuerzel: neuesKuerzel,
+            },
+            quelle: 'lokal',
+          };
+          return {
+            ...k,
+            zuweisungen: [neueZuweisung],
+            trainer_kuerzel: neuesKuerzel,
+            hat_trainer: neuesKuerzel !== 'n. v.',
+          };
+        });
+
+        showFeedback(key, 'success', 'Trainer zugewiesen');
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('Fehler bei der Trainerzuweisung:', err);
+        showFeedback(key, 'error', `Fehler bei der Trainerzuweisung: ${msg}`);
+      } finally {
+        setSavingTrainerKeys((prev) => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      }
+    },
+    [patchKurs, showFeedback]
+  );
+
   function dateStatusInfo(
     status: string | null
   ): { label: string; className: string } {
@@ -1816,7 +1979,7 @@ export default function Home() {
           </div>
           <button
             type="button"
-            onClick={loadData}
+            onClick={() => loadData()}
             className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg transition"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -1909,6 +2072,12 @@ export default function Home() {
                 const zeit = kursZeitraum(kurs);
                 const optionen = kurs.optionen ?? LEERE_OPTIONEN;
 
+                // Interaktive Trainer-Auswahl: laufende Umzuweisung (P98) für
+                // den Ladezustand in dieser Zeile. Das aktuelle Kürzel kommt
+                // einheitlich aus kurs.trainer_kuerzel (keine hatTrainer-
+                // Verzweigung mehr).
+                const istTrainerSaving = savingTrainerKeys.has(key);
+
                 // Automatisierte Schließungs-, Last-Minute- und
                 // Trainer-Verfügbarkeits-Prüfung (ersetzt die bisherige
                 // Hinweis-Berechnung in dieser Spalte vollständig).
@@ -1971,8 +2140,11 @@ export default function Home() {
 
                     {/* Kurs */}
                     <td className="px-3 py-3 align-top">
-                      <div className="font-medium text-slate-800">
-                        {kurs.offer_name ?? '–'}
+                      <div
+                        className="font-medium text-slate-800"
+                        title={kurs.offer_name ?? undefined}
+                      >
+                        {kuerzeAngebotstitel(kurs.offer_name) || '–'}
                       </div>
                       {kurs.kursnr?.trim() && (
                         <div className="text-xs font-mono text-gray-500 mt-0.5">
@@ -2085,22 +2257,38 @@ export default function Home() {
                         : `${marge.toFixed(1).replace('.', ',')} %`}
                     </td>
 
-                    {/* Trainer (read-only: Anzeige des edoobox-Kürzels) */}
+                    {/* Trainer (interaktive Auswahl mit Sicherheitsabfrage) */}
                     <td className="px-3 py-3 align-top">
                       <div className="flex items-center gap-1.5">
-                        {hatTrainer ? (
-                          <span
-                            title="Trainer aus edoobox (schreibgeschützt)"
-                            className="inline-flex px-2 py-1 rounded-md text-xs font-semibold bg-sky-50 text-sky-800 border border-sky-200"
+                        <span className="inline-flex items-center gap-1.5">
+                          <select
+                            value={kurs.trainer_kuerzel || 'n. v.'}
+                            disabled={istTrainerSaving}
+                            onChange={(e) =>
+                              handleTrainerChange(kurs, e.target.value)
+                            }
+                            title="Trainer zuweisen – edoobox & Kurstitel werden angepasst"
+                            aria-label={`Trainer für Kurs ${kurs.offer_name ?? ''}`}
+                            className={`text-xs border rounded-md px-2 py-1 pr-6 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                              istTrainerSaving
+                                ? 'opacity-60 cursor-wait'
+                                : 'border-slate-300 cursor-pointer'
+                            }`}
                           >
-                            {zuweisung?.trainer?.kuerzel?.trim() ||
-                              `Trainer #${zuweisung?.trainer_id}`}
-                          </span>
-                        ) : (
-                          <span className="inline-flex border border-red-700 shadow-sm rounded px-2 py-0.5 whitespace-nowrap bg-red-600 text-yellow-300 font-bold text-xs">
-                            Nicht zugewiesen
-                          </span>
-                        )}
+                            <option value="n. v.">n. v.</option>
+                            {aktiveTrainer.map((t) => (
+                              <option
+                                key={t.id}
+                                value={(t.kuerzel ?? '').trim()}
+                              >
+                                {t.kuerzel}
+                              </option>
+                            ))}
+                          </select>
+                          {istTrainerSaving && (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 shrink-0" />
+                          )}
+                        </span>
 
                         {konflikte.length > 0 && (
                           <span

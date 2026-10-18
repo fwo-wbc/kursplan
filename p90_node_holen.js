@@ -392,15 +392,32 @@ function ableitungsCtes() {
         '    ON CONFLICT (' + pkListe + ') DO UPDATE SET ' + quotIdent('last_synced_at') + ' = now()\n' +
         '    RETURNING 1\n' +
         ')';
+
+      // Bei aktivem 10-Wochen-Fenster nur Zuordnungen von Terminen im Fenster
+      // loeschen (loeschFenster aus der festen Konfiguration); historische
+      // Termine bleiben unangetastet.
+      let fensterBedingung = '';
+      if (fenster && ab.loeschFenster) {
+        const lt = quotIdent(k.schema) + '.' + quotIdent(ab.loeschFenster.tabelle);
+        fensterBedingung = '\n      AND ' + quotIdent(ab.loeschSchluessel) + ' IN (SELECT ' + quotIdent(ab.loeschFenster.idSpalte) + ' FROM ' + lt + ' WHERE ' + quotIdent(ab.loeschFenster.spalte) + ' BETWEEN ' + "'" + dateFromSql + "'" + ' AND ' + "'" + dateToSql + "'" + ')';
+      }
+
+      // Leeres leaders-Array: bestehende date_leader-Zeilen des Termins
+      // entfernen. Der _fehlend-Abgleich (date_id NOT IN eingang) erfasst
+      // diesen Fall NICHT, weil die Date weiterhin in eingang steht – ohne
+      // diesen DELETE blieben verwaiste Trainer-Zuordnungen bestehen.
+      out +=
+        ',\nab_' + i + '_leer AS (\n' +
+        '    DELETE FROM ' + ziel + '\n' +
+        '    WHERE ' + quotIdent(ab.loeschSchluessel) + ' IN (\n' +
+        '        SELECT e.' + quotIdent(ab.loeschSchluessel) + ' FROM eingang e\n' +
+        '        WHERE jsonb_array_length(COALESCE(e.' + quotIdent(ab.eingangFeld) + ', \'[]\'::jsonb)) = 0\n' +
+        '    )' +
+        fensterBedingung + '\n' +
+        '    RETURNING 1\n' +
+        ')';
+
       if (loeschungen && ab.loeschungBeiVollabgleich) {
-        // Bei aktivem 10-Wochen-Fenster nur Zuordnungen von Terminen im Fenster
-        // loeschen (loeschFenster aus der festen Konfiguration); historische
-        // Termine bleiben unangetastet.
-        let fensterBedingung = '';
-        if (fenster && ab.loeschFenster) {
-          const lt = quotIdent(k.schema) + '.' + quotIdent(ab.loeschFenster.tabelle);
-          fensterBedingung = '\n      AND ' + quotIdent(ab.loeschSchluessel) + ' IN (SELECT ' + quotIdent(ab.loeschFenster.idSpalte) + ' FROM ' + lt + ' WHERE ' + quotIdent(ab.loeschFenster.spalte) + ' BETWEEN ' + "'" + dateFromSql + "'" + ' AND ' + "'" + dateToSql + "'" + ')';
-        }
         out +=
           ',\nab_' + i + '_fehlend AS (\n' +
           '    DELETE FROM ' + ziel + '\n' +

@@ -1,0 +1,313 @@
+{
+  "name": "P98 - Einzelfall Trainerzuweisung (Update Trainer Single)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "trainer-update",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e5f3d4f3-ee8f-489b-9c97-e12a5daefd25",
+      "name": "Webhook",
+      "webhookId": "p98-update-trainer-single",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        6736,
+        1136
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app1.edoobox.com/v2/auth",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "grant-type",
+              "value": "password"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ expire: $now.plus({ hours: 24 }).toISO() }) }}",
+        "options": {}
+      },
+      "id": "7d3030f9-5591-4e6b-ae13-89e856313c3a",
+      "name": "P98 Token holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6944,
+        1136
+      ],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "ecGv3wCmKLEUq8fX",
+          "name": "Custom Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const auth = $input.first().json;\nconst token = typeof auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;\nif (!token) {\n  throw new Error('Kein Token in der edoobox-Auth-Antwort enthalten.');\n}\nconst webhook = $('Webhook').first().json;\nlet payload = webhook.body;\nif (typeof payload === 'string') {\n  try { payload = JSON.parse(payload); } catch (e) { payload = {}; }\n}\nif (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};\nconst basis = payload.basis_url || auth.basis_url || 'https://app1.edoobox.com';\nreturn [{ json: { ...payload, token, edid, basis } }];"
+      },
+      "id": "699a65f6-ea30-4364-ba4e-d86e81e3a796",
+      "name": "P98 Token normalisieren",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7136,
+        1136
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT o.offer_id, o.name, d.date_id, t.admin_id AS neuer_trainer_admin_id\nFROM edoobox_raw.offer o\nJOIN edoobox_raw.offer_date d ON d.offer_id = o.offer_id AND d.is_deleted IS NOT TRUE\nLEFT JOIN (\n  SELECT admin_id FROM edoobox_raw.trainer_admin \n  WHERE TRIM(shortcut) = TRIM('{{ $(\"P98 Token normalisieren\").first().json.neuer_trainer_kuerzel }}')\n  LIMIT 1\n) t ON true\nWHERE o.offer_id = '{{ $(\"P98 Token normalisieren\").first().json.offer_id }}'\n  AND o.is_deleted IS NOT TRUE\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "0484cb39-9378-4dc1-a497-3e5218c153da",
+      "name": "P98 Kurs & Trainerdaten ermitteln",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        7344,
+        1136
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "eXRRFRowW6RCTJvp",
+          "name": "PostgreSQL Kursplan – n8n_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://app1.edoobox.com/v2/date/{{ $('P98 Kurs & Trainerdaten ermitteln').first().json.date_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('P98 Token normalisieren').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "edid",
+              "value": "={{ $('P98 Token normalisieren').first().json.edid || '' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e30919eb-ee8b-4f84-962d-27ced495dcbd",
+      "name": "P98 Lektion abrufen (GET)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        7544,
+        1136
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\nconst kursData = $('P98 Kurs & Trainerdaten ermitteln').first().json;\nconst tokenData = $('P98 Token normalisieren').first().json;\n\nconst neuer_trainer_kuerzel = String(tokenData.neuer_trainer_kuerzel || '').trim();\nconst altes_trainer_kuerzel = String(tokenData.altes_trainer_kuerzel || '').trim();\n\n// 1. Lektions-Objekt aus der edoobox-Antwort flexibel extrahieren (Array / Objekt / ID-Map)\nlet d = resp?.data || resp;\nif (Array.isArray(d)) {\n  d = d[0] || {};\n} else if (d && typeof d === 'object') {\n  if (!d.description && !d.title && !d.name) {\n    const firstVal = Object.values(d)[0];\n    if (firstVal && typeof firstVal === 'object') {\n      d = firstVal;\n    }\n  }\n}\n\n// 2. Den bestehenden Modultitel auslesen\nlet currentDesc = String(d?.description || d?.title || d?.name || '').trim();\n\n// Schutz: Falls kein bestehender Titel auffindbar ist, NIEMALS überschreiben, sondern stoppen!\nif (!currentDesc) {\n  throw new Error(\n    `Konnte den bestehenden Modultitel für date_id \"${kursData.date_id}\" nicht auslesen. Antwort von edoobox: ${JSON.stringify(resp)}`\n  );\n}\n\nconst isUnassign = neuer_trainer_kuerzel === 'n. v.' || neuer_trainer_kuerzel === '';\nconst warNichtVergeben = altes_trainer_kuerzel === 'n. v.' || altes_trainer_kuerzel === '';\n\nlet neuer_lektionstitel = '';\n\nif (isUnassign) {\n  // Neuer Trainer ist 'n. v.' -> bisheriges Kürzel restlos entfernen.\n  // Gezielt nur das bekannte alte Kürzel entfernen (Klammer oder \" Kürzel\" am Ende),\n  // damit niemals echte Titelbestandteile wie \"GL\" oder \"M1\" abgeschnitten werden.\n  if (altes_trainer_kuerzel && !warNichtVergeben) {\n    const esc = altes_trainer_kuerzel.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n    neuer_lektionstitel = currentDesc\n      .replace(new RegExp(`\\\\s*\\\\(\\\\s*${esc}\\\\s*\\\\)\\\\s*$`, 'i'), '')\n      .replace(new RegExp(`\\\\s+${esc}\\\\s*$`, 'i'), '')\n      .trim();\n  } else {\n    // Kein altes Kürzel bekannt -> nur eine Klammer am Ende entfernen, KEINE Zeichen am Wortende.\n    neuer_lektionstitel = currentDesc\n      .replace(/\\s*\\(\\s*[A-Za-z0-9]{2,4}\\s*\\)\\s*$/i, '')\n      .trim();\n  }\n} else if (warNichtVergeben) {\n  // Vorher war kein Dozent zugewiesen ('n. v.' oder leer):\n  // NIEMALS Zeichen am Ende abschneiden. Falls doch schon Klammern am Ende existieren,\n  // nur den Klammerinhalt ersetzen, sonst einfach anhängen.\n  const matchKlammer = currentDesc.match(/^(.*?)\\s*\\(\\s*[^)]*\\s*\\)\\s*$/);\n  if (matchKlammer) {\n    neuer_lektionstitel = matchKlammer[1].trimEnd() + ' (' + neuer_trainer_kuerzel + ')';\n  } else {\n    neuer_lektionstitel = currentDesc + ' (' + neuer_trainer_kuerzel + ')';\n  }\n} else {\n  // Vorher war ein Dozent zugewiesen (z. B. 'FW'):\n  // Gezielt nur \"(FW)\" oder \" FW\" am Ende durch \"(neuer_trainer_kuerzel)\" ersetzen.\n  const matchKlammer = currentDesc.match(/^(.*?)\\s*\\(\\s*[A-Za-z0-9]{2,4}\\s*\\)\\s*$/);\n  const matchEnde = currentDesc.match(/^(.*?)\\s+[A-Za-z0-9]{2,4}\\s*$/);\n  if (matchKlammer) {\n    neuer_lektionstitel = matchKlammer[1].trimEnd() + ' (' + neuer_trainer_kuerzel + ')';\n  } else if (matchEnde) {\n    neuer_lektionstitel = matchEnde[1].trimEnd() + ' (' + neuer_trainer_kuerzel + ')';\n  } else {\n    neuer_lektionstitel = currentDesc + ' (' + neuer_trainer_kuerzel + ')';\n  }\n}\n\nreturn [{\n  json: {\n    ...kursData,\n    kuerzel: neuer_trainer_kuerzel,\n    is_unassign: isUnassign,\n    neuer_lektionstitel,\n    neuer_titel: neuer_lektionstitel\n  }\n}];"
+      },
+      "id": "8d4f9d9c-4593-4c22-864e-24f2bf880e0c",
+      "name": "P98 Lektionstitel anpassen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7744,
+        1136
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://app1.edoobox.com/v2/date/{{ $('P98 Lektionstitel anpassen').first().json.date_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('P98 Token normalisieren').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "grant-type",
+              "value": "access_token"
+            },
+            {
+              "name": "edid",
+              "value": "={{ $('P98 Token normalisieren').first().json.edid || '' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: { leader: $('P98 Lektionstitel anpassen').first().json.neuer_trainer_admin_id ? [$('P98 Lektionstitel anpassen').first().json.neuer_trainer_admin_id] : [], description: $('P98 Lektionstitel anpassen').first().json.neuer_lektionstitel } }) }}",
+        "options": {}
+      },
+      "id": "0df0e165-8845-44d6-a958-c428ea992f25",
+      "name": "P98 edoobox Trainer & Lektionstitel zuweisen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        7944,
+        1136
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- ============================================================\n-- P98 Lokal aktualisieren (trainer_zuweisung)\n-- Alle Variablen strikt über $(\"P98 Lektionstitel anpassen\").first().json\n-- ============================================================\n\n-- 1. Lokale Titel-Spiegelung: Angebotstitel in edoobox_raw.offer aktualisieren\n--    (neuer_titel = Lektionstitel ohne/mit Trainerkürzel aus edoobox)\nUPDATE edoobox_raw.offer\nSET name = '{{ $(\"P98 Lektionstitel anpassen\").first().json.neuer_titel }}',\n    last_synced_at = NOW()\nWHERE offer_id = '{{ $(\"P98 Lektionstitel anpassen\").first().json.offer_id }}'\n  AND is_deleted IS NOT TRUE;\n\n-- 2. date_leader (n:m-Leiter): Bei Zuweisung (is_unassign = false) schreiben,\n--    bei Aufhebung (is_unassign = true) entfernen.\n--    Hinweis: date_leader besitzt keine is_deleted-Spalte, daher DELETE.\nINSERT INTO edoobox_raw.date_leader (date_id, admin_id, last_synced_at)\nSELECT\n  '{{ $(\"P98 Lektionstitel anpassen\").first().json.date_id }}',\n  '{{ $(\"P98 Lektionstitel anpassen\").first().json.neuer_trainer_admin_id }}',\n  NOW()\nWHERE '{{ $(\"P98 Lektionstitel anpassen\").first().json.is_unassign }}' = 'false'\n  AND '{{ $(\"P98 Lektionstitel anpassen\").first().json.neuer_trainer_admin_id }}' IS NOT NULL\n  AND '{{ $(\"P98 Lektionstitel anpassen\").first().json.neuer_trainer_admin_id }}' <> ''\nON CONFLICT (date_id, admin_id)\nDO UPDATE SET last_synced_at = NOW();\n\nDELETE FROM edoobox_raw.date_leader\nWHERE date_id = '{{ $(\"P98 Lektionstitel anpassen\").first().json.date_id }}'\n  AND '{{ $(\"P98 Lektionstitel anpassen\").first().json.is_unassign }}' = 'true';\n\n-- 3. Neuen Trainer zuweisen und den bestehenden Status 1:1 übernehmen\n--    (nur bei Zuweisung, is_unassign = false)\nWITH neu AS (\n  SELECT t.id AS trainer_id\n  FROM public.trainer t\n  WHERE t.edoobox_admin_id = '{{ $(\"P98 Lektionstitel anpassen\").first().json.neuer_trainer_admin_id }}'\n  LIMIT 1\n),\nalt AS (\n  SELECT status, notiz, honorar_manuell\n  FROM public.trainer_zuweisung\n  WHERE date_id = '{{ $(\"P98 Lektionstitel anpassen\").first().json.date_id }}'\n  ORDER BY updated_at DESC\n  LIMIT 1\n)\nINSERT INTO public.trainer_zuweisung (trainer_id, date_id, status, notiz, honorar_manuell, updated_at)\nSELECT \n  neu.trainer_id, \n  '{{ $(\"P98 Lektionstitel anpassen\").first().json.date_id }}', \n  COALESCE(alt.status, 'ausgeschrieben'),\n  alt.notiz,\n  alt.honorar_manuell,\n  NOW()\nFROM neu\nLEFT JOIN alt ON true\nWHERE neu.trainer_id IS NOT NULL\n  AND '{{ $(\"P98 Lektionstitel anpassen\").first().json.is_unassign }}' = 'false'\nON CONFLICT (date_id, trainer_id)\nDO UPDATE SET \n  status = EXCLUDED.status,\n  notiz = EXCLUDED.notiz,\n  honorar_manuell = EXCLUDED.honorar_manuell,\n  updated_at = NOW();\n\n-- 4. Zuweisung des bisherigen Trainers restlos löschen\n--    (bei Aufhebung oder wenn kein neuer Trainer gefunden wurde)\nDELETE FROM public.trainer_zuweisung\nWHERE date_id = '{{ $(\"P98 Lektionstitel anpassen\").first().json.date_id }}'\n  AND (\n    '{{ $(\"P98 Lektionstitel anpassen\").first().json.is_unassign }}' = 'true'\n    OR '{{ $(\"P98 Lektionstitel anpassen\").first().json.neuer_trainer_admin_id }}' IS NULL\n    OR '{{ $(\"P98 Lektionstitel anpassen\").first().json.neuer_trainer_admin_id }}' = ''\n    OR trainer_id NOT IN (\n      SELECT t.id FROM public.trainer t\n      WHERE t.edoobox_admin_id = '{{ $(\"P98 Lektionstitel anpassen\").first().json.neuer_trainer_admin_id }}'\n    )\n  );",
+        "options": {}
+      },
+      "id": "4258e00e-b8be-42e1-adf4-a4c61c7060d0",
+      "name": "P98 Lokal aktualisieren (trainer_zuweisung)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        8144,
+        1136
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "eXRRFRowW6RCTJvp",
+          "name": "PostgreSQL Kursplan – n8n_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, offer_id: $('P98 Lektionstitel anpassen').first().json.offer_id, neuer_lektionstitel: $('P98 Lektionstitel anpassen').first().json.neuer_lektionstitel }) }}",
+        "options": {}
+      },
+      "id": "11a51398-11a3-497d-8391-c68d36a5410b",
+      "name": "P98 Antwort senden",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        8344,
+        1136
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "P98 Token holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P98 Token holen": {
+      "main": [
+        [
+          {
+            "node": "P98 Token normalisieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P98 Token normalisieren": {
+      "main": [
+        [
+          {
+            "node": "P98 Kurs & Trainerdaten ermitteln",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P98 Kurs & Trainerdaten ermitteln": {
+      "main": [
+        [
+          {
+            "node": "P98 Lektion abrufen (GET)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P98 Lektion abrufen (GET)": {
+      "main": [
+        [
+          {
+            "node": "P98 Lektionstitel anpassen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P98 Lektionstitel anpassen": {
+      "main": [
+        [
+          {
+            "node": "P98 edoobox Trainer & Lektionstitel zuweisen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P98 edoobox Trainer & Lektionstitel zuweisen": {
+      "main": [
+        [
+          {
+            "node": "P98 Lokal aktualisieren (trainer_zuweisung)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P98 Lokal aktualisieren (trainer_zuweisung)": {
+      "main": [
+        [
+          {
+            "node": "P98 Antwort senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}

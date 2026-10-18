@@ -1,0 +1,250 @@
+"// P90 - Ressource holen\n// Seitenweiser Abruf (Paginierung ueber limit[start]/limit[reply]),\n// 
+Normalisierung, Hash-Bildung und Erzeugung der parametrisierten UPSERT-Abfrage.\n// Tabellen-/Spalte
+nnamen stammen ausschliesslich aus der festen Konfiguration.\n//\n// Zusaetzlich werden die abgeleit
+eten Tabellen (date_leader, booking_position,\n// booking_transaction) aus den Listenressourcen befu
+ellt (O-8: ohne\n// Buchungs-Detailendpunkt). Die Ableitungs-CTEs haengen an derselben\n// SQL-Anwei
+sung wie das Haupt-UPSERT.\n\nconst auth = $('P90 Token holen').first().json;\nconst token = typeof 
+auth.data === 'string' ? auth.data : auth.access_token;\nconst edid = auth.edid ?? auth?.data?.edid;
+\nif (!token || !edid) {\n  throw new Error('P90: Token oder edid nicht gefunden. Felder: ' + Object
+.keys(auth).join(', '));\n}\n\nconst meta = $('P90 Konfiguration aufloesen').first().json;\nconst k 
+= meta.konfig;\nconst runId = meta.run_id;\nconst loeschungen = meta.loeschungen;\n\nconst headers =
+ {\n  edid,\n  'grant-type': 'access_token',\n  Authorization: 'Bearer ' + token,\n  'Content-Type':
+ 'application/json',\n};\n\nconst basis = 'https://app1.edoobox.com/v2';\n\n// ---- 10-Wochen-Fenste
+r (operatives Zeitfenster) ----\n// date_from = NOW() - 28 Tage (00:00:00), date_to = NOW() + 42 Tag
+e (23:59:59).\n// Nur edo_dates besitzt eine fenster-Konfiguration; alle uebrigen Ressourcen\n// (in
+kl. edo_offers) laufen unveraendert als Vollabgleich.\nconst fenster = k.fenster || null;\nlet dateF
+romMs = null;\nlet dateToMs = null;\nlet dateFromSql = null;\nlet dateToSql = null;\nif (fenster) {\
+n  const jetzt = new Date();\n  const von = new Date(jetzt.getFullYear(), jetzt.getMonth(), jetzt.ge
+tDate() - fenster.tageVergangenheit, 0, 0, 0);\n  const bis = new Date(jetzt.getFullYear(), jetzt.ge
+tMonth(), jetzt.getDate() + fenster.tageZukunft, 23, 59, 59);\n  const p = (n) => String(n).padStart
+(2, '0');\n  const fmt = (d) => d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+ ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());\n  dateFromMs = von.getT
+ime();\n  dateToMs = bis.getTime();\n  dateFromSql = fmt(von);\n  dateToSql = fmt(bis);\n}\n\n// ---
+- Normalisierungs-Helfer (vgl. Schritt 16/26/54) ----\nfunction kennung(w) {\n  if (w === null || w 
+=== undefined || w === '') return null;\n  if (typeof w === 'string' || typeof w === 'number') retur
+n String(w);\n  if (typeof w === 'object') return w.id ? String(w.id) : null;\n  return null;\n}\nfu
+nction text(w) {\n  if (w === null || w === undefined) return null;\n  if (typeof w === 'string') re
+turn w;\n  if (typeof w === 'number' || typeof w === 'boolean') return String(w);\n  return null;\n}
+\nfunction ganzzahl(w) {\n  const n = Number(w);\n  return Number.isFinite(n) ? Math.trunc(n) : null
+;\n}\nfunction kommazahl(w) {\n  if (w === null || w === undefined || w === '') return null;\n  cons
+t n = Number(String(w).replace(',', '.'));\n  return Number.isFinite(n) ? n : null;\n}\nfunction zei
+tpunkt(w) {\n  if (typeof w !== 'string') return null;\n  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(w)
+) return null;\n  if (/^0{4}-0{2}-0{2}/.test(w)) return null;\n  return w;\n}\nfunction wahr(w) {\n 
+ if (w === true || w === 1 || w === '1' || w === 'true') return true;\n  if (w === false || w === 0 
+|| w === '0' || w === 'false' || w === '' || w === null || w === undefined) return false;\n  return 
+Boolean(w);\n}\nfunction rechnungsstatus(w) {\n  const n = Number(w);\n  return ({ 1: 'offen', 2: 'b
+ezahlt', 3: 'storniert' })[n] ?? null;\n}\nfunction waehrung(w) {\n  const t = text(w);\n  if (!t) r
+eturn 'EUR';\n  return t.toUpperCase().slice(0, 3);\n}\n\nfunction transformiere(typ, w) {\n  switch
+ (typ) {\n    case 'kennung': return kennung(w);\n    case 'text': return text(w);\n    case 'ganzza
+hl': return ganzzahl(w);\n    case 'kommazahl': return kommazahl(w);\n    case 'zeitpunkt': return z
+eitpunkt(w);\n    case 'wahr': return wahr(w);\n    case 'rechnungsstatus': return rechnungsstatus(w
+);\n    case 'waehrung': return waehrung(w);\n    default: return text(w);\n  }\n}\n\n// ---- Pagini
+erung ----\n// Optionaler Filter (10-Wochen-Fenster): Nur Datensaetze, die der Filter\n// behaelt, l
+anden in \"alle\". Der Versatz und die Abbruchbedingungen beziehen\n// sich weiterhin auf die ungefi
+lterte API-Seite. Bei gefiltertem Abruf ist\n// der Vollstaendigkeitsnachweis (gemeldet = gelesen) n
+icht beurteilbar und\n// entfaellt.\nasync function holeAlle(pfad, reply, filter) {\n  const alle = 
+[];\n  let start = 0;\n  let total = null;\n  let abrufe = 0;\n  let ersteIdVorher = null;\n  const 
+hoechstzahlSeiten = 500; // Schutz gegen Endlosschleifen\n\n  for (let seite = 1; seite <= hoechstza
+hlSeiten; seite += 1) {\n    const a = await this.helpers.httpRequest({\n      method: 'GET',\n     
+ url: basis + pfad,\n      headers,\n      qs: { 'limit[start]': start, 'limit[reply]': reply },\n  
+    json: true,\n      returnFullResponse: true,\n      timeout: 120000,\n      ignoreHttpStatusErro
+rs: true,\n    });\n    abrufe += 1;\n\n    if (!(a.statusCode >= 200 && a.statusCode < 300)) {\n   
+   throw new Error('P90: ' + pfad + ' lieferte HTTP ' + a.statusCode + ' ab Versatz ' + start);\n   
+ }\n\n    const body = a.body;\n    const limit = body && body.limit ? body.limit : {};\n    if (tot
+al === null && limit.total !== undefined && limit.total !== null) {\n      total = Number(limit.tota
+l);\n    }\n\n    const roh = body ? body.data : undefined;\n    const eintraege = Array.isArray(roh
+)\n      ? roh\n      : (roh && typeof roh === 'object' ? Object.values(roh) : []);\n\n    if (eintr
+aege.length === 0) break;\n\n    // Schutz gegen nicht angenommenen Versatz: wiederholt sich die ers
+te Kennung\n    // einer Folgeseite, wird abgebrochen (kein Endlosschleifen, E-31f).\n    const erst
+eId = eintraege[0] && typeof eintraege[0] === 'object' ? String(eintraege[0].id ?? '') : '';\n    if
+ (seite > 1 && ersteId !== '' && ersteId === ersteIdVorher) {\n      throw new Error('P90: ' + pfad 
++ ' nimmt Versatz ab ' + start + ' nicht an (gleiche erste Kennung ' + ersteId + ')');\n    }\n    e
+rsteIdVorher = ersteId;\n\n    const behalten = filter ? eintraege.filter(filter) : eintraege;\n    
+alle.push(...behalten);\n    start += eintraege.length;\n\n    if (eintraege.length < reply || (tota
+l !== null && start >= total)) break;\n  }\n\n  // Vollstaendigkeitsnachweis: gemeldet = gelesen (E-
+31f).\n  if (!filter && total !== null && alle.length !== total) {\n    throw new Error('P90: ' + pf
+ad + ' meldet ' + total + ' Datensaetze, gelesen ' + alle.length);\n  }\n\n  return { alle, total, a
+brufe };\n}\n\n// ---- Fenster-Filter fuer den Abruf ----\n// Nur edo_dates filtert auf date_start i
+m 10-Wochen-Fenster. edo_offers\n// laeuft als Vollabgleich (Option 3): immer holeAlle, keine offer_
+ids-Begrenzung.\nlet fensterFilter = null;\nlet offerIds = null;\nif (fenster && k.kennung === 'edo_
+dates') {\n  fensterFilter = (satz) => {\n    const t = Date.parse(satz.date_start ?? '');\n    retu
+rn !Number.isNaN(t) && t >= dateFromMs && t <= dateToMs;\n  };\n}\n\nconst seitenGroesse = Math.min(
+k.seitengroesse || 2000, 2000);\nconst holeErgebnis = await holeAlle(k.endpunkt, seitenGroesse, fens
+terFilter);\nconst alleSaetze = holeErgebnis.alle;\nconst gemeldetTotal = holeErgebnis.total;\nconst
+ anzahlAbrufe = holeErgebnis.abrufe;\n\n// ---- Eindeutige offer_ids aus den Terminen im Fenster sam
+meln ----\n// Der Aufrufer (P90-Hauptworkflow) uebergibt diese Liste an den edo_offers-Lauf.\nif (k.
+kennung === 'edo_dates' && fenster) {\n  const gesehen = new Set();\n  const ids = [];\n  for (const
+ s of alleSaetze) {\n    const oid = s.offer;\n    if (oid !== null && oid !== undefined && oid !== 
+'') {\n      const schluessel = String(oid);\n      if (!gesehen.has(schluessel)) {\n        gesehen
+.add(schluessel);\n        ids.push(schluessel);\n      }\n    }\n  }\n  offerIds = ids;\n}\n\n// --
+-- Normalisierung ----\nfunction normalisiere(satz) {\n  const s = satz && typeof satz === 'object' 
+? satz : {};\n  const out = {};\n  for (const spN of k.spalten) out[spN.ziel] = transformiere(spN.ty
+p, s[spN.quelle]);\n  for (const zN of (k.zusatzSpalten || [])) out[zN.name] = transformiere(zN.typ,
+ s[zN.quelle]);\n  if (k.payload) out.payload = s;\n  // O-8: booking/list liefert keinen status-Wer
+t, sondern canceled (bool)\n  // und waiting_list (bool). Fachstatus ableiten, damit die Erloessicht
+en\n  // (status='gebucht'/'storniert'/'warteliste') korrekt filtern koennen.\n  if (k.kennung === '
+edo_bookings') {\n    out.status = s.waiting_list === true ? 'warteliste'\n               : (s.cance
+led === true ? 'storniert' : 'gebucht');\n  }\n  // Rohfelder fuer abgeleitete Tabellen (jsonb im ei
+ngang-CTE behalten):\n  for (const abN of (k.ableitungen || [])) {\n    if (abN.eingangFeld && abN.q
+uelleRoht) out[abN.eingangFeld] = s[abN.quelleRoht] ?? null;\n  }\n  return out;\n}\n\nconst saetze 
+= alleSaetze.map(normalisiere);\nconst datenJson = JSON.stringify(saetze);\n\n// ---- UPSERT-Abfrage
+ generieren ----\nfunction quotIdent(name) {\n  return '\"' + String(name).replace(/\"/g, '\"\"') + 
+'\"';\n}\n\nconst tabelleQualifiziert = quotIdent(k.schema) + '.' + quotIdent(k.zieltabelle);\nconst
+ pk = k.pk;\nconst pkQualifiziert = quotIdent(pk);\n\nconst recordset = [];\nfor (const spR of k.spa
+lten) recordset.push(quotIdent(spR.ziel) + ' ' + (spR.sqlTyp || 'text'));\nfor (const zR of (k.zusat
+zSpalten || [])) recordset.push(quotIdent(zR.name) + ' ' + (zR.sqlTyp || 'text'));\nif (k.payload) r
+ecordset.push(quotIdent('payload') + ' jsonb');\nfor (const abR of (k.ableitungen || [])) {\n  if (a
+bR.eingangFeld) recordset.push(quotIdent(abR.eingangFeld) + ' jsonb');\n}\nconst recordsetDef = reco
+rdset.join(', ');\n\nconst insertSpalten = [];\nconst insertWerte = [];\nfor (const spI of k.spalten
+) {\n  insertSpalten.push(quotIdent(spI.ziel));\n  insertWerte.push('e.' + quotIdent(spI.ziel));\n}\
+nif (k.payload) {\n  insertSpalten.push(quotIdent('payload'));\n  insertWerte.push('e.' + quotIdent(
+'payload'));\n}\nif (k.userRef) {\n  insertSpalten.push(quotIdent(k.userRef.ziel));\n  insertWerte.p
+ush('e.' + quotIdent(k.userRef.ziel));\n}\nif (k.source) {\n  insertSpalten.push(quotIdent('source')
+);\n  insertWerte.push(\"'\" + String(k.source).replace(/'/g, \"''\") + \"'\");\n}\n\nfunction hashE
+xpr(alias, felder) {\n  const teile = felder.map((f) => alias + '.' + quotIdent(f) + '::text');\n  r
+eturn \"md5(concat_ws('|', \" + teile.join(', ') + '))';\n}\n\n// Dollar-Tag so waehlen, dass es nic
+ht im datenJson vorkommt.\nlet tag = '$p90' + Math.random().toString(36).slice(2, 10) + '$';\nwhile 
+(datenJson.includes(tag)) tag = '$p90' + Math.random().toString(36).slice(2, 10) + '$';\nconst jsonL
+iteral = tag + datenJson + tag + '::jsonb';\n\n// Zusaetzlich berechnete Felder im eingang-CTE.\ncon
+st userRefSelect = k.userRef\n  ? ', CASE WHEN t.' + quotIdent(k.userRef.quelle) + ' IS NULL THEN NU
+LL ELSE md5(t.' + quotIdent(k.userRef.quelle) + ') END AS ' + quotIdent(k.userRef.ziel)\n  : '';\n\n
+// Spalten fuer DO UPDATE SET (alle Nicht-PK-Zielspalten + payload + user_ref + source).\nconst upda
+teSet = [];\nfor (const spU of k.spalten) {\n  if (spU.ziel === pk) continue;\n  updateSet.push(quot
+Ident(spU.ziel) + ' = EXCLUDED.' + quotIdent(spU.ziel));\n}\nif (k.payload) updateSet.push(quotIdent
+('payload') + ' = EXCLUDED.' + quotIdent('payload'));\nif (k.userRef) updateSet.push(quotIdent(k.use
+rRef.ziel) + ' = EXCLUDED.' + quotIdent(k.userRef.ziel));\nif (k.source) updateSet.push(quotIdent('s
+ource') + ' = EXCLUDED.' + quotIdent('source'));\n\nlet sql = '';\n\nif (k.hash) {\n  // Variante mi
+t gespeichertem payload_hash und last_changed_at.\n  const hashEingang = hashExpr('t', k.hashFelder)
+;\n  const buchInsert = insertSpalten.concat([\n    quotIdent('first_seen_at'), quotIdent('last_sync
+ed_at'),\n    quotIdent('last_changed_at'), quotIdent('payload_hash'), quotIdent('is_deleted'),\n  ]
+).join(', ');\n  const buchWerte = insertWerte.concat([\n    'now()', 'now()', 'now()', 'e.' + quotI
+dent('payload_hash'), 'false',\n  ]).join(', ');\n\n  sql =\n    'WITH eingang AS (\\n    SELECT t.*
+, ' + hashEingang + ' AS ' + quotIdent('payload_hash') + userRefSelect +\n    '\\n    FROM jsonb_to_
+recordset(' + jsonLiteral + ') AS t(' + recordsetDef + ')\\n),\\n' +\n    'kennzahlen AS (\\n    SEL
+ECT\\n        count(*) AS zeilen,\\n' +\n    '        count(*) FILTER (WHERE o.' + pkQualifiziert + 
+' IS NULL) AS neu,\\n' +\n    '        count(*) FILTER (WHERE o.' + pkQualifiziert + ' IS NOT NULL A
+ND o.' + quotIdent('payload_hash') + ' IS DISTINCT FROM e.' + quotIdent('payload_hash') + ') AS geae
+ndert\\n' +\n    '    FROM eingang e\\n    LEFT JOIN ' + tabelleQualifiziert + ' o ON o.' + pkQualif
+iziert + ' = e.' + pkQualifiziert + '\\n),\\n' +\n    'geschrieben AS (\\n    INSERT INTO ' + tabell
+eQualifiziert + ' AS o (' + buchInsert + ')\\n' +\n    '    SELECT ' + buchWerte + '\\n    FROM eing
+ang e\\n' +\n    '    ON CONFLICT (' + pkQualifiziert + ') DO UPDATE SET\\n        ' + updateSet.joi
+n(',\\n        ') + ',\\n' +\n    '        ' + quotIdent('last_synced_at') + ' = now(),\\n' +\n    '
+        ' + quotIdent('is_deleted') + ' = false,\\n' +\n    '        ' + quotIdent('last_changed_at'
+) + ' = CASE WHEN o.' + quotIdent('payload_hash') + ' IS DISTINCT FROM EXCLUDED.' + quotIdent('paylo
+ad_hash') + ' THEN now() ELSE o.' + quotIdent('last_changed_at') + ' END,\\n' +\n    '        ' + qu
+otIdent('payload_hash') + ' = EXCLUDED.' + quotIdent('payload_hash') + '\\n' +\n    '    RETURNING o
+.' + pkQualifiziert + '\\n)';\n} else {\n  // Variante ohne gespeicherten Hash (offer_date, trainer_
+admin, Referenzdaten):\n  // \"geaendert\" wird ueber einen On-the-fly-Hashvergleich der bestehenden
+ Zeile bestimmt.\n  const hashO = hashExpr('o', k.hashFelder);\n  const hashE = hashExpr('e', k.hash
+Felder);\n  const buchInsert = insertSpalten.concat([\n    quotIdent('first_seen_at'), quotIdent('la
+st_synced_at'), quotIdent('is_deleted'),\n  ]).join(', ');\n  const buchWerte = insertWerte.concat([
+'now()', 'now()', 'false']).join(', ');\n\n  sql =\n    'WITH eingang AS (\\n    SELECT t.*' + userR
+efSelect +\n    '\\n    FROM jsonb_to_recordset(' + jsonLiteral + ') AS t(' + recordsetDef + ')\\n),
+\\n' +\n    'kennzahlen AS (\\n    SELECT\\n        count(*) AS zeilen,\\n' +\n    '        count(*)
+ FILTER (WHERE o.' + pkQualifiziert + ' IS NULL) AS neu,\\n' +\n    '        count(*) FILTER (WHERE 
+o.' + pkQualifiziert + ' IS NOT NULL AND ' + hashO + ' IS DISTINCT FROM ' + hashE + ') AS geaendert\
+\n' +\n    '    FROM eingang e\\n    LEFT JOIN ' + tabelleQualifiziert + ' o ON o.' + pkQualifiziert
+ + ' = e.' + pkQualifiziert + '\\n),\\n' +\n    'geschrieben AS (\\n    INSERT INTO ' + tabelleQuali
+fiziert + ' AS o (' + buchInsert + ')\\n' +\n    '    SELECT ' + buchWerte + '\\n    FROM eingang e\
+\n' +\n    '    ON CONFLICT (' + pkQualifiziert + ') DO UPDATE SET\\n        ' + updateSet.join(',\\
+n        ') + ',\\n' +\n    '        ' + quotIdent('last_synced_at') + ' = now(),\\n' +\n    '      
+  ' + quotIdent('is_deleted') + ' = false\\n' +\n    '    RETURNING o.' + pkQualifiziert + '\\n)';\n
+}\n\n// Loesch-Markierung nur im Vollabgleich. Bei aktivem 10-Wochen-Fenster wird\n// die Pruefung a
+uf Datensaetze im Fenster begrenzt (loeschWhere aus der festen\n// Konfiguration); Datensaetze ausse
+rhalb des Fensters bleiben unangetastet\n// (is_deleted bleibt unveraendert).\nif (loeschungen) {\n 
+ let fensterBedingung = '';\n  if (fenster && fenster.loeschWhere) {\n    fensterBedingung = '\\n   
+   AND ' + fenster.loeschWhere\n      .replace('$date_from', \"'\" + dateFromSql + \"'\")\n      .re
+place('$date_to', \"'\" + dateToSql + \"'\");\n  }\n  sql +=\n    ',\\nfehlend AS (\\n    UPDATE ' +
+ tabelleQualifiziert + '\\n' +\n    '    SET ' + quotIdent('is_deleted') + ' = true, ' + quotIdent('
+last_synced_at') + ' = now()\\n' +\n    '    WHERE ' + quotIdent('is_deleted') + ' = false\\n' +\n  
+  '      AND ' + pkQualifiziert + ' NOT IN (SELECT ' + pkQualifiziert + ' FROM eingang)' +\n    fens
+terBedingung + '\\n' +\n    '    RETURNING ' + pkQualifiziert + '\\n)';\n}\n\n// ---- Abgeleitete Ta
+bellen (date_leader, booking_position, booking_transaction) ----\n// Die CTE-Bloecke werden an diese
+lbe SQL-Anweisung angehaengt und laufen\n// damit transaktional zusammen mit geschrieben/fehlend. Al
+le Tabellen- und\n// Spaltennamen stammen ausschliesslich aus der festen KONFIG (E-31c, E-31j).\nfun
+ction ableitungsCtes() {\n  let out = '';\n  let i = 0;\n  for (const ab of (k.ableitungen || [])) {
+\n    i += 1;\n    const ziel = quotIdent(ab.schema) + '.' + quotIdent(ab.tabelle);\n    const pkLis
+te = (ab.pkSpalten || []).map(quotIdent).join(', ');\n\n    if (ab.typ === 'leaders') {\n      // da
+te_leader: n Trainer je Datumszeile. leaders ist ein JSON-Array aus Strings.\n      out +=\n        
+',\\nab_' + i + '_geschrieben AS (\\n' +\n        '    INSERT INTO ' + ziel + ' (' + quotIdent('date
+_id') + ', ' + quotIdent('admin_id') + ', ' + quotIdent('last_synced_at') + ')\\n' +\n        '    S
+ELECT e.' + quotIdent('date_id') + ', l.admin_id, now()\\n' +\n        '    FROM eingang e\\n' +\n  
+      '    CROSS JOIN LATERAL jsonb_array_elements_text(e.' + quotIdent(ab.eingangFeld) + ') AS l(ad
+min_id)\\n' +\n        '    ON CONFLICT (' + pkListe + ') DO UPDATE SET ' + quotIdent('last_synced_a
+t') + ' = now()\\n' +\n        '    RETURNING 1\\n' +\n        ')';\n\n      // Bei aktivem 10-Woche
+n-Fenster nur Zuordnungen von Terminen im Fenster\n      // loeschen (loeschFenster aus der festen K
+onfiguration); historische\n      // Termine bleiben unangetastet.\n      let fensterBedingung = '';
+\n      if (fenster && ab.loeschFenster) {\n        const lt = quotIdent(k.schema) + '.' + quotIdent
+(ab.loeschFenster.tabelle);\n        fensterBedingung = '\\n      AND ' + quotIdent(ab.loeschSchlues
+sel) + ' IN (SELECT ' + quotIdent(ab.loeschFenster.idSpalte) + ' FROM ' + lt + ' WHERE ' + quotIdent
+(ab.loeschFenster.spalte) + ' BETWEEN ' + \"'\" + dateFromSql + \"'\" + ' AND ' + \"'\" + dateToSql 
++ \"'\" + ')';\n      }\n\n      // Leeres leaders-Array: bestehende date_leader-Zeilen des Termins\
+n      // entfernen. Der _fehlend-Abgleich (date_id NOT IN eingang) erfasst\n      // diesen Fall NI
+CHT, weil die Date weiterhin in eingang steht – ohne\n      // diesen DELETE blieben verwaiste Train
+er-Zuordnungen bestehen.\n      out +=\n        ',\\nab_' + i + '_leer AS (\\n' +\n        '    DELE
+TE FROM ' + ziel + '\\n' +\n        '    WHERE ' + quotIdent(ab.loeschSchluessel) + ' IN (\\n' +\n  
+      '        SELECT e.' + quotIdent(ab.loeschSchluessel) + ' FROM eingang e\\n' +\n        '      
+  WHERE jsonb_array_length(COALESCE(e.' + quotIdent(ab.eingangFeld) + ', \\'[]\\'::jsonb)) = 0\\n' +
+\n        '    )' +\n        fensterBedingung + '\\n' +\n        '    RETURNING 1\\n' +\n        ')'
+;\n\n      if (loeschungen && ab.loeschungBeiVollabgleich) {\n        out +=\n          ',\\nab_' + 
+i + '_fehlend AS (\\n' +\n          '    DELETE FROM ' + ziel + '\\n' +\n          '    WHERE ' + qu
+otIdent(ab.loeschSchluessel) + ' NOT IN (SELECT e.' + quotIdent(ab.loeschSchluessel) + ' FROM eingan
+g e)' +\n          fensterBedingung + '\\n' +\n          '    RETURNING 1\\n' +\n          ')';\n   
+   }\n    } else if (ab.typ === 'booking_position') {\n      // booking_position: Gruppierung der us
+ers[]-Eintraege je Preiskategorie.\n      // Name/Betrag/Waehrung stammen aus der bereits gespiegelt
+en Preisliste\n      // (edoobox_raw.pricecategory). is_default ist in der Listenressource nicht\n  
+    // enthalten und bleibt NULL (Verifikationspunkt O-8).\n      const pcTabelle = 'edoobox_raw.pri
+cecategory';\n      out +=\n        ',\\nab_' + i + '_pos AS (\\n' +\n        '    SELECT e.' + quot
+Ident('booking_id') + ' AS booking_id,\\n' +\n        '           u.pricecategory AS pricecategory_i
+d,\\n' +\n        '           count(*) AS quantity\\n' +\n        '    FROM eingang e\\n' +\n       
+ '    CROSS JOIN LATERAL jsonb_to_recordset(e.' + quotIdent(ab.eingangFeld) + ') AS u(pricecategory 
+text)\\n' +\n        '    WHERE u.pricecategory IS NOT NULL\\n' +\n        '    GROUP BY e.' + quotI
+dent('booking_id') + ', u.pricecategory\\n' +\n        '),\\n' +\n        'ab_' + i + '_geschrieben 
+AS (\\n' +\n        '    INSERT INTO ' + ziel + ' (' +\n          quotIdent('booking_id') + ', ' + q
+uotIdent('pricecategory_id') + ', ' +\n          quotIdent('pricecategory_name') + ', ' + quotIdent(
+'amount_net') + ', ' +\n          quotIdent('currency') + ', ' + quotIdent('quantity') + ', ' +\n   
+       quotIdent('is_default') + ', ' + quotIdent('last_synced_at') + ')\\n' +\n        '    SELECT 
+p.booking_id, p.pricecategory_id,\\n' +\n        '           COALESCE(pc.name, \\'(ohne Bezeichnung)
+\\'),\\n' +\n        '           COALESCE(pc.amount_net, 0),\\n' +\n        '           COALESCE(pc.
+currency, \\'EUR\\'),\\n' +\n        '           p.quantity,\\n' +\n        '           NULL, now()\
+\n' +\n        '    FROM ab_' + i + '_pos p\\n' +\n        '    LEFT JOIN ' + pcTabelle + ' pc ON pc
+.' + quotIdent('pricecategory_id') + ' = p.pricecategory_id\\n' +\n        '    ON CONFLICT (' + pkL
+iste + ') DO UPDATE SET\\n' +\n        '        ' + quotIdent('pricecategory_name') + ' = EXCLUDED.'
+ + quotIdent('pricecategory_name') + ',\\n' +\n        '        ' + quotIdent('amount_net') + ' = EX
+CLUDED.' + quotIdent('amount_net') + ',\\n' +\n        '        ' + quotIdent('currency') + ' = EXCL
+UDED.' + quotIdent('currency') + ',\\n' +\n        '        ' + quotIdent('quantity') + ' = EXCLUDED
+.' + quotIdent('quantity') + ',\\n' +\n        '        ' + quotIdent('last_synced_at') + ' = now()\
+\n' +\n        '    RETURNING 1\\n' +\n        ')';\n    } else if (ab.typ === 'booking_transaction'
+) {\n      // booking_transaction: buchungsbezogene Vorgaenge aus bookings.transactions[]\n      // 
+(Listenressource). Feldnamen: transaction (ID), number, amount, currency.\n      // transaction_time
+ ist in der Liste nicht enthalten und bleibt NULL.\n      const txRecordset =\n        quotIdent('tr
+ansaction') + ' text, ' +\n        quotIdent('number') + ' text, ' +\n        quotIdent('amount') + 
+' numeric(12,2), ' +\n        quotIdent('currency') + ' char(3)';\n      out +=\n        ',\\nab_' +
+ i + '_geschrieben AS (\\n' +\n        '    INSERT INTO ' + ziel + ' (' +\n          quotIdent('tran
+saction_id') + ', ' + quotIdent('booking_id') + ', ' +\n          quotIdent('transaction_number') + 
+', ' + quotIdent('amount') + ', ' +\n          quotIdent('currency') + ', ' + quotIdent('last_synced
+_at') + ')\\n' +\n        '    SELECT t.transaction, e.' + quotIdent('booking_id') + ', t.number, t.
+amount, t.currency, now()\\n' +\n        '    FROM eingang e\\n' +\n        '    CROSS JOIN LATERAL 
+jsonb_to_recordset(e.' + quotIdent(ab.eingangFeld) + ') AS t(' + txRecordset + ')\\n' +\n        '  
+  WHERE t.transaction IS NOT NULL\\n' +\n        '    ON CONFLICT (' + pkListe + ') DO UPDATE SET\\n
+' +\n        '        ' + quotIdent('booking_id') + ' = EXCLUDED.' + quotIdent('booking_id') + ',\\n
+' +\n        '        ' + quotIdent('transaction_number') + ' = EXCLUDED.' + quotIdent('transaction_
+number') + ',\\n' +\n        '        ' + quotIdent('amount') + ' = EXCLUDED.' + quotIdent('amount')
+ + ',\\n' +\n        '        ' + quotIdent('currency') + ' = EXCLUDED.' + quotIdent('currency') + '
+,\\n' +\n        '        ' + quotIdent('last_synced_at') + ' = now()\\n' +\n        '    RETURNING 
+1\\n' +\n        ')';\n      if (loeschungen && ab.loeschungBeiVollabgleich) {\n        out +=\n    
+      ',\\nab_' + i + '_fehlend AS (\\n' +\n          '    DELETE FROM ' + ziel + '\\n' +\n         
+ '    WHERE ' + quotIdent(ab.loeschSchluessel) + ' NOT IN (\\n' +\n          '        SELECT abt.tra
+nsaction FROM eingang e\\n' +\n          '        CROSS JOIN LATERAL jsonb_to_recordset(e.' + quotId
+ent(ab.eingangFeld) + ') AS abt(' + txRecordset + ')\\n' +\n          '        WHERE abt.transaction
+ IS NOT NULL\\n' +\n          '    )\\n' +\n          '    RETURNING 1\\n' +\n          ')';\n      
+}\n    }\n  }\n  return out;\n}\n\nsql += ableitungsCtes();\n\nsql +=\n  '\\nSELECT\\n' +\n  '    (S
+ELECT zeilen FROM kennzahlen) AS gelesen,\\n' +\n  '    (SELECT neu FROM kennzahlen) AS neu,\\n' +\n
+  '    (SELECT geaendert FROM kennzahlen) AS geaendert,\\n' +\n  '    (SELECT count(*) FROM geschrie
+ben) AS gespeichert' +\n  (loeschungen ? ',\\n    (SELECT count(*) FROM fehlend) AS geloescht' : '')
+ +\n  ';';\n\nreturn [{\n  json: {\n    kennung: k.kennung,\n    run_id: runId,\n    endpunkt: k.end
+punkt,\n    zieltabelle: k.zieltabelle,\n    gemeldet_total: gemeldetTotal,\n    gelesen: saetze.len
+gth,\n    anzahlAbrufe,\n    // Bei gefiltertem Abruf (Fenster) ist die Gesamtzahl nicht beurteilbar
+.\n    vollstaendig: fensterFilter ? null : (gemeldetTotal !== null ? saetze.length === gemeldetTota
+l : null),\n    loeschungen,\n    fenster: fenster ? { date_from: dateFromSql, date_to: dateToSql } 
+: null,\n    offer_ids: offerIds,\n    upsertSql: sql,\n    datenJson,\n  },\n}];\n"
