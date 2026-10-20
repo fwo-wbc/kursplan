@@ -10,6 +10,7 @@ import {
   AlertCircle,
   BookMarked,
   Lock,
+  RefreshCw,
 } from 'lucide-react';
 import { feiertageFuerZeitraum, feiertagLabel, type Feiertag } from '@/lib/feiertage';
 import HeaderLogo from '../../components/HeaderLogo';
@@ -276,6 +277,41 @@ function statusRang(status: string | null): number {
     default:
       return 4;
   }
+}
+
+/**
+ * Sortiert Kurs-Zuweisungen strikt nach Status für die vertikale Stapelung in
+ * der Tageskachel: Grün (bestätigt) → Orange (unter Vorbehalt) → Blau
+ * (ausgeschrieben) → Rot (abgesagt). Bei gleichem Status folgt die Uhrzeit
+ * (Startzeit), bei gleicher Uhrzeit der Kurstitel.
+ */
+function sortiereKurseNachStatus(kurse: KursRow[]): KursRow[] {
+  return [...kurse].sort((a, b) => {
+    const rangDiff =
+      statusRang(a.zuweisung_status) - statusRang(b.zuweisung_status);
+    if (rangDiff !== 0) return rangDiff;
+    const zeitDiff = (a.start_time ?? a.end_time ?? '').localeCompare(
+      b.start_time ?? b.end_time ?? ''
+    );
+    if (zeitDiff !== 0) return zeitDiff;
+    return (a.kursname ?? '').localeCompare(b.kursname ?? '', 'de');
+  });
+}
+
+/**
+ * Begrenzt die gerenderte Kurs-Liste einer Tageskachel auf maximal drei Kurse.
+ * Liefert die sichtbaren (vorsortierten) Kurse sowie die Anzahl der über das
+ * Limit hinausgehenden Kurse für den Overflow-Indikator (z. B. "+1 weiterer Kurs").
+ */
+function begrenzeAufDrei(kurse: KursRow[]): {
+  sichtbar: KursRow[];
+  rest: number;
+} {
+  const sortiert = sortiereKurseNachStatus(kurse);
+  return {
+    sichtbar: sortiert.slice(0, 3),
+    rest: Math.max(0, sortiert.length - 3),
+  };
 }
 
 /** Kompakte Status-Badge-Farbklassen für das Parallele-Termine-Popover. */
@@ -597,12 +633,16 @@ function VerfuegbarkeitContent() {
   // Verfügbarkeiten und Kurstermine des gewählten Zeitraums laden
   // -------------------------------------------------------------------------
   const loadGrid = useCallback(
-    async (merge: boolean = false) => {
+    async (merge: boolean = false, silent: boolean = false) => {
       if (!selectedTrainerId) return;
       // Schutz gegen parallele Nachlade-Vorgänge: Während ein Ladevorgang
       // läuft, dürfen die Sentinels keinen weiteren auslösen.
       isLoadingRef.current = true;
-      if (!merge) setIsGridLoading(true);
+      // Beim stillen Reload (Refresh-Button, silent = true) wird KEIN
+      // Lade-Spinner angezeigt und nicht gescrollt – analog zur Kursplanung
+      // (loadData(silent = true)). Dadurch bleibt die aktuelle Scroll-Position
+      // des Containers exakt erhalten (kein Layout-Shift, kein Unmount).
+      if (!merge && !silent) setIsGridLoading(true);
       setLoadError(false);
 
       const von = toDateStr(zeitraum.von);
@@ -662,13 +702,51 @@ function VerfuegbarkeitContent() {
         console.error('Fehler beim Laden der Verfügbarkeiten:', err);
         setLoadError(true);
       } finally {
-        if (!merge) setIsGridLoading(false);
+        if (!merge && !silent) setIsGridLoading(false);
         setIsAppending(false);
         isLoadingRef.current = false;
       }
     },
     [selectedTrainerId, zeitraum]
   );
+
+  // -------------------------------------------------------------------------
+  // Manueller Refresh (Daten neu laden, Scroll-Position bleibt erhalten)
+  // -------------------------------------------------------------------------
+
+  // true, solange der Refresh-Button aktiv ist (Icon dreht sich).
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  // Sicherheitsnetz: gespeicherte Scroll-Position des Containers vor dem
+  // Reload. Primär bleibt die Position durch den stillen Reload (kein
+  // Lade-Spinner, gleiche React-Keys) automatisch erhalten; falls sich die
+  // Datenmenge dennoch ändert, wird die Position explizit wiederhergestellt.
+  const scrollPosRef = useRef<number>(0);
+
+  /** Lädt die Daten neu, ohne die aktuelle Bildschirmposition zu verändern.
+   *  Exakt dieselbe Logik wie in der Kursplanung: loadGrid(false, true) ist
+   *  der stille Reload – kein Lade-Spinner, kein programmatisches Scrollen. */
+  const handleRefresh = useCallback(async () => {
+    if (!selectedTrainerId || isLoadingRef.current) return;
+    const container = scrollRef.current;
+    scrollPosRef.current = container ? container.scrollTop : 0;
+    setIsRefreshing(true);
+    try {
+      await loadGrid(false, true);
+      // Nach dem Rendern der neuen Daten die gespeicherte Position exakt
+      // wiederherstellen (doppelter requestAnimationFrame wie beim
+      // Sprung-Scroll, damit das DOM final gezeichnet ist).
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollPosRef.current;
+          }
+        });
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [loadGrid, selectedTrainerId]);
 
   // Vollständiges (Neu-)Laden nur bei Trainerwechsel.
   useEffect(() => {
@@ -1723,10 +1801,15 @@ function VerfuegbarkeitContent() {
         gruppe.filter((k) => istBestaetigt(k.zuweisung_status)).length >= 2
     );
 
+    // Vertikale Kurs-Stapelung: Sortierung nach Status (Grün → Orange → Blau →
+    // Rot), begrenzt auf maximal drei Kurse pro Tageskachel.
+    const { sichtbar: sichtbareKurse, rest: restKurse } =
+      begrenzeAufDrei(tagesKurse);
+
     return (
       <div
         key={datumStr}
-        className={`group flex flex-col rounded-lg p-1 min-h-[96px] transition ${
+        className={`group flex flex-col rounded-lg p-1 min-h-[96px] overflow-hidden transition ${
           feiertag
             ? 'bg-purple-50 text-purple-700 border border-purple-300'
             : wochenende
@@ -1839,45 +1922,28 @@ function VerfuegbarkeitContent() {
           </button>
         </div>
 
-        {/* Kurs-Slot-Buttons: [HH:MM – HH:MM] [Kurstitel], farbcodiert nach Status.
-            Mehrfachbelegungen werden über den primären Kurs gebündelt (▾ (+N)-Popover). */}
-        <div className="mt-0.5 flex-1 space-y-0.5">
-          {slotGruppen.map((gruppe, gruppenIndex) => {
-            // Primärer Kurs: Rangfolge bestätigt > unter Vorbehalt > ausgeschrieben
-            // > abgesagt; bei gleichem Status alphabetisch nach Kurstitel.
-            const sortierteGruppe = [...gruppe].sort((a, b) => {
-              const rangDiff =
-                statusRang(a.zuweisung_status) - statusRang(b.zuweisung_status);
-              if (rangDiff !== 0) return rangDiff;
-              return (a.kursname ?? '').localeCompare(b.kursname ?? '', 'de');
-            });
-            const haupt = sortierteGruppe[0];
-            if (!haupt) return null;
-
-            const uhrzeit = `${formatUhrzeit(haupt.start_time)}-${formatUhrzeit(haupt.end_time)}`;
+        {/* Kurs-Liste: [HH:MM – HH:MM] [Kurstitel], farbcodiert nach Status.
+            Vertikal gestapelt (flex-direction: column) und auf maximal drei Kurse
+            pro Tageskachel begrenzt. Überzählige Kurse erscheinen als dezenter
+            Text-Indikator (z. B. "+1 weiterer Kurs") unterhalb der Liste. */}
+        <div className="mt-0.5 flex flex-col gap-0.5 min-w-0">
+          {sichtbareKurse.map((kurs, index) => {
+            const uhrzeit = `${formatUhrzeit(kurs.start_time)}-${formatUhrzeit(
+              kurs.end_time
+            )}`;
             // Anzeige-Titel: alles ab dem ersten Doppelpunkt entfällt; der
             // Button-Tooltip (vollerText) zeigt weiterhin den vollständigen Titel.
-            const vollerTitel = haupt.kursname ?? 'Kurs';
-            const titel = kuerzeAngebotstitel(haupt.kursname) || 'Kurs';
+            const vollerTitel = kurs.kursname ?? 'Kurs';
+            const titel = kuerzeAngebotstitel(kurs.kursname) || 'Kurs';
             const vollerText = `${uhrzeit} ${vollerTitel}`;
-            const mehrfach = sortierteGruppe.length > 1;
-            const abgesagteInGruppe = sortierteGruppe.filter(
-              (k) => !istAktiverStatus(k.zuweisung_status)
-            );
-            const ersetzt =
-              istAktiverStatus(haupt.zuweisung_status) &&
-              abgesagteInGruppe.length > 0;
 
             return (
-              <div
-                key={`${datumStr}:${gruppenIndex}`}
-                className="relative flex items-center gap-0.5"
-              >
+              <div key={`${datumStr}:kurs:${index}`} className="min-w-0">
                 <button
                   type="button"
                   title={vollerText}
-                  className={`flex-1 min-w-0 rounded border px-1 py-1 text-left text-[8px] sm:text-[10px] leading-tight font-medium transition flex items-center ${statusSlotClasses(
-                    haupt.zuweisung_status
+                  className={`w-full min-w-0 rounded border px-1 py-1 text-left text-[8px] sm:text-[10px] leading-tight font-medium transition flex items-center ${statusSlotClasses(
+                    kurs.zuweisung_status
                   )}`}
                 >
                   <span className="flex items-center gap-1 min-w-0 w-full leading-none">
@@ -1885,44 +1951,27 @@ function VerfuegbarkeitContent() {
                     <span className="truncate flex-1 min-w-0">{titel}</span>
                   </span>
                 </button>
-
-                {/* Info-Icon „i“ für ersetzte abgesagte Kurse (nur bei Einzelterminen). */}
-                {!mehrfach && ersetzt && (
-                  <span
-                    title={`Ersetzt abgesagten Kurs: ${abgesagteInGruppe
-                      .map(
-                        (k) =>
-                          `${formatUhrzeit(k.start_time)} – ${formatUhrzeit(k.end_time)} ${k.kursname ?? 'Kurs'}`
-                      )
-                      .join('; ')}`}
-                    aria-label="Ersetzt abgesagten Kurs"
-                    className="shrink-0 inline-flex items-center justify-center w-4 h-4 self-center rounded-full bg-slate-200 border border-slate-300 text-slate-600 text-[9px] font-bold cursor-help"
-                  >
-                    i
-                  </span>
-                )}
-
-                {/* Badge „▾ (+N)“ für parallele Termine im selben Slot. */}
-                {mehrfach && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      oeffneTagesansicht(datumStr);
-                    }}
-                    title="Tagesliste öffnen"
-                    aria-label={`Tagesliste öffnen (${sortierteGruppe.length} parallele Termine)`}
-                    className={`shrink-0 inline-flex items-center justify-center px-1 rounded border text-[9px] font-semibold transition self-center ${statusSlotClasses(
-                      haupt.zuweisung_status
-                    )} hover:brightness-95`}
-                  >
-                    +{sortierteGruppe.length}
-                  </button>
-                )}
-
               </div>
             );
           })}
+
+          {/* Overflow-Indikator: dezenter Text statt des früheren „+N“-Buttons;
+              öffnet die Tagesliste für alle zugewiesenen Kurse des Tages. */}
+          {restKurse > 0 && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                oeffneTagesansicht(datumStr);
+              }}
+              title="Tagesliste öffnen"
+              aria-label={`Tagesliste öffnen (${restKurse} weitere Kurse)`}
+              className="w-full rounded border border-slate-200 bg-slate-50 px-1 py-0.5 text-left text-[8px] sm:text-[9px] leading-none font-medium text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+            >
+              +{restKurse} weitere{restKurse === 1 ? 'r' : ''} Kurs
+              {restKurse === 1 ? '' : 'e'}
+            </button>
+          )}
         </div>
 
         {/* Reservierungs-Badges: [Start-Ende] Reserviert: [Kunde] (Pastell-Orange) */}
@@ -2669,6 +2718,23 @@ function VerfuegbarkeitContent() {
             className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
           >
             Heute
+          </button>
+
+          {/* Refresh-Button: lädt die Daten still neu (ohne Lade-Spinner und
+              ohne Scroll), damit die aktuelle Bildschirmposition exakt
+              erhalten bleibt – identische Logik wie in der Kursplanung. */}
+          <button
+            type="button"
+            onClick={() => void handleRefresh()}
+            disabled={isRefreshing || isGridLoading}
+            title="Daten neu laden (Scroll-Position bleibt erhalten)"
+            aria-label="Daten neu laden"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-100 transition disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <RefreshCw
+              className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`}
+            />
+            Aktualisieren
           </button>
 
           {/* „Verfügbare Zeiträume erfassen“: direkt rechts neben „Heute“,

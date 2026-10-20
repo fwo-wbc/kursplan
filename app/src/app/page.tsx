@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   CalendarDays,
   Loader2,
@@ -1345,6 +1345,63 @@ export default function Home() {
     );
   }, []);
 
+  // Zentrale Filter-Handler: Jede Filteränderung setzt den jeweiligen State.
+  // Das automatische Springen zum aktuellen Tag übernimmt das useEffect
+  // "filterScrollEffect" weiter unten (nach dem Re-Render).
+  const handleTrainerFilterChange = useCallback((value: string) => {
+    setSelectedTrainerFilter(value);
+  }, []);
+
+  const handleTagFilterChange = useCallback((value: string) => {
+    setSelectedTag(value);
+  }, []);
+
+  const handleJahrFilterChange = useCallback((value: string) => {
+    setSelectedJahr(value);
+  }, []);
+
+  const handleMonatFilterChange = useCallback((value: string) => {
+    setSelectedMonat(value);
+  }, []);
+
+  const handleKwFilterChange = useCallback((value: string) => {
+    setSelectedKw(value);
+  }, []);
+
+  const handleSearchTermChange = useCallback((value: string) => {
+    setSearchTerm(value);
+  }, []);
+
+  const handleSearchKursnrChange = useCallback((value: string) => {
+    setSearchKursnr(value);
+  }, []);
+
+  // Sobald ein Filter angewendet bzw. aktiviert wird, springt die Ansicht
+  // automatisch zum aktuellen Tag (heute), damit die Anzeige immer mit dem
+  // aktuellen Datum beginnt. Der erste Render (initiales Laden) wird über
+  // filterScrollInitial übersprungen – das initiale Scrollen übernimmt
+  // loadData().
+  const filterScrollInitial = useRef(true);
+  useEffect(() => {
+    if (filterScrollInitial.current) {
+      filterScrollInitial.current = false;
+      return;
+    }
+    // Nach dem Re-Render scrollen, sobald das DOM die gefilterte Tabelle
+    // gerendert hat (requestAnimationFrame garantiert berechnetes Layout).
+    requestAnimationFrame(() => scrollToToday(false));
+  }, [
+    selectedTrainerFilter,
+    selectedStatusFilter,
+    selectedJahr,
+    selectedMonat,
+    selectedKw,
+    searchTerm,
+    searchKursnr,
+    selectedTag,
+    scrollToToday,
+  ]);
+
   // Lokalen Zustand eines Kurses aktualisieren (optimistisches Update).
   const patchKurs = useCallback(
     (key: string, updater: (kurs: Kurs) => Kurs) => {
@@ -1757,13 +1814,13 @@ export default function Home() {
                   id="kurs-suche"
                   type="text"
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={(e) => handleSearchTermChange(e.target.value)}
                   placeholder="z. B. Yoga, Rückenschule…"
                   className="w-full pl-9 pr-8 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 {searchTerm !== '' && (
                   <FilterClearButton
-                    onClick={() => setSearchTerm('')}
+                    onClick={() => handleSearchTermChange('')}
                     label="Suchfeld zurücksetzen"
                   />
                 )}
@@ -1781,13 +1838,13 @@ export default function Home() {
                   id="kursnr-suche"
                   type="text"
                   value={searchKursnr}
-                  onChange={(e) => setSearchKursnr(e.target.value)}
+                  onChange={(e) => handleSearchKursnrChange(e.target.value)}
                   placeholder="z. B. xls-gl-m1…"
                   className="w-full pl-9 pr-8 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 {searchKursnr !== '' && (
                   <FilterClearButton
-                    onClick={() => setSearchKursnr('')}
+                    onClick={() => handleSearchKursnrChange('')}
                     label="Kursnr.-Suchfeld zurücksetzen"
                   />
                 )}
@@ -1802,7 +1859,7 @@ export default function Home() {
               <select
                 id="trainer-filter"
                 value={selectedTrainerFilter}
-                onChange={(e) => setSelectedTrainerFilter(e.target.value)}
+                onChange={(e) => handleTrainerFilterChange(e.target.value)}
                 className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="ALL">Alle Trainer</option>
@@ -1826,7 +1883,7 @@ export default function Home() {
                 <select
                   id="tag-filter"
                   value={selectedTag}
-                  onChange={(e) => setSelectedTag(e.target.value)}
+                  onChange={(e) => handleTagFilterChange(e.target.value)}
                   className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="ALL">Alle Tags</option>
@@ -1839,7 +1896,7 @@ export default function Home() {
                 <SelectChevron />
                 {selectedTag !== 'ALL' && (
                   <FilterClearButton
-                    onClick={() => setSelectedTag('ALL')}
+                    onClick={() => handleTagFilterChange('ALL')}
                     label="Tag-Filter zurücksetzen"
                     position="right-7"
                   />
@@ -1856,7 +1913,7 @@ export default function Home() {
                 <select
                   id="jahr-filter"
                   value={selectedJahr}
-                  onChange={(e) => setSelectedJahr(e.target.value)}
+                  onChange={(e) => handleJahrFilterChange(e.target.value)}
                   className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="ALL">Alle</option>
@@ -1869,7 +1926,7 @@ export default function Home() {
                 <SelectChevron />
                 {selectedJahr !== 'ALL' && (
                   <FilterClearButton
-                    onClick={() => setSelectedJahr('ALL')}
+                    onClick={() => handleJahrFilterChange('ALL')}
                     label="Jahr-Filter zurücksetzen"
                     position="right-7"
                   />
@@ -1886,7 +1943,7 @@ export default function Home() {
                 <select
                   id="monat-filter"
                   value={selectedMonat}
-                  onChange={(e) => setSelectedMonat(e.target.value)}
+                  onChange={(e) => handleMonatFilterChange(e.target.value)}
                   className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="ALL">Alle</option>
@@ -1899,7 +1956,7 @@ export default function Home() {
                 <SelectChevron />
                 {selectedMonat !== 'ALL' && (
                   <FilterClearButton
-                    onClick={() => setSelectedMonat('ALL')}
+                    onClick={() => handleMonatFilterChange('ALL')}
                     label="Monat-Filter zurücksetzen"
                     position="right-7"
                   />
@@ -1916,7 +1973,7 @@ export default function Home() {
                 <select
                   id="kw-filter"
                   value={selectedKw}
-                  onChange={(e) => setSelectedKw(e.target.value)}
+                  onChange={(e) => handleKwFilterChange(e.target.value)}
                   className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="ALL">Alle</option>
@@ -1929,7 +1986,7 @@ export default function Home() {
                 <SelectChevron />
                 {selectedKw !== 'ALL' && (
                   <FilterClearButton
-                    onClick={() => setSelectedKw('ALL')}
+                    onClick={() => handleKwFilterChange('ALL')}
                     label="Kalenderwochen-Filter zurücksetzen"
                     position="right-7"
                   />
@@ -2148,19 +2205,40 @@ export default function Home() {
                       </div>
                       {kurs.kursnr?.trim() && (
                         <div className="text-xs font-mono text-gray-500 mt-0.5">
-                          #{kurs.kursnr.trim()}
+                          {kurs.kursnr.trim()}
                         </div>
                       )}
                       {kurs.tags && kurs.tags.length > 0 && (
                         <div className="mt-1 flex flex-wrap gap-1">
-                          {kurs.tags.map((tag) => (
-                            <span
-                              key={tag}
-                              className="text-[11px] px-1.5 py-0.5 rounded font-medium bg-indigo-50 text-indigo-700 border border-indigo-200"
-                            >
-                              {tag}
-                            </span>
-                          ))}
+                          {kurs.tags.map((tag) => {
+                            const istAktiv = selectedTag === tag;
+                            return (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() =>
+                                  // Exklusiver Filter: Setzt den Tag als aktiven
+                                  // Filter. Ein erneuter Klick auf denselben Tag
+                                  // (bereits aktiv) setzt den Filter zurück.
+                                  // Da selectedTag ein Einzelwert ist, ersetzt
+                                  // jeder neue Klick zwangsläufig den vorherigen
+                                  // Filter – es ist nie mehr als einer aktiv.
+                                  handleTagFilterChange(istAktiv ? 'ALL' : tag)
+                                }
+                                title={`Nach Tag „${tag}" filtern${
+                                  istAktiv ? ' (Filter zurücksetzen)' : ''
+                                }`}
+                                aria-pressed={istAktiv}
+                                className={`text-[11px] px-1.5 py-0.5 rounded font-medium border cursor-pointer transition ${
+                                  istAktiv
+                                    ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm ring-2 ring-indigo-300'
+                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                }`}
+                              >
+                                {tag}
+                              </button>
+                            );
+                          })}
                         </div>
                       )}
                       {(hinweisSchliessung ||
