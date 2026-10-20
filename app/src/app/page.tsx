@@ -13,6 +13,7 @@ import {
   ChevronDown,
   User,
   FileText,
+  Wand2,
 } from 'lucide-react';
 import Navigation from './components/Navigation';
 import HeaderLogo from './components/HeaderLogo';
@@ -117,6 +118,80 @@ interface Kurs {
 interface Feedback {
   type: 'success' | 'error';
   text: string;
+}
+
+// ---------------------------------------------------------------------------
+// Bereinigung doppelter Trainer-Zuweisungen (POST /api/cleanup-assignments)
+// ---------------------------------------------------------------------------
+
+/** Ein Trainer samt Zuweisungsstatus in der Bereinigungs-Antwort. */
+interface CleanupTrainer {
+  trainer_id: number;
+  name: string;
+  kuerzel: string | null;
+  status: string | null;
+}
+
+/** Ein automatisch aufgelöster Termin (Dublette mit genau einer Bestätigung). */
+interface CleanupBereinigt {
+  date_id: string;
+  offer_id: string | null;
+  kursnr: string | null;
+  titel: string | null;
+  datum: string | null;
+  start_uhr: number | null;
+  behalten: CleanupTrainer;
+  entfernt: CleanupTrainer[];
+}
+
+/** Eine uneindeutige Dublette zur manuellen Korrektur (kein Löschvorgang). */
+interface CleanupKonflikt {
+  date_id: string;
+  offer_id: string | null;
+  kursnr: string | null;
+  titel: string | null;
+  datum: string | null;
+  start_uhr: number | null;
+  trainer: CleanupTrainer[];
+}
+
+/** Vollständige Antwort von POST /api/cleanup-assignments. */
+interface CleanupErgebnis {
+  ok: boolean;
+  bereinigt: CleanupBereinigt[];
+  konflikte: CleanupKonflikt[];
+  zusammenfassung: {
+    dubletten: number;
+    bereinigt: number;
+    konflikte: number;
+    geloeschte_zuweisungen: number;
+  };
+}
+
+/** Formatiert eine Startzeit (Dezimalstunden) als HH:MM. */
+function cleanupStartzeitText(startUhr: number | null): string {
+  if (startUhr === null || !Number.isFinite(startUhr)) return '–';
+  const stunden = Math.floor(startUhr);
+  const minuten = Math.round((startUhr - stunden) * 60);
+  return `${String(stunden).padStart(2, '0')}:${String(minuten).padStart(2, '0')}`;
+}
+
+/** Tailwind-Klassen für den farbigen Status-Badge eines Trainers. */
+function cleanupStatusBadgeClass(status: string | null): string {
+  switch (status) {
+    case 'bestätigt':
+      return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    case 'ausgeschrieben':
+      return 'bg-blue-100 text-blue-700 border-blue-200';
+    case 'unter Vorbehalt':
+      return 'bg-amber-100 text-amber-700 border-amber-200';
+    case 'abgesagt':
+      return 'bg-rose-100 text-rose-700 border-rose-200';
+    case 'keine Zuordnung':
+      return 'bg-slate-100 text-slate-600 border-slate-200';
+    default:
+      return 'bg-slate-100 text-slate-600 border-slate-200';
+  }
 }
 
 /** Beschreibung einer Trainer-Doppelbelegung eines Kurses. */
@@ -845,6 +920,65 @@ function trainerNichtVerfuegbarHinweis(kurs: Kurs): KursHinweis | null {
   };
 }
 
+/** Eindeutige Schlüssel der klickbaren Hinweis-Badges in der Kurstitel-Spalte. */
+type BadgeFilterKey = 'schliessung' | 'lastminute' | 'trainer' | 'tnliste' | 'konflikt';
+
+/** Prüft, ob ein Kurs einen echten Terminkonflikt hat (beide überlappenden
+ *  Kurse mit bestätigter Zuweisung). Repliziert die Kernlogik von
+ *  konflikteProKurs für den Badge-Filter „Terminkonflikt". */
+function kursHatEchtenKonflikt(kurs: Kurs, alleKurse: Kurs[]): boolean {
+  if (!istKonfliktRelevant(kurs)) return false;
+  const trainerId = kurs.zuweisungen[0]?.trainer_id ?? null;
+  if (trainerId === null) return false;
+  if (!istBestaetigtStatus(kurs.zuweisungen[0]?.status ?? null)) return false;
+
+  return alleKurse.some((anderer) => {
+    if (anderer === kurs) return false;
+    if (!istKonfliktRelevant(anderer)) return false;
+    if ((anderer.zuweisungen[0]?.trainer_id ?? null) !== trainerId) return false;
+    if (!istBestaetigtStatus(anderer.zuweisungen[0]?.status ?? null)) return false;
+
+    for (const ta of kurs.termine) {
+      for (const tb of anderer.termine) {
+        if (
+          ueberschneidenSich(
+            ta.date_start,
+            ta.date_end,
+            tb.date_start,
+            tb.date_end
+          )
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  });
+}
+
+/** Prüft, ob ein Kurs das angegebene Hinweis-Badge trägt (Badge-Filter). */
+function kursHatBadge(
+  kurs: Kurs,
+  badge: BadgeFilterKey,
+  heuteIso: string,
+  alleKurse: Kurs[]
+): boolean {
+  switch (badge) {
+    case 'schliessung':
+      return schliessungHinweis(kurs, heuteIso) !== null;
+    case 'lastminute':
+      return lastMinuteHinweis(kurs, diffTageBisStart(kurs, heuteIso)) !== null;
+    case 'trainer':
+      return trainerNichtVerfuegbarHinweis(kurs) !== null;
+    case 'tnliste':
+      return tnListeHinweis(kurs) !== null;
+    case 'konflikt':
+      return kursHatEchtenKonflikt(kurs, alleKurse);
+    default:
+      return false;
+  }
+}
+
 /**
  * Berechnet das automatische Honorar eines Kurses nach Modell A anhand der
  * Vergütungssätze des zugewiesenen Trainers. Liefert null, wenn kein Trainer
@@ -1039,6 +1173,14 @@ export default function Home() {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchKursnr, setSearchKursnr] = useState<string>('');
   const [selectedTag, setSelectedTag] = useState<string>('ALL');
+  const [selectedBadge, setSelectedBadge] = useState<string>('ALL');
+  const [selectedTitel, setSelectedTitel] = useState<string>('ALL');
+
+  // Bereinigung doppelter Trainer-Zuweisungen (Button im Header + Report-Modal).
+  const [cleanupOffen, setCleanupOffen] = useState<boolean>(false);
+  const [cleanupLaeuft, setCleanupLaeuft] = useState<boolean>(false);
+  const [cleanupFehler, setCleanupFehler] = useState<string | null>(null);
+  const [cleanupErgebnis, setCleanupErgebnis] = useState<CleanupErgebnis | null>(null);
 
   // Scrollt zur Zeile des nächsten anstehenden Termins (heute oder später).
   // Container-sicher: findet den tatsächlich scrollenden Parent-Container
@@ -1226,6 +1368,22 @@ export default function Home() {
         }
       }
 
+      // Badge filtern (Option „ALL“ = kein Badge-Filter aktiv). Die Prüfung
+      // nutzt dieselben Hinweis-Regeln wie die Badge-Anzeige in der
+      // Kurstitel-Spalte, damit Filter und Anzeige immer übereinstimmen.
+      if (selectedBadge !== 'ALL') {
+        const heute = toIsoDate(new Date());
+        if (!kursHatBadge(kurs, selectedBadge as BadgeFilterKey, heute, kurse)) {
+          return false;
+        }
+      }
+
+      // Kurstitel filtern (Option „ALL“ = kein Titel-Filter aktiv). Exakter
+      // Vergleich auf den vollständigen Angebotstitel.
+      if (selectedTitel !== 'ALL' && kurs.offer_name !== selectedTitel) {
+        return false;
+      }
+
       // Trainer filtern.
       if (selectedTrainerFilter !== 'ALL') {
         const hatTrainer = kurs.zuweisungen[0]?.trainer_id ?? null;
@@ -1244,6 +1402,8 @@ export default function Home() {
     searchTerm,
     searchKursnr,
     selectedTag,
+    selectedBadge,
+    selectedTitel,
     selectedStatusFilter,
     selectedJahr,
     selectedMonat,
@@ -1323,6 +1483,8 @@ export default function Home() {
     selectedMonat !== 'ALL' ||
     selectedKw !== 'ALL' ||
     selectedTag !== 'ALL' ||
+    selectedBadge !== 'ALL' ||
+    selectedTitel !== 'ALL' ||
     selectedStatusFilter.length !== STATUS_FILTER_OPTIONS.length ||
     searchTerm.trim() !== '' ||
     searchKursnr.trim() !== '';
@@ -1334,6 +1496,8 @@ export default function Home() {
     setSelectedMonat('ALL');
     setSelectedKw('ALL');
     setSelectedTag('ALL');
+    setSelectedBadge('ALL');
+    setSelectedTitel('ALL');
     setSearchTerm('');
     setSearchKursnr('');
   }, []);
@@ -1354,6 +1518,26 @@ export default function Home() {
 
   const handleTagFilterChange = useCallback((value: string) => {
     setSelectedTag(value);
+    // Exklusive Filter-Logik: Ein Tag-Filter setzt Badge- und Titel-Filter
+    // zurück, damit nie mehr als einer der drei Filter aktiv ist.
+    setSelectedBadge('ALL');
+    setSelectedTitel('ALL');
+  }, []);
+
+  const handleBadgeFilterChange = useCallback((value: string) => {
+    setSelectedBadge(value);
+    // Exklusive Filter-Logik: Ein Badge-Filter setzt Tag- und Titel-Filter
+    // zurück, damit nie mehr als einer der drei Filter aktiv ist.
+    setSelectedTag('ALL');
+    setSelectedTitel('ALL');
+  }, []);
+
+  const handleTitelFilterChange = useCallback((value: string) => {
+    setSelectedTitel(value);
+    // Exklusive Filter-Logik: Ein Titel-Filter setzt Tag- und Badge-Filter
+    // zurück, damit nie mehr als einer der drei Filter aktiv ist.
+    setSelectedTag('ALL');
+    setSelectedBadge('ALL');
   }, []);
 
   const handleJahrFilterChange = useCallback((value: string) => {
@@ -1399,6 +1583,8 @@ export default function Home() {
     searchTerm,
     searchKursnr,
     selectedTag,
+    selectedBadge,
+    selectedTitel,
     scrollToToday,
   ]);
 
@@ -1758,6 +1944,36 @@ export default function Home() {
           return start !== null && toIsoDate(start) === naechsterKurstagIso;
         });
 
+  /** Führt die Bereinigung doppelter Trainer-Zuweisungen über die API aus. */
+  const cleanupAusfuehren = useCallback(async () => {
+    setCleanupLaeuft(true);
+    setCleanupFehler(null);
+    setCleanupErgebnis(null);
+    try {
+      const res = await fetch('/api/cleanup-assignments', { method: 'POST' });
+      const data = (await res.json()) as CleanupErgebnis | { error?: string };
+      if (!res.ok) {
+        setCleanupFehler(
+          (data as { error?: string }).error ??
+            `Server antwortete mit Status ${res.status}.`
+        );
+        return;
+      }
+      setCleanupErgebnis(data as CleanupErgebnis);
+      // Nach erfolgreicher Bereinigung die Kursliste still neu laden, damit
+      // entfernte Zuweisungen sofort aus der Tabelle verschwinden.
+      void loadData(true);
+    } catch (err) {
+      setCleanupFehler(
+        err instanceof Error
+          ? err.message
+          : 'Netzwerkfehler beim Aufruf der Bereinigung.'
+      );
+    } finally {
+      setCleanupLaeuft(false);
+    }
+  }, [loadData]);
+
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-800 sm:p-6">
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
@@ -1773,6 +1989,22 @@ export default function Home() {
         </div>
         <div className="flex items-center gap-4 shrink-0">
           <Navigation />
+          {/* Doppelte Trainer-Zuweisungen erkennen und bereinigen – bewusst an
+              letzter Position hinter dem 'Kurstransfer'-Link, da die Funktion
+              nur selten genutzt wird. */}
+          <button
+            type="button"
+            onClick={() => {
+              setCleanupErgebnis(null);
+              setCleanupFehler(null);
+              setCleanupOffen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg hover:bg-slate-100 transition shrink-0"
+            title="Doppelte Trainer-Zuweisungen erkennen und bereinigen"
+          >
+            <Wand2 className="w-4 h-4 text-blue-600" />
+            Zuweisungen bereinigen
+          </button>
           <HeaderLogo />
         </div>
       </header>
@@ -1815,7 +2047,7 @@ export default function Home() {
                   type="text"
                   value={searchTerm}
                   onChange={(e) => handleSearchTermChange(e.target.value)}
-                  placeholder="z. B. Yoga, Rückenschule…"
+                  placeholder="z. B. Excel Grundlagen"
                   className="w-full pl-9 pr-8 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 {searchTerm !== '' && (
@@ -2144,6 +2376,20 @@ export default function Home() {
                 const hinweisTrainer = trainerNichtVerfuegbarHinweis(kurs);
                 const hinweisTnListe = tnListeHinweis(kurs);
 
+                // Klickbare Hinweis-Badges: Schlüssel + Hinweis-Paar für die
+                // Badge-Filterung (exklusive Filter-Logik wie bei den Tags).
+                const badgeEintraege: {
+                  key: BadgeFilterKey;
+                  hinweis: KursHinweis | null;
+                }[] = [
+                  { key: 'schliessung', hinweis: hinweisSchliessung },
+                  { key: 'lastminute', hinweis: hinweisLastMinute },
+                  { key: 'trainer', hinweis: hinweisTrainer },
+                  { key: 'tnliste', hinweis: hinweisTnListe },
+                ];
+                const badgeAktiv = (key: BadgeFilterKey) =>
+                  selectedBadge === key;
+
                 // Honorar: manueller Wert hat Vorrang, sonst Modell-A-Vorschlag.
                 const autoHonorar = berechneKursHonorar(kurs, zuweisung, trainerMap);
                 const manualHonorar = zuweisung?.honorar_manuell ?? null;
@@ -2168,9 +2414,9 @@ export default function Home() {
                     data-date={startDatum ? toIsoDate(startDatum) : undefined}
                     className={`border-b border-slate-100 last:border-b-0 align-top transition-colors ${istHeuteZeile ? 'scroll-mt-32 ' : ''}${
                       istNaechsterKurstag
-                        ? 'border-l-4 border-l-rose-400 dark:border-l-rose-700 bg-red-100/60 dark:bg-red-950/35 hover:bg-red-100/80 dark:hover:bg-red-950/50'
+                        ? 'border-l-4 border-l-amber-500 bg-amber-100 hover:bg-amber-200'
                         : istFolgetermin
-                          ? 'border-l-4 border-l-red-800 dark:border-l-red-600 bg-rose-50/40 dark:bg-rose-950/20 hover:bg-rose-100/50 dark:hover:bg-rose-950/35'
+                          ? 'border-l-4 border-l-amber-200 bg-amber-50 hover:bg-amber-100'
                           : index % 2 === 0
                             ? 'bg-white hover:bg-slate-100'
                             : 'bg-slate-100/75 hover:bg-slate-100'
@@ -2197,12 +2443,32 @@ export default function Home() {
 
                     {/* Kurs */}
                     <td className="px-3 py-3 align-top">
-                      <div
-                        className="font-medium text-slate-800"
-                        title={kurs.offer_name ?? undefined}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          // Exklusiver Filter: Setzt den Kurstitel als aktiven
+                          // Filter. Ein erneuter Klick auf denselben Titel
+                          // (bereits aktiv) setzt den Filter zurück.
+                          handleTitelFilterChange(
+                            selectedTitel === kurs.offer_name
+                              ? 'ALL'
+                              : (kurs.offer_name ?? '')
+                          )
+                        }
+                        title={`Nach Kurstitel „${kurs.offer_name}" filtern${
+                          selectedTitel === kurs.offer_name
+                            ? ' (Filter zurücksetzen)'
+                            : ''
+                        }`}
+                        aria-pressed={selectedTitel === kurs.offer_name}
+                        className={`text-left font-medium transition ${
+                          selectedTitel === kurs.offer_name
+                            ? 'text-indigo-700 underline decoration-indigo-400 decoration-2 underline-offset-2'
+                            : 'text-slate-800 hover:text-indigo-600 hover:underline hover:decoration-indigo-300'
+                        }`}
                       >
                         {kuerzeAngebotstitel(kurs.offer_name) || '–'}
-                      </div>
+                      </button>
                       {kurs.kursnr?.trim() && (
                         <div className="text-xs font-mono text-gray-500 mt-0.5">
                           {kurs.kursnr.trim()}
@@ -2247,30 +2513,56 @@ export default function Home() {
                         hinweisTnListe ||
                         hatEchtenKonflikt) && (
                         <div className="mt-1 flex flex-wrap gap-1 items-center">
-                          {hinweisSchliessung && (
-                            <span className={hinweisSchliessung.className}>
-                              {hinweisSchliessung.text}
-                            </span>
-                          )}
-                          {hinweisLastMinute && (
-                            <span className={hinweisLastMinute.className}>
-                              {hinweisLastMinute.text}
-                            </span>
-                          )}
-                          {hinweisTrainer && (
-                            <span className={hinweisTrainer.className}>
-                              {hinweisTrainer.text}
-                            </span>
-                          )}
-                          {hinweisTnListe && (
-                            <span className={hinweisTnListe.className}>
-                              {hinweisTnListe.text}
-                            </span>
+                          {badgeEintraege.map(({ key, hinweis }) =>
+                            hinweis ? (
+                              <button
+                                key={key}
+                                type="button"
+                                onClick={() =>
+                                  // Exklusiver Filter: Setzt das Badge als
+                                  // aktiven Filter. Ein erneuter Klick auf
+                                  // dasselbe Badge (bereits aktiv) setzt den
+                                  // Filter zurück.
+                                  handleBadgeFilterChange(
+                                    badgeAktiv(key) ? 'ALL' : key
+                                  )
+                                }
+                                title={`Nach Badge „${hinweis.text}" filtern${
+                                  badgeAktiv(key) ? ' (Filter zurücksetzen)' : ''
+                                }`}
+                                aria-pressed={badgeAktiv(key)}
+                                className={`${hinweis.className} cursor-pointer transition ${
+                                  badgeAktiv(key)
+                                    ? 'ring-2 ring-indigo-400'
+                                    : 'hover:ring-2 hover:ring-indigo-200'
+                                }`}
+                              >
+                                {hinweis.text}
+                              </button>
+                            ) : null
                           )}
                           {hatEchtenKonflikt && (
-                            <span className="bg-red-600 text-yellow-300 font-semibold px-2 py-0.5 rounded text-xs">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleBadgeFilterChange(
+                                  badgeAktiv('konflikt') ? 'ALL' : 'konflikt'
+                                )
+                              }
+                              title={`Nach Badge „Terminkonflikt" filtern${
+                                badgeAktiv('konflikt')
+                                  ? ' (Filter zurücksetzen)'
+                                  : ''
+                              }`}
+                              aria-pressed={badgeAktiv('konflikt')}
+                              className={`bg-red-600 text-yellow-300 font-semibold px-2 py-0.5 rounded text-xs cursor-pointer transition ${
+                                badgeAktiv('konflikt')
+                                  ? 'ring-2 ring-indigo-400'
+                                  : 'hover:ring-2 hover:ring-indigo-200'
+                              }`}
+                            >
                               Terminkonflikt
-                            </span>
+                            </button>
                           )}
                         </div>
                       )}
@@ -2488,6 +2780,268 @@ export default function Home() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Modal: Bereinigung doppelter Trainer-Zuweisungen */}
+      {cleanupOffen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cleanup-modal-titel"
+          onClick={() => setCleanupOffen(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Kopf */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+              <h2
+                id="cleanup-modal-titel"
+                className="text-lg font-bold text-slate-800 flex items-center gap-2"
+              >
+                <Wand2 className="w-5 h-5 text-blue-600" />
+                Zuweisungen bereinigen
+              </h2>
+              <button
+                type="button"
+                onClick={() => setCleanupOffen(false)}
+                aria-label="Schließen"
+                className="text-slate-400 hover:text-slate-600 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              {/* Fehleranzeige */}
+              {cleanupFehler && (
+                <div className="mb-4 flex items-start gap-2 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-semibold">Bereinigung fehlgeschlagen</p>
+                    <p className="mt-0.5 text-xs">{cleanupFehler}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Startansicht: Erklärung + Auslöse-Button */}
+              {!cleanupErgebnis && !cleanupFehler && (
+                <div className="text-sm text-slate-600">
+                  <p>
+                    Ermittelt alle Kurs-Termine mit mehr als einer Trainer-Zuweisung.
+                    Eindeutige Fälle (exakt ein Trainer mit Status „Bestätigt“) werden
+                    automatisch bereinigt; uneindeutige Fälle landen im Report zur
+                    manuellen Korrektur.
+                  </p>
+                  <div className="mt-4 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void cleanupAusfuehren()}
+                      disabled={cleanupLaeuft}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-semibold rounded-lg transition"
+                    >
+                      {cleanupLaeuft ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Wand2 className="w-4 h-4" />
+                      )}
+                      {cleanupLaeuft ? 'Bereinigung läuft…' : 'Bereinigung jetzt ausführen'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Ergebnisdarstellung */}
+              {cleanupErgebnis && (
+                <>
+                  {/* Zusammenfassung */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                    <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                      <p className="text-xs font-semibold text-slate-500">Dubletten</p>
+                      <p className="text-xl font-bold text-slate-800">
+                        {cleanupErgebnis.zusammenfassung.dubletten}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+                      <p className="text-xs font-semibold text-emerald-600">Bereinigt</p>
+                      <p className="text-xl font-bold text-emerald-700">
+                        {cleanupErgebnis.zusammenfassung.bereinigt}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-lg bg-rose-50 border border-rose-200">
+                      <p className="text-xs font-semibold text-rose-600">Konflikte</p>
+                      <p className="text-xl font-bold text-rose-700">
+                        {cleanupErgebnis.zusammenfassung.konflikte}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                      <p className="text-xs font-semibold text-slate-500">Gelöscht</p>
+                      <p className="text-xl font-bold text-slate-800">
+                        {cleanupErgebnis.zusammenfassung.geloeschte_zuweisungen}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Kein Handlungsbedarf */}
+                  {cleanupErgebnis.bereinigt.length === 0 &&
+                    cleanupErgebnis.konflikte.length === 0 && (
+                      <div className="flex items-start gap-2 p-3 rounded-lg bg-emerald-50 text-emerald-700 text-sm">
+                        <span className="mt-0.5">✓</span>
+                        <p>
+                          Keine doppelten Trainer-Zuweisungen gefunden. Die Zuweisungen
+                          sind konsistent.
+                        </p>
+                      </div>
+                    )}
+
+                  {/* Automatisch bereinigte Fälle */}
+                  {cleanupErgebnis.bereinigt.length > 0 && (
+                    <div className="mb-5">
+                      <h3 className="text-sm font-bold text-slate-700 mb-2">
+                        Automatisch bereinigt ({cleanupErgebnis.bereinigt.length})
+                      </h3>
+                      <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-slate-50 text-left text-slate-500">
+                              <th className="px-3 py-2 font-semibold">Kursnr.</th>
+                              <th className="px-3 py-2 font-semibold">Titel</th>
+                              <th className="px-3 py-2 font-semibold">Datum</th>
+                              <th className="px-3 py-2 font-semibold">Start</th>
+                              <th className="px-3 py-2 font-semibold">Behalten</th>
+                              <th className="px-3 py-2 font-semibold">Entfernt</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {cleanupErgebnis.bereinigt.map((fall) => (
+                              <tr
+                                key={fall.date_id}
+                                className="border-t border-slate-100"
+                              >
+                                <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                                  {fall.kursnr ?? '–'}
+                                </td>
+                                <td className="px-3 py-2 text-slate-700">
+                                  {fall.titel ?? '–'}
+                                </td>
+                                <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                                  {fall.datum ?? '–'}
+                                </td>
+                                <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                                  {cleanupStartzeitText(fall.start_uhr)}
+                                </td>
+                                <td className="px-3 py-2 whitespace-nowrap">
+                                  <span className="inline-flex items-center gap-1">
+                                    <span className="font-medium text-emerald-700">
+                                      {fall.behalten.name}
+                                    </span>
+                                    {fall.behalten.kuerzel && (
+                                      <span className="text-slate-400">
+                                        ({fall.behalten.kuerzel})
+                                      </span>
+                                    )}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-slate-500">
+                                  {fall.entfernt
+                                    .map((t) => `${t.name}${t.kuerzel ? ` (${t.kuerzel})` : ''}`)
+                                    .join(', ') || '–'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ungelöste Konflikte zur manuellen Korrektur */}
+                  {cleanupErgebnis.konflikte.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-700 mb-1 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        Ungelöste Konflikte – bitte manuell korrigieren (
+                        {cleanupErgebnis.konflikte.length})
+                      </h3>
+                      <p className="text-xs text-slate-500 mb-2">
+                        Keine oder mehrere Zuweisungen haben den Status „Bestätigt“.
+                        Es wurde nichts gelöscht. Bitte den Status in der Kursplanung
+                        korrigieren und die Bereinigung erneut ausführen.
+                      </p>
+                      <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-slate-50 text-left text-slate-500">
+                              <th className="px-3 py-2 font-semibold">Kursnr.</th>
+                              <th className="px-3 py-2 font-semibold">Titel</th>
+                              <th className="px-3 py-2 font-semibold">Datum</th>
+                              <th className="px-3 py-2 font-semibold">Start</th>
+                              <th className="px-3 py-2 font-semibold">Trainer & Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {cleanupErgebnis.konflikte.map((fall) => (
+                              <tr
+                                key={fall.date_id}
+                                className="border-t border-slate-100"
+                              >
+                                <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                                  {fall.kursnr ?? '–'}
+                                </td>
+                                <td className="px-3 py-2 text-slate-700">
+                                  {fall.titel ?? '–'}
+                                </td>
+                                <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                                  {fall.datum ?? '–'}
+                                </td>
+                                <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                                  {cleanupStartzeitText(fall.start_uhr)}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <ul className="space-y-1">
+                                    {fall.trainer.map((t) => (
+                                      <li
+                                        key={t.trainer_id}
+                                        className="flex items-center gap-2"
+                                      >
+                                        <span className="text-slate-700">
+                                          {t.name}
+                                          {t.kuerzel ? ` (${t.kuerzel})` : ''}
+                                        </span>
+                                        <span
+                                          className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold ${cleanupStatusBadgeClass(t.status)}`}
+                                        >
+                                          {t.status ?? 'ohne Status'}
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Fuß */}
+            <div className="px-5 py-3 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setCleanupOffen(false)}
+                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium hover:bg-slate-50 transition"
+              >
+                Schließen
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </main>

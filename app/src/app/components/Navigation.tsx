@@ -4,15 +4,19 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
+  CalendarDays,
   CalendarRange,
   Users,
   RefreshCw,
   Check,
   TriangleAlert,
   ArrowRightLeft,
+  LayoutDashboard,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
+  { href: '/', label: 'Kursplanung', icon: LayoutDashboard },
+  { href: '/kalender', label: 'Monatsübersicht', icon: CalendarDays },
   { href: '/trainer/verfuegbarkeit', label: 'Trainerverfügbarkeiten', icon: CalendarRange },
   { href: '/trainer', label: 'Trainer verwalten', icon: Users },
   {
@@ -122,11 +126,24 @@ function SyncButton() {
 export default function Navigation() {
   const pathname = usePathname();
 
+  // Bedingtes Rendering: Auf der Monatsübersicht (/kalender) wird der
+  // "Monatsübersicht"-Button ausgeblendet und stattdessen der Button
+  // "Kursplanung" (/) angezeigt. Umgekehrt wird auf der Kursplanung der
+  // "Kursplanung"-Button ausgeblendet und "Monatsübersicht" angezeigt.
+  const isKalender = pathname === '/kalender';
+  const isKursplanung = pathname === '/';
+
+  const visibleNavItems = NAV_ITEMS.filter((item) => {
+    if (item.href === '/kalender' && isKalender) return false;
+    if (item.href === '/' && isKursplanung) return false;
+    return true;
+  });
+
   return (
     <>
       <SyncButton />
       <nav className="flex items-center gap-1" aria-label="Hauptnavigation">
-        {NAV_ITEMS.map((item) => {
+        {visibleNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href;
 

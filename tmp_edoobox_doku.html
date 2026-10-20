@@ -1,0 +1,1503 @@
+
+		
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+		
+<!DOCTYPE html>
+<html lang="de" data-page-template="article" data-page-id="ci_2d3b5acfb10c5167eee58623255328c16b9ed91dff09322c9c38b3fe9c7a4ad5" data-confluence-content-id="673382401" data-color-scheme="light">
+<head>
+	<meta charset="UTF-8">
+	
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+		<meta name="color-scheme" content="light">
+
+						<link id="pageTreeSource" rel="preload" href="/docs/__pagetree.json" as="fetch" type="application/json" crossorigin="anonymous">
+
+		<meta name="site-path" content="/">
+
+					<link rel="x-site-path" href="/">
+	<link rel="x-root-path" href="/">
+
+	<meta name="site-default-language" content="de">
+		<meta name="site-languages" content="de">
+		<meta name="confluence-content-type" content="page">
+		<meta name="confluence-base-url" content="https://edoobox.atlassian.net/wiki">
+		<meta name="confluence-space-key" content="DOK">
+
+		<meta name="google-site-verification" content="google-site-verification=yBW23mIBKx6jE6pApjjfx2YSBzouPh6p4l-vJfctbpY">
+
+
+
+	<link rel="icon" href="/__site/8f022518-c58a-4a0c-8996-b1065eaa930d/cropped-edoobox_Icon_Farbig-270x270.png" type="image/svg+xml">
+
+
+
+
+
+
+
+
+
+
+
+		<title>edoobox API erste Schritte | Dokumentation V2</title>
+		<meta property="og:title" content="edoobox API erste Schritte | Dokumentation V2">
+		<meta property="twitter:title" content="edoobox API erste Schritte | Dokumentation V2">
+
+		<link rel="canonical" href="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte">
+		<meta property="og:url" content="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte">
+
+		<meta name="description" content="Mittels der API haben Sie die Möglichkeit Daten zu erstellen, aus der edoobox zu ziehen, zu verändern oder zu löschen.">
+		<meta property="og:description" content="Mittels der API haben Sie die Möglichkeit Daten zu erstellen, aus der edoobox zu ziehen, zu verändern oder zu löschen.">
+		<meta property="twitter:description" content="Mittels der API haben Sie die Möglichkeit Daten zu erstellen, aus der edoobox zu ziehen, zu verändern oder zu löschen.">
+
+		<meta property="og:image" content="https://v2.docs.edoobox.com/__attachments/a_7b45bc767d3de64e3487f610259dd969871dc348fec9a912b694657c1f410312/Screenshot%202023-02-17%20at%2007.34.44-20230217-063745.png?cb=0a6624a86d69df6ae20b0f057ac39454">
+		<meta property="twitter:image" content="https://v2.docs.edoobox.com/__attachments/a_7b45bc767d3de64e3487f610259dd969871dc348fec9a912b694657c1f410312/Screenshot%202023-02-17%20at%2007.34.44-20230217-063745.png?cb=0a6624a86d69df6ae20b0f057ac39454">
+
+	<meta property="og:type" content="website">
+	<meta property="twitter:card" content="summary_large_image">
+
+		<meta name="page-last-modified" content="2024-06-21T07:48:33.430Z">
+
+		<script>
+		(function () {
+			const defaultLanguageMeta = /** @type {string|undefined} */(document.querySelector('meta[name="site-default-language"]')?.content);
+			const availableLanguagesMeta = /** @type {string|undefined} */(document.querySelector('meta[name="site-languages"]')?.content);
+			const fallbackLanguage = defaultLanguageMeta ?? 'en';
+			const supportedLanguagesFromMeta = availableLanguagesMeta?.split(',') ?? [];
+			const supportedLanguages = [...new Set([fallbackLanguage, ...supportedLanguagesFromMeta])].filter(Boolean);
+			const detectedLanguage = new URLSearchParams(self.location.search).get('l') || document.documentElement.lang;
+			const resolvedLanguage = supportedLanguages.includes(detectedLanguage) ? detectedLanguage : fallbackLanguage;
+			document.documentElement.lang = resolvedLanguage;
+			const sheet = new CSSStyleSheet();
+			document.adoptedStyleSheets.push(sheet);
+			// Hide any element with a `data-lang` attribute that does NOT match the detected language
+			sheet.replaceSync('[data-lang]:not([data-lang="' + resolvedLanguage + '"]) { display: none; }');
+		})();
+	</script>
+
+		<script>
+		(function() {
+			/** @typedef {'light'|'dark'} ColorScheme */
+			/** @type {ColorScheme[]} */
+			const availableColorSchemes = document.documentElement.querySelector('meta[name="color-scheme"]').content.split(' ').filter(Boolean);
+			/** @type {ColorScheme|'system'} */
+			const userPreference = localStorage?.getItem('color-scheme-preference') ?? 'system';
+			// Clean-up user preference in case there's nothing to choose from
+			// Fall back to the HTML document's default color theme
+			if (availableColorSchemes.length <= 1 || ![...availableColorSchemes, 'system'].includes(userPreference)) {
+				localStorage?.removeItem('color-scheme-preference');
+				return;
+			}
+			// Override default HTML document with client-side user preference
+			if (userPreference === 'system') {
+				updateThemeAttribute(self.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+			} else {
+				updateThemeAttribute(userPreference)
+			}
+			/** @param {ColorScheme} colorScheme */
+			function updateThemeAttribute(colorScheme) {
+				document.documentElement.setAttribute('data-color-scheme', colorScheme);
+			}
+		})();
+	</script>
+
+		<script>
+		
+		function sortContentSources(a, b) {
+			let result = a.precedence - b.precedence;
+
+			if (result === 0) {
+				result = a.value.localeCompare(b.value);
+			}
+
+			return result;
+		}
+
+		
+		function applyContentSourceOrderToElements({ parent, children }) {
+			const contentSourceElements = [...children];
+
+			contentSourceElements
+				.sort((a, b) => (
+					sortContentSources(
+						{ value: a.dataset.orderValue, precedence: a.dataset.orderPrecedence },
+						{ value: b.dataset.orderValue, precedence: b.dataset.orderPrecedence }
+					)
+				))
+				.forEach((element) => {
+					delete element.dataset.orderValue;
+					delete element.dataset.orderPrecedence;
+				});
+
+			parent.replaceChildren(...contentSourceElements);
+		}
+	</script>
+
+<script>
+	(() => {
+		if (isInAppHelpEnabled()) {
+			document.documentElement.dataset.inAppHelp = 'true';
+
+			if (isTitleHidden()) {
+				document.documentElement.dataset.hideTitle = 'true';
+			}
+		}
+
+		function isInAppHelpEnabled() {
+			return new URLSearchParams(location.search).get('inAppHelp') === 'true';
+		}
+
+		function isTitleHidden() {
+			return new URLSearchParams(location.search).get('title') === 'false';
+		}
+	})();
+</script>
+
+<link rel="stylesheet" href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/in-app-help.css">
+<script type="module" src="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/in-app-help.js"></script>
+
+	<link rel="stylesheet" href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/styles.css">
+	<link rel="stylesheet" href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/fonts.css">
+	<link rel="stylesheet" href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/search-styles-bundle.css">
+
+
+	<style>
+		@layer overrides {
+			:root {
+				--theme-headline-font: "Roboto";
+				--theme-text-font: "Roboto";
+				--theme-headline-scale: calc(90 / 100);
+				--theme-text-scale: calc(100 / 100);
+			}
+		}
+	</style>
+
+	<style>
+		@layer overrides {
+			:root, :host {
+					--theme-header-logo-size: 40px;
+					--theme-footer-logo-size: 40px;
+			}
+
+			:root[data-color-scheme='light'],
+			:host([data-color-scheme='light']) {
+					--theme-header-text-color: #FFFFFF;
+					--theme-header-background-color: #2d5787;
+					--theme-footer-text-color: #FFF;
+					--theme-footer-background-color: #2d5787;
+			}
+
+			:root[data-color-scheme='dark'],
+			:host([data-color-scheme='dark']) {
+					--theme-header-text-color: #FFFFFF;
+					--theme-header-background-color: #0a0b0c;
+					--theme-footer-text-color: #FFFFFF;
+					--theme-footer-background-color: #0a0b0c;
+			}
+		}
+	</style>
+
+	 
+
+
+
+
+
+<script data-site-data="content-sources" type="application/json">
+{
+	"collection": {
+		"members": [
+
+
+	{
+	"name": "Dokumentation",
+	"id": "a538df1f-3c5e-4684-ae6f-67a428d6e79e",
+	"key": "DOK",
+	"path": "/docs",
+		"prefix": "/docs",
+		"current": true,
+	"versions": {
+		"available": [
+		]
+	},
+	"variants": {
+		"available": [
+		]
+	},
+	"languages": {
+		"available": [
+		]
+	}
+}
+
+		]
+	}
+}
+</script>
+
+
+<script data-theme-placeholder="site" type="application/json">
+	{
+		"id": "572b047d-9a89-4abd-80bb-e8a2a80122cb",
+		"path": "/",
+		"url": "/",
+		"domain": "v2.docs.edoobox.com",
+		"aiSearchEnabled": true,
+		"visibleToSearchEngines": true,
+		"isProtectionEnabled": false,
+		"isPublished": true
+	}
+</script>
+ 
+<script data-config="cookieconsent" type="application/json">
+{
+	"enabled": false,
+	"mode": "opt-in",
+	"heading": "Cookie Notice",
+	"description": "Please read our privacy statement.",
+	"links": [
+	]
+}
+</script>
+
+	<script type="module" src="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/main.js"></script>
+	<script type="module" src="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/page-tree.js" fetchpriority="high"></script>
+	<script type="module" src="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/search-bundle.js"></script>
+
+							<script type="module" src="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/article.js"></script>
+
+		<link rel="stylesheet" href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/ai-actions.css">
+		<script type="module" src="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/ai-actions.js"></script>
+
+		<link rel="stylesheet" href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/code-snippet.css">
+		<script type="module" src="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/code-snippet.js"></script>
+
+
+
+
+
+
+<template data-custom-overrides="" data-type="code-asset">
+				<script data-cfasync="false" src="/__site/8d7f83f5-dce7-464f-b287-6718105bb7b5/code_custom_js_override_asset.js"></script>
+</template>
+
+<script data-cfasync="false">
+	(() => {
+		if (new URLSearchParams(location.search).has('disable-custom-overrides')) {
+			return;
+		}
+
+		document.querySelectorAll('[data-custom-overrides]').forEach(template => {
+			const type = template.getAttribute('data-type');
+
+			if (type === 'code-asset') {
+				const assetElement = template.content.cloneNode(true).firstElementChild;
+				const appendAsset = () => document.head.appendChild(assetElement);
+
+				if (assetElement.tagName === 'SCRIPT') {
+															if (document.readyState === 'complete') {
+						appendAsset();
+					} else {
+												document.addEventListener('DOMContentLoaded', appendAsset, { once: true });
+					}
+				} else {
+					appendAsset();
+				}
+			}
+		});
+	})();
+</script>
+
+
+			
+		<script data-config="integration:ga" type="application/json">
+			{
+				"enabled": true,
+				"tagId": "G-MYL352PN4F"
+			}
+		</script>
+		<script type="text/plain" data-category="analytics" data-service="ga" data-src="https://www.googletagmanager.com/gtag/js?id=G-MYL352PN4F" async=""></script>
+
+
+
+
+
+
+
+
+
+
+
+
+			<script type="application/json" id="weglot-data">{"allLanguageUrls":{"de":"https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte","en":"https://v2.docs.edoobox.com/en/docs/edoobox-api-erste-schritte"},"originalCanonicalUrl":"https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte","originalPath":"/docs/edoobox-api-erste-schritte","settings":{"auto_switch":true,"auto_switch_fallback":null,"category":7,"custom_settings":{"button_style":{"with_name":true,"full_name":true,"is_dropdown":true,"with_flags":false,"flag_type":"rectangle_mat"},"switchers":[{"style":{"with_name":true,"with_flags":true,"full_name":false,"flag_type":"square","size_scale":1},"opts":{"open_hover":true,"close_outside_click":false,"is_responsive":false,"display_device":"mobile","pixel_cutoff":768},"colors":{"text_active":"#000000","text_inactive":"#000000","text_hover":"#FFFFFF","bg_inactive":"#FFFFFF","bg_active":"#FFFFFF","bg_hover":"#3D46FB"},"location":{"target":".header:nth-child(2)","sibling":null},"template":{"name":"vertical_expand","hash":"8af440b457245019647fc8a6971e70fa3db184d9","integrity":"sha384-mVt5sZwFpyrr0oB0FmKxuP/D5DdJkja1cGrLYkC+C3sPrWcInKwKCkuPYEbKEAYA"}}],"translate_search":false,"loading_bar":true,"hide_switcher":false,"translate_images":false,"subdomain":false,"wait_transition":true,"dynamic":"","ai_disclaimer_selector":null},"deleted_at":null,"dynamics":[],"excluded_blocks":[],"excluded_paths":[],"external_enabled":false,"host":"v2.docs.edoobox.com","is_dns_set":true,"is_https":true,"language_from":"de","language_from_custom_flag":null,"language_from_custom_name":null,"languages":[{"connect_host_destination":null,"custom_code":null,"custom_flag":null,"custom_local_name":null,"custom_name":null,"enabled":true,"language_to":"en"}],"media_enabled":false,"page_views_enabled":false,"technology_id":12,"technology_name":"Other","translation_engine":3,"url_type":"SUBDIRECTORY","versions":{"translation":1773690004}}}</script>
+<script async="" src="https://cdn.weglot.com/weglot.min.js?api_key=wg_90fb806069d862dc1df792253bea36212" type="text/javascript"></script><link href="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte" hreflang="de" rel="alternate"><link href="https://v2.docs.edoobox.com/en/docs/edoobox-api-erste-schritte" hreflang="en" rel="alternate"></head>
+<body>
+	<a href="#content" class="skip-link">
+		<i18n-message i18nkey="navigation.skip.to.main.label">Skip to main content</i18n-message>
+	</a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+		
+<header data-component="header" class="header">
+
+	<div class="header-site-branding">
+		<i18n-message id="600a4e7594a25ff3-2" class="sr-only" i18nkey="header.home.label"></i18n-message>
+
+		<a href="/" aria-labelledby="600a4e7594a25ff3-2">
+
+
+
+
+		<img class="header-logo header-logo--dark" src="/__site/90691465-1617-4677-946e-d515627fb9e5/edoobox_Logo_Briefkopf.png" alt="">
+
+		<img class="header-logo header-logo--light" src="/__site/90691465-1617-4677-946e-d515627fb9e5/edoobox_Logo_Briefkopf.png" alt="">
+
+		</a>
+
+	</div>
+	<div class="header-content">
+			<div class="header-links">
+				<ul>
+						<li><a href="https://www.edoobox.com/">Was ist das edoobox online Buchungssystem?</a></li>
+						<li><a href="https://www.edoobox.com/neuigkeiten">News</a></li>
+						<li><a href="https://app1.edoobox.com/ed-admin">Login V2 (APP1)</a></li>
+						<li><a href="https://app2.edoobox.com/ed-admin">Login V2 (APP2)</a></li>
+						<li><a href="https://app2.edoobox.com/ed-admin/pages/register">Konto eröffnen</a></li>
+				</ul>
+			</div>
+
+		<div class="header-pickers">
+
+		</div>
+
+			<div class="header-search">
+				<search-bar quicksearch=""></search-bar>
+			</div>
+
+
+				<button type="button" aria-controls="drawer-600a4e7594a25ff3-1" aria-haspopup="dialog" aria-expanded="false" class="header-nav-toggle" onclick="self['drawer-600a4e7594a25ff3-1'].showModal()">
+	<svg role="img" aria-hidden="true" data-component="icon" class="icon icon-menu ">
+		<use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#menu"></use>
+	</svg>
+			<i18n-message class="sr-only" i18nkey="navigation.main.label">Main navigation</i18n-message>
+		</button>
+	</div>
+
+	
+
+<dialog id="drawer-600a4e7594a25ff3-1" class="drawer">
+	<header data-component="header" class="header">
+
+	<div class="header-site-branding">
+		<i18n-message id="600a4e7594a25ff3-3" class="sr-only" i18nkey="header.home.label"></i18n-message>
+
+		<a href="/" aria-labelledby="600a4e7594a25ff3-3">
+
+
+
+
+		<img class="header-logo header-logo--dark" src="/__site/90691465-1617-4677-946e-d515627fb9e5/edoobox_Logo_Briefkopf.png" alt="">
+
+		<img class="header-logo header-logo--light" src="/__site/90691465-1617-4677-946e-d515627fb9e5/edoobox_Logo_Briefkopf.png" alt="">
+
+		</a>
+
+	</div>
+
+		<div class="header-content">
+			<button type="button" aria-controls="drawer-600a4e7594a25ff3-1" aria-haspopup="dialog" aria-expanded="true" autofocus="" class="drawer-toggle" onclick="self['drawer-600a4e7594a25ff3-1'].close()">
+	<svg role="img" aria-hidden="true" data-component="icon" class="icon icon-close ">
+		<use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#close"></use>
+	</svg>
+				<i18n-message class="sr-only" i18nkey="navigation.close.label">Close navigation</i18n-message>
+			</button>
+		</div>
+	</header>
+
+	<div class="drawer-section drawer-search">
+		<search-bar quicksearch=""></search-bar>
+	</div>
+
+
+	<nav id="drawer-nav" class="drawer-section drawer-nav tree" aria-labelledby="drawer-nav-label">
+		<i18n-message id="drawer-nav-label" class="sr-only" i18nkey="navigation.main.label">Main</i18n-message>
+
+						<copy-page-tree target="articleTree"></copy-page-tree>
+	</nav>
+
+			<div class="drawer-section drawer-links tree">
+<ul>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-4" href="https://www.edoobox.com/">Was ist das edoobox online Buchungssystem?</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-5" href="https://www.edoobox.com/neuigkeiten">News</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-6" href="https://app1.edoobox.com/ed-admin">Login V2 (APP1)</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-7" href="https://app2.edoobox.com/ed-admin">Login V2 (APP2)</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-8" href="https://app2.edoobox.com/ed-admin/pages/register">Konto eröffnen</a>
+			</div>
+
+		</li>
+</ul>
+		</div>
+</dialog>
+
+</header>
+		<section class="article-page body">
+		<theme-navigator class="navigator">
+			<button id="navigator-toggle" class="navigator-toggle" aria-controls="navigator-nav" aria-labelledby="navigator-nav-label" aria-expanded="true">
+	<svg role="img" aria-hidden="true" data-component="icon" class="icon icon-menu navigator-icon-closed">
+		<use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#menu"></use>
+	</svg>
+	<svg role="img" aria-hidden="true" data-component="icon" class="icon icon-chevron_left navigator-icon-opened">
+		<use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#chevron_left"></use>
+	</svg>
+			</button>
+						<nav id="navigator-nav" class="navigator-body tree" aria-labelledby="navigator-nav-label">
+				<i18n-message id="navigator-nav-label" class="sr-only" i18nkey="navigation.main.label">Main</i18n-message>
+				<theme-page-tree id="articleTree">
+<ul>
+		<li class="tree-item">
+			<div class="tree-item-header">
+					<button class="tree-action" type="button" aria-expanded="false" aria-labelledby="600a4e7594a25ff3-9" aria-busy="true" aria-disabled="true"></button>
+				<a id="600a4e7594a25ff3-9" href="/docs/erste-schritte">Erste Schritte</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+					<button class="tree-action" type="button" aria-expanded="false" aria-labelledby="600a4e7594a25ff3-11" aria-busy="true" aria-disabled="true"></button>
+				<a id="600a4e7594a25ff3-11" href="/docs/angebote">Angebote</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+					<button class="tree-action" type="button" aria-expanded="false" aria-labelledby="600a4e7594a25ff3-13" aria-busy="true" aria-disabled="true"></button>
+				<a id="600a4e7594a25ff3-13" href="/docs/teilnehmende">Teilnehmende</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+					<button class="tree-action" type="button" aria-expanded="false" aria-labelledby="600a4e7594a25ff3-15" aria-busy="true" aria-disabled="true"></button>
+				<a id="600a4e7594a25ff3-15" href="/docs/e-mail-system-in-edoobox">E-Mail-System in edoobox</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+					<button class="tree-action" type="button" aria-expanded="false" aria-labelledby="600a4e7594a25ff3-17" aria-busy="true" aria-disabled="true"></button>
+				<a id="600a4e7594a25ff3-17" href="/docs/bezahlsysteme">Bezahlsysteme</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+					<button class="tree-action" type="button" aria-expanded="false" aria-labelledby="600a4e7594a25ff3-19" aria-busy="true" aria-disabled="true"></button>
+				<a id="600a4e7594a25ff3-19" href="/docs/promotionskampagnen">Promotionskampagnen</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+					<button class="tree-action" type="button" aria-expanded="false" aria-labelledby="600a4e7594a25ff3-21" aria-busy="true" aria-disabled="true"></button>
+				<a id="600a4e7594a25ff3-21" href="/docs/einstellungen-global-in-edoobox">Einstellungen global in edoobox</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+					<button class="tree-action" type="button" aria-expanded="false" aria-labelledby="600a4e7594a25ff3-23" aria-busy="true" aria-disabled="true"></button>
+				<a id="600a4e7594a25ff3-23" href="/docs/design-manager">Design Manager</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+					<button class="tree-action" type="button" aria-expanded="true" aria-controls="600a4e7594a25ff3-26" aria-labelledby="600a4e7594a25ff3-25"></button>
+				<a id="600a4e7594a25ff3-25" href="/docs/integration-von-edoobox">Integration von edoobox</a>
+			</div>
+
+<ul id="600a4e7594a25ff3-26">
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-27" href="/docs/iframe-code-erstellen-und-in-die-webseite-einbinde">Einbindung in die Webseite und Vorschau-Share</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-28" href="/docs/edoobox-api">edoobox API</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-29" href="/docs/edoobox-api-erste-schritte" aria-current="page">edoobox API erste Schritte</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-30" href="/docs/wordpress-website-einbinden-wp-plugin-iframe">Einbindung mit dem WordPress Plugin</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-31" href="/docs/iframe-in-wordpress-website-einbinden">iFrame in WordPress Website einbinden</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-32" href="/docs/iframe-in-joomla-website-einbinden">iFrame in Joomla Website einbinden</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-33" href="/docs/iframe-in-typo3-website-einbinden">iFrame in Typo3 Website einbinden</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-34" href="/docs/iframe-in-wix-website-einbinden">iFrame in Wix Website einbinden</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-35" href="/docs/iframe-in-jimdo-website-einbinden">iFrame in Jimdo Website einbinden</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-36" href="/docs/einlass-app-erleichtert-die-anwesenheitskontrolle">Einlass App (iOS und Android) erleichtert die Anwesenheitskontrolle</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-37" href="/docs/sub-domain-und-meta-funktion">Sub-Domain und Meta Funktion</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-38" href="/docs/tabellen-und-exportmoeglichkeiten">Tabellen und Exportmöglichkeiten</a>
+			</div>
+
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+				<a id="600a4e7594a25ff3-39" href="/docs/opengraph-protocol-und-twitter-seo-meta-tags">OpenGraph Protocol und Social Media SEO Meta Tags</a>
+			</div>
+
+		</li>
+</ul>
+		</li>
+		<li class="tree-item">
+			<div class="tree-item-header">
+					<button class="tree-action" type="button" aria-expanded="false" aria-labelledby="600a4e7594a25ff3-40" aria-busy="true" aria-disabled="true"></button>
+				<a id="600a4e7594a25ff3-40" href="/docs/externe-integrationen">Externe Integrationen</a>
+			</div>
+
+		</li>
+</ul>
+				</theme-page-tree>
+			</nav>
+		</theme-navigator>
+
+		<main class="main-content">
+			<div class="topbar">
+
+
+
+
+	<theme-breadcrumbs class="breadcrumbs">
+		<i18n-message id="600a4e7594a25ff3-42" class="sr-only" i18nkey="breadcrumbs.label">Breadcrumbs</i18n-message>
+		<nav aria-labelledby="600a4e7594a25ff3-42">
+				<ol>
+														<li>
+								<a href="/docs/integration-von-edoobox">
+										Integration von edoobox
+								</a>
+							</li>
+				</ol>
+		</nav>
+	</theme-breadcrumbs>
+					<ai-actions class="ai-actions"><theme-dropdown></theme-dropdown></ai-actions>
+			</div>
+				<script src="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/breadcrumbs.js"></script>
+		<nav class="toc sticky" data-component="toc" aria-labelledby="600a4e7594a25ff3-43">
+			<h2 class="toc-heading" id="600a4e7594a25ff3-43">
+				<i18n-message i18nkey="page.article.toc.label">On this Page</i18n-message>
+			</h2>
+			<theme-toc for="content"></theme-toc>
+		</nav>
+			<article id="content" tabindex="-1" class="fb-layout-container">
+				<header>
+					<h1>edoobox API erste Schritte</h1>
+				</header>
+				<section class="article-body fb-layout-body" data-searchable-content="">
+		
+	
+
+
+	
+
+
+
+	
+
+
+
+	
+
+
+
+	
+
+
+
+	
+
+
+
+	
+
+
+
+	
+
+
+
+	
+
+
+
+	
+
+
+
+	
+
+	
+
+
+	
+	
+	
+	
+	
+		
+	
+	
+	
+	
+	
+
+	
+		
+		
+	
+	
+	
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+						
+		
+
+
+				
+
+
+	
+	
+	
+	
+	<div data-component="panel" role="note" data-appearance="note">
+ <div class="panel-content">
+  <p>Bitte beachten Sie, dass der kostenlose Support für diesen Themenbereich eingeschränkt ist. Falls Sie umfangreichere Unterstützung wünschen, bieten wir Ihnen gerne kostenpflichtige Services an.</p>
+ </div>
+</div> 
+<h2 id="Authentifizierung-mit-API-Schlüssel" style=""><span id="edooboxAPIersteSchritte-AuthentifizierungmitAPISchlüssel"></span>Authentifizierung mit API Schlüssel
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Authentifizierung-mit-API-Schlüssel">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h2>
+<h3 id="API-Schlüssel-generieren" style=""><span id="edooboxAPIersteSchritte-APISchlüsselgenerieren"></span>API Schlüssel generieren
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#API-Schlüssel-generieren">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h3>
+<p>Die API V2 verwendet die API Schlüssel von V2. Dafür müssen diese in Ihrem V2 Konto zuerst generiert werden:</p>
+<ol>
+ <li>
+  <p>Zu <strong>Einstellungen &gt; </strong><a href="https://app1.edoobox.com/ed-admin/apps/settings/api" data-scope="external" rel="external noreferrer"><strong>API Zugangsverwaltung</strong></a> navigieren.</p>
+ </li>
+ <li>
+  <p>Auf <strong>Schlüssel hinzufügen</strong> klicken, um einen neuen Schlüssel zu generieren.</p>
+  <div class="theme-block-image">
+   <image-lightbox>
+    <figure class="block-image" data-component="image" data-align="align-center">
+     <img src="/__attachments/a_7b45bc767d3de64e3487f610259dd969871dc348fec9a912b694657c1f410312/Screenshot%202023-02-17%20at%2007.34.44-20230217-063745.png?cb=0a6624a86d69df6ae20b0f057ac39454" alt="Screenshot 2023-02-17 at 07.34.44-20230217-063745.png" data-scope="internal" width="2533" height="1254">
+    </figure>
+   </image-lightbox>
+  </div>
+ </li>
+ <li>
+  <p>Wählen Sie das gewünschte Recht aus und klicken Sie anschliessend auf <strong>Hinzufügen</strong>.</p>
+  <div class="theme-block-image">
+   <image-lightbox>
+    <figure class="block-image" data-component="image" data-align="align-center">
+     <img src="/__attachments/a_96c0ac8dc353aca5587efba7bfc4c4fa767b9a490ff254ab0dd69b306b447d63/image-20230217-063727.png?cb=5b6e2930cc32a7f81c69425b76f0c38c" alt="image-20230217-063727.png" data-scope="internal" width="2533" height="1253">
+    </figure>
+   </image-lightbox>
+  </div>
+ </li>
+ <li>
+  <p>Sie erhalten nun zwei einmalige API Schlüssel, die Sie verwenden können, um sich mit der API V2 zu authentifizieren. Bewahren Sie diese Schlüssel an einem sicheren Ort auf, da diese nur einmal vollständig ausgegeben werden.</p>
+  <div class="theme-block-image">
+   <image-lightbox>
+    <figure class="block-image" data-component="image" data-align="align-center">
+     <img src="/__attachments/a_87d8ee28af52dcdf5c1180f99be9287843d638b3a5be885367bb572718777fdc/image-20230217-092425.png?cb=b26af62b1b47024f6eebcbec9e031684" alt="image-20230217-092425.png" data-scope="internal" width="2534" height="1255">
+    </figure>
+   </image-lightbox>
+  </div>
+ </li>
+</ol>
+<h3 id="Authentifizierung-und-Erhalt-von-Access-Token" style=""><span id="edooboxAPIersteSchritte-AuthentifizierungundErhaltvonAccessToken"></span>Authentifizierung und Erhalt von Access Token
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Authentifizierung-und-Erhalt-von-Access-Token">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h3>
+<p>Die Authentifizierungs-Endpoints sind nicht geschützt. Alle geschützten API V2 Endpoints können nur mit einem <code>access_token</code> und einer <code>edid</code> verwendet werden. Die <code>edid</code> definiert, welches Konto aktuell authentifiziert wurde. Um diesen <code>access_token</code> und die <code>edid</code> zu erhalten, müssen Sie die API Schlüssel verwenden und sich zuerst authentifizieren. Der Endpoint, um sich zu authentifizieren, lautet: <code>https://app2.edoobox.com/v2/auth</code>.</p>
+<p>Weiter unten finden Sie ein paar Beispiele zur Authentifizierung in unterschiedlichen Programmiersprachen. Der <code>key</code> ist Ihr Public Key, der <code>secret</code> ist Ihr Secret Key und <code>expire</code> können Sie verwenden, um das Ablaufdatum des <code>access_token</code>s zu bestimmen.</p>
+<p>In der Antwort finden Sie die <code>edid</code> und Ihren gültigen <code>access_token</code>. Auch finden Sie die Rechte der aktuell eingeloggten Konten und deren Konto-ID. Sie können wie folgt darauf zugreifen:</p>
+<code-snippet class="theme-code-snippet">
+ <scroll-shadow>
+  <div data-component="code">
+   <pre><code>data.login.data[edid]
+</code></pre>
+  </div>
+ </scroll-shadow>
+ <copy-clipboard class="theme-code-snippet-copy">
+  <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-copy_content copy-icon">
+   <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#copy_content"></use>
+  </svg>
+ </copy-clipboard>
+</code-snippet>
+<h3 id="Beispiel-einer-API-Antwort-nach-Authentifizierung" style=""><span id="edooboxAPIersteSchritte-BeispieleinerAPI-AntwortnachAuthentifizierung"></span>Beispiel einer API-Antwort nach Authentifizierung
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Beispiel-einer-API-Antwort-nach-Authentifizierung">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h3>
+<code-snippet class="theme-code-snippet">
+ <scroll-shadow>
+  <div data-component="code">
+   <pre><code>{
+    "data": {
+        // Die edid ID vom aktuellen Konto
+        "edid": "63ef220a0c8f25O0O4833076730b351d639ea00000000000000000000",
+        "login": {
+            ...
+            "data": {
+                // alle aktiv eingeloggten Konten
+                "63ef220a0c8f25O0O4833076730b351d639ea00000000000000000000": {
+                    "id": "api_00000000_00000000",
+                    "account": "account_00000000_00000000", // Konto ID
+                    "auth": {
+                        "rw": { // alle Rechte von diesen Schlüsseln
+                            "admi": 3,
+                            ...
+                        }
+                    }
+                }
+                "63ef220a0c8f25O0O4833076730b351d639ea0d4520f005f7f7347283": {
+                    "id": "api_00000000_00000000",
+                    "account": "account_00000000_00000001", // Konto ID
+                    "auth": {
+                        "sub": 1,
+                        "rw": { // alle Rechte von diesen Schlüsseln
+                            "admi": 3,
+                            ...
+                        }
+                    }
+                }
+            }
+        }
+    },
+    // Ihr gültiger Access Token
+    "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...",
+    ...
+}
+</code></pre>
+  </div>
+ </scroll-shadow>
+ <copy-clipboard class="theme-code-snippet-copy">
+  <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-copy_content copy-icon">
+   <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#copy_content"></use>
+  </svg>
+ </copy-clipboard>
+</code-snippet>
+<h2 id="Abfragen-mit-Code" style=""><span id="edooboxAPIersteSchritte-AbfragenmitCode"></span>Abfragen mit Code
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Abfragen-mit-Code">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h2>
+<h3 id="Authentifizierung" style=""><span id="edooboxAPIersteSchritte-Authentifizierung"></span>Authentifizierung
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Authentifizierung">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h3>
+<h4 id="Authentifizierung-mit-Node-(JavaScript)" style=""><span id="edooboxAPIersteSchritte-AuthentifizierungmitNode(JavaScript)"></span>Authentifizierung mit Node (JavaScript)
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Authentifizierung-mit-Node-(JavaScript)">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h4>
+<p>Wir verwenden für diese Beispiele die Node Version <code>v18.13.0</code>. Erstellen Sie ein JavaScript File <code>auth.js</code> mit dem folgenden Inhalt:</p>
+<code-snippet class="theme-code-snippet">
+ <div class="theme-code-snippet-header">JavaScript</div>
+ <scroll-shadow>
+  <div data-component="code" data-language="javascript">
+   <pre><code>var myHeaders = new Headers();
+myHeaders.append("grant-type", "password");
+myHeaders.append("Content-Type", "application/json");
+
+var raw = JSON.stringify({
+  "key": "key_0000000000000000000000000000000",
+  "secret": "sec_0000000000000000000000000000000",
+  "expire": "2030-01-01T01:00:00+02:00"
+});
+
+var requestOptions = {
+  method: 'POST',
+  headers: myHeaders,
+  body: raw,
+  redirect: 'follow'
+};
+
+fetch("https://app2.edoobox.com/v2/auth", requestOptions)
+  .then(response =&gt; response.json())
+  .then(result =&gt; console.log(result))
+  .catch(error =&gt; console.log('error', error));
+</code></pre>
+  </div>
+ </scroll-shadow>
+ <copy-clipboard class="theme-code-snippet-copy">
+  <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-copy_content copy-icon">
+   <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#copy_content"></use>
+  </svg>
+ </copy-clipboard>
+</code-snippet>
+<p>In Ihrer Shell wechseln Sie in das Verzeichnis dieses Files und führen das Skript aus:</p>
+<code-snippet class="theme-code-snippet">
+ <div class="theme-code-snippet-header">Bash</div>
+ <scroll-shadow>
+  <div data-component="code" data-language="bash">
+   <pre><code>node auth.js
+</code></pre>
+  </div>
+ </scroll-shadow>
+ <copy-clipboard class="theme-code-snippet-copy">
+  <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-copy_content copy-icon">
+   <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#copy_content"></use>
+  </svg>
+ </copy-clipboard>
+</code-snippet>
+<h4 id="Authentifizierung-mit-PHP" style=""><span id="edooboxAPIersteSchritte-AuthentifizierungmitPHP"></span>Authentifizierung mit PHP
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Authentifizierung-mit-PHP">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h4>
+<p>Erstellen Sie ein PHP File <code>auth.php</code> mit dem folgenden Inhalt:</p>
+<code-snippet class="theme-code-snippet">
+ <div class="theme-code-snippet-header">PHP</div>
+ <scroll-shadow>
+  <div data-component="code" data-language="php">
+   <pre><code>&lt;?php
+
+$curl = curl_init();
+
+curl_setopt_array($curl, array(
+    CURLOPT_URL =&gt; 'https://app2.edoobox.com/v2/auth',
+    CURLOPT_RETURNTRANSFER =&gt; true,
+    CURLOPT_ENCODING =&gt; '',
+    CURLOPT_MAXREDIRS =&gt; 10,
+    CURLOPT_TIMEOUT =&gt; 0,
+    CURLOPT_FOLLOWLOCATION =&gt; true,
+    CURLOPT_HTTP_VERSION =&gt; CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST =&gt; 'POST',
+    CURLOPT_POSTFIELDS =&gt;'{
+	"key": "key_0000000000000000000000000000000",
+	"secret":"sec_0000000000000000000000000000000",
+	"expire":"2030-01-01T01:00:00+02:00"
+}',
+    CURLOPT_HTTPHEADER =&gt; array(
+        'grant-type: password',
+        'Content-Type: application/json',
+    ),
+));
+
+$response = curl_exec($curl);
+
+curl_close($curl);
+echo $response;
+</code></pre>
+  </div>
+ </scroll-shadow>
+ <copy-clipboard class="theme-code-snippet-copy">
+  <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-copy_content copy-icon">
+   <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#copy_content"></use>
+  </svg>
+ </copy-clipboard>
+</code-snippet>
+<p>In Ihrer Shell wechseln Sie in das Verzeichnis dieses Files und führen das Skript aus:</p>
+<code-snippet class="theme-code-snippet">
+ <div class="theme-code-snippet-header">Bash</div>
+ <scroll-shadow>
+  <div data-component="code" data-language="bash">
+   <pre><code>php auth.php
+</code></pre>
+  </div>
+ </scroll-shadow>
+ <copy-clipboard class="theme-code-snippet-copy">
+  <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-copy_content copy-icon">
+   <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#copy_content"></use>
+  </svg>
+ </copy-clipboard>
+</code-snippet>
+<h3 id="Abfrage-von-allen-Angeboten" style=""><span id="edooboxAPIersteSchritte-AbfragevonallenAngeboten"></span>Abfrage von allen Angeboten
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Abfrage-von-allen-Angeboten">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h3>
+<p>Sobald die Authentifizierung erfolgt ist, wird ein Cookie für Ihre Session geschrieben. Sie besitzen nun auch die <code>edid</code> und den <code>access_token</code> und können somit Abfragen an die API machen. In diesem Beispiel werden wir alle Angebote dieses Kontos abrufen (sofern Sie die richtigen Rechte ausgewählt haben beim API Schlüssel erstellen). Der Endpoint, der dafür verwendet wird, ist <code>https://app2.edoobox.com/v2/offer/list</code>. Achten Sie auf die Headers <code>edid</code>, <code>grant-type</code> und <code>Authorization</code>. Diese sind essenziell für das korrekte Funktionieren der Abfragen. Dies betrifft auch alle anderen geschützten Endpoints.</p>
+<h4 id="Abfrage-mit-Node-(JavaScript)" style=""><span id="edooboxAPIersteSchritte-AbfragemitNode(JavaScript)"></span>Abfrage mit Node (JavaScript)
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Abfrage-mit-Node-(JavaScript)">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h4>
+<p>Wir verwenden für diese Beispiele die Node Version <code>v18.13.0</code>. Erstellen Sie ein JavaScript File <code>offers.js</code> mit dem folgenden Inhalt. Ersetzen Sie <code>eyJ0eXAiOiJKV...</code> im <code>Authorization</code>-Header mit Ihrem eigenen Access Token:</p>
+<code-snippet class="theme-code-snippet">
+ <div class="theme-code-snippet-header">JavaScript</div>
+ <scroll-shadow>
+  <div data-component="code" data-language="javascript">
+   <pre><code>var myHeaders = new Headers();
+myHeaders.append("edid", "63ef220a0c8f25O0O4833076730b351d639ea00000000000000000000");
+myHeaders.append("grant-type", "access_token");
+myHeaders.append("Authorization", "Bearer eyJ0eXAiOiJKV...");
+
+var requestOptions = {
+    method: 'GET',
+    headers: myHeaders,
+    redirect: 'follow'
+};
+
+fetch("https://app2.edoobox.com/v2/offer/list", requestOptions)
+    .then(response =&gt; response.text())
+    .then(result =&gt; console.log(result))
+    .catch(error =&gt; console.log('error', error));
+</code></pre>
+  </div>
+ </scroll-shadow>
+ <copy-clipboard class="theme-code-snippet-copy">
+  <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-copy_content copy-icon">
+   <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#copy_content"></use>
+  </svg>
+ </copy-clipboard>
+</code-snippet>
+<p>In Ihrer Shell wechseln Sie in das Verzeichnis dieses Files und führen das Skript aus:</p>
+<code-snippet class="theme-code-snippet">
+ <div class="theme-code-snippet-header">Bash</div>
+ <scroll-shadow>
+  <div data-component="code" data-language="bash">
+   <pre><code>node offers.js
+</code></pre>
+  </div>
+ </scroll-shadow>
+ <copy-clipboard class="theme-code-snippet-copy">
+  <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-copy_content copy-icon">
+   <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#copy_content"></use>
+  </svg>
+ </copy-clipboard>
+</code-snippet>
+<h4 id="Abfrage-mit-PHP" style=""><span id="edooboxAPIersteSchritte-AbfragemitPHP"></span>Abfrage mit PHP
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Abfrage-mit-PHP">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h4>
+<p>Erstellen Sie ein PHP File <code>offers.php</code> mit dem folgenden Inhalt. Ersetzen Sie <code>eyJ0eXAiOiJKV...</code> im <code>Authorization</code>-Header mit Ihrem eigenen Access Token:</p>
+<code-snippet class="theme-code-snippet">
+ <div class="theme-code-snippet-header">PHP</div>
+ <scroll-shadow>
+  <div data-component="code" data-language="php">
+   <pre><code>&lt;?php
+
+$curl = curl_init();
+
+curl_setopt_array($curl, array(
+    CURLOPT_URL =&gt; 'https://app2.edoobox.com/v2/offer/list',
+    CURLOPT_RETURNTRANSFER =&gt; true,
+    CURLOPT_ENCODING =&gt; '',
+    CURLOPT_MAXREDIRS =&gt; 10,
+    CURLOPT_TIMEOUT =&gt; 0,
+    CURLOPT_FOLLOWLOCATION =&gt; true,
+    CURLOPT_HTTP_VERSION =&gt; CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST =&gt; 'GET',
+    CURLOPT_HTTPHEADER =&gt; array(
+        'edid: 63ef220a0c8f25O0O4833076730b351d639ea00000000000000000000',
+        'grant-type: access_token',
+        'Authorization: Bearer eyJ0eXAiOiJKV...',
+    ),
+));
+
+$response = curl_exec($curl);
+
+curl_close($curl);
+echo $response;
+</code></pre>
+  </div>
+ </scroll-shadow>
+ <copy-clipboard class="theme-code-snippet-copy">
+  <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-copy_content copy-icon">
+   <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#copy_content"></use>
+  </svg>
+ </copy-clipboard>
+</code-snippet>
+<p>In Ihrer Shell wechseln Sie in das Verzeichnis dieses Files und führen das Skript aus:</p>
+<code-snippet class="theme-code-snippet">
+ <div class="theme-code-snippet-header">Bash</div>
+ <scroll-shadow>
+  <div data-component="code" data-language="bash">
+   <pre><code>php offers.php
+</code></pre>
+  </div>
+ </scroll-shadow>
+ <copy-clipboard class="theme-code-snippet-copy">
+  <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-copy_content copy-icon">
+   <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#copy_content"></use>
+  </svg>
+ </copy-clipboard>
+</code-snippet>
+<h2 id="Abfragen-mit-Postman" style=""><span id="edooboxAPIersteSchritte-AbfragenmitPostman"></span>Abfragen mit Postman
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Abfragen-mit-Postman">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h2>
+<p>Mit Postman können Sie alle Schnittstellen einfach durchtesten, um ein besseres Verständnis über die API zu erhalten.</p>
+<ol>
+ <li>
+  <p>Dafür müssen Sie zuerst Postman via Installationsanleitung unter dem folgenden Link installieren: <a href="https://www.postman.com/downloads/" data-scope="external" rel="external noreferrer">https://www.postman.com/downloads/</a>.</p>
+ </li>
+ <li>
+  <p>Danach melden Sie sich mit Ihrem Postman-Konto an.</p>
+ </li>
+ <li>
+  <p>Besuchen Sie unsere API Dokumentation: <a href="https://api.docs.edoobox.com/" data-scope="external" rel="external noreferrer">https://api.docs.edoobox.com/</a>.</p>
+ </li>
+ <li>
+  <p>In unserer Dokumentation klicken Sie oben rechts auf <strong>Run in Postman</strong>.</p>
+  <div class="theme-block-image">
+   <image-lightbox>
+    <figure class="block-image" data-component="image" data-align="align-center">
+     <img src="/__attachments/a_8a06502895023dcce25c694a06dbe263bfc3588a0d561465b73b6594b6353bf2/image-20230217-090911.png?cb=0848f63dcabd670d9a569c6584318770" alt="image-20230217-090911.png" data-scope="internal" width="2531" height="1253">
+    </figure>
+   </image-lightbox>
+  </div>
+ </li>
+ <li>
+  <p>Danach werden Sie gefragt, ob Sie unsere API via Desktop Applikation öffnen möchten, oder im Browser. Klicken Sie auf die Option, die für Sie passt, in diesem Beispiel verwenden wir die Desktop Applikation.</p>
+ </li>
+ <li>
+  <p>Sie werden eventuell aufgefordert, das Öffnen in Ihrer Desktop Applikation zu erlauben. Klicken Sie auf erlauben. Falls diese Frage nicht gestellt wird und Sie direkt in Ihrer Desktop Applikation landen, dann gehen Sie zum nächsten Punkt.</p>
+ </li>
+ <li>
+  <p>Importieren Sie unsere Collection im Workspace Ihrer Wahl.</p>
+  <div class="theme-block-image">
+   <image-lightbox>
+    <figure class="block-image" data-component="image" data-align="align-center">
+     <img src="/__attachments/a_c9ea43c83ab09b6bc6940cf0ef302b498606f0e5ea178ea4404e295075619cb5/image-20230217-091242.png?cb=fe621ff2594fe5aff167ea030aa2b141" alt="image-20230217-091242.png" data-scope="internal" width="1797" height="1083">
+    </figure>
+   </image-lightbox>
+  </div>
+ </li>
+ <li>
+  <p>Navigieren Sie im Postman zu <strong>Environments</strong> und importieren Sie das beigefügte Environment-File (example.postman_environment.json).</p>
+ </li>
+ <li>
+  <p>Passen Sie Ihre Angaben in Ihrer neu importierten Umgebung (<code>api_key</code>, oder <code>user_email</code> etc.) an.</p>
+ </li>
+ <li>
+  <p>Gehen Sie zu unserer Collection unter <strong>Collections</strong> und wählen Sie oben rechts die neu hinzugefügte Environment aus.</p>
+  <div class="theme-block-image">
+   <image-lightbox>
+    <figure class="block-image" data-component="image" data-align="align-center">
+     <img src="/__attachments/a_a240846bf7c1aeef435b7c69d5aea8050c9a01a40262ac4fe7208ac419b649be/image-20230217-091835.png?cb=c2d0d7b8fa5e5596fba70f116e6bb89f" alt="image-20230217-091835.png" data-scope="internal" width="1814" height="1135">
+    </figure>
+   </image-lightbox>
+  </div>
+ </li>
+ <li>
+  <p>Jetzt können Sie sich via <code>Auth (Login) &gt; POST (Login)</code> authentifizieren. Der <code>access_token</code> und alle weiteren Informationen werden nach der Authentifizierung automatisch Ihrem Environment-File hinzugefügt. Die Abfrage <code>POST Auth API</code> ist für wenn Sie die API Schlüssel zur Authentifizierung verwenden. Die Abfrage <code>POST Auth Admin (Login)</code> ist für wenn Sie die E-Mail und das Passwort zur Authentifizierung verwenden.</p>
+ </li>
+ <li>
+  <p>Nachdem Sie eines der beiden <code>POST</code> Abfragen ausgeführt haben, können Sie alle weiteren Abfragen im Postman ausführen.</p>
+ </li>
+</ol>
+<p>
+ <br>
+</p>
+<p><a href="/__attachments/a_d8ef5c4717d9bfc72a51520f679acb491c8e72ebad3feff889cf0a9cd22287a1/example.postman_environment.json?cb=fe83448bd140079e26387585223cacfa" data-scope="internal">example.postman_environment.json</a></p>
+<h3 id="Verwandte-Anleitungen" style=""><span id="edooboxAPIersteSchritte-VerwandteAnleitungen"></span>Verwandte Anleitungen
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Verwandte-Anleitungen">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h3>
+<ul>
+ <li>
+  <p><a href="https://v2.docs.edoobox.com/docs/edoobox-api" data-scope="external" rel="external noreferrer">edoobox API</a></p>
+ </li>
+ <li>
+  <p><a href="https://v2.docs.edoobox.com/docs/zapier" data-scope="external" rel="external noreferrer">Zapier</a></p>
+ </li>
+ <li>
+  <p><a href="https://v2.docs.edoobox.com/docs/einlasskontrolle-mit-handscanner-drehkreuz" data-scope="external" rel="external noreferrer"><u>Einlasskontrolle mit Handscanner / Drehkreuz</u></a></p>
+ </li>
+</ul>
+<h4 id="Stichwörter-für-diese-Anleitung" style=""><span id="edooboxAPIersteSchritte-StichwörterfürdieseAnleitung"></span>Stichwörter für diese Anleitung
+ <i18n-message i18nkey="clipboard.copyLink.label" attribute="description">
+  <copy-clipboard class="anchor-copy-button" value="https://v2.docs.edoobox.com/docs/edoobox-api-erste-schritte#Stichwörter-für-diese-Anleitung">
+   <svg role="img" aria-hidden="true" data-component="icon" class="icon icon-link copy-headline-link-icon">
+    <use href="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/icons.svg#link"></use>
+   </svg>
+  </copy-clipboard>
+ </i18n-message></h4>
+<p>API ¦ API V2 ¦ Postman ¦ Authentifizierung</p>
+
+
+																				<script>
+						// Mark block images on the first level as breakout so they can grow wider than the article content.
+						document.querySelectorAll('.article-body > .theme-block-image [data-component="image"]').forEach((element) => {
+							const propertyValue = element.style.getPropertyValue('--width');
+							if (!propertyValue) {
+								return;
+							}
+							if (parseInt(propertyValue) >= 760) {
+								element.closest('.theme-block-image').classList.add('theme-block-image--breakout');
+							}
+						});
+
+						// Remove the inline size on page layouts as this would lead to layouts breaking out of the article content.
+						document.querySelectorAll('.article-body [data-component="layout-section"]').forEach((element) => {
+							const propertyValue = element.style.getPropertyValue('--inline-size');
+							if (!propertyValue) {
+								return;
+							}
+							// ONLY for this very specific width (Confluence default)
+							if (parseInt(propertyValue) === 760) {
+								element.style.removeProperty('--inline-size');
+							}
+						})
+
+						// Set the initial state of the navigation toggle to prevent shifting in the UI
+						try {
+							const navigationToggle = document.querySelector('#navigator-toggle');
+							const navigationState = localStorage.getItem('theme-navigation-state');
+
+							if (navigationState === 'collapsed' && navigationToggle) {
+								navigationToggle.setAttribute('aria-expanded', 'false');
+							}
+						} catch (error) {
+							console.error(error);
+						}
+					</script>
+																			</section>
+				<footer>
+
+				</footer>
+			</article>
+		</main>
+	</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<footer data-component="footer" class="footer">
+
+
+
+
+
+		<img class="footer-logo footer-logo--dark" src="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/scroll-sites-icon-light.png" alt="">
+
+		<img class="footer-logo footer-logo--light" src="/__theme/b_8ca5a7d7-80f3-41c8-bea7-75cce14ad14f/scroll-sites-help-center-theme/49/scroll-sites-icon-dark.png" alt="">
+	<ul class="footer-content">
+		<li><i18n-message i18nkey="footer.copyright.label">Copyright</i18n-message> <current-year></current-year> Copyright © edoobox. Alle Rechte vorbehalten.</li>		<li><i18n-message i18nkey="footer.poweredBy.label">Powered by</i18n-message> <a href="https://www.k15t.com/products/scroll-sites-for-confluence?utm_campaign=k15t-sts-attribution-line&utm_source=k15t-apps" rel="external nofollow">Scroll&nbsp;Sites</a> & <a href="https://www.atlassian.com/software/confluence" rel="external nofollow">Atlassian&nbsp;Confluence</a></li>
+	</ul>
+
+</footer>
+
+
+</body>
+</html>

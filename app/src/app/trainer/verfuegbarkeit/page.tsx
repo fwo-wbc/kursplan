@@ -1862,9 +1862,9 @@ function VerfuegbarkeitContent() {
               />
             )}
           </span>
-          <span className="text-[8px] sm:text-[9px] leading-none font-normal truncate min-w-0 text-right">
+          <span className="text-[8px] sm:text-[9px] leading-tight font-normal min-w-0 text-right">
             {feiertag
-              ? feiertag.name
+              ? feiertagLabel(feiertag)
               : frei
                 ? 'GT'
                 : teilweise
@@ -2430,9 +2430,9 @@ function VerfuegbarkeitContent() {
           {feiertag ? (
             <span
               title={feiertagLabel(feiertag)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-300 bg-white text-xs text-slate-700 shadow-sm"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-purple-300 bg-purple-50 text-xs text-purple-700 shadow-sm"
             >
-              <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <Lock className="w-3.5 h-3.5 text-purple-500 shrink-0" />
               {feiertagLabel(feiertag)}
             </span>
           ) : (

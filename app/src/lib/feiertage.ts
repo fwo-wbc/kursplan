@@ -22,6 +22,10 @@ export interface Feiertag {
   datum: string;
   /** Amtliche Bezeichnung, z. B. "Fronleichnam". */
   name: string;
+  /** true = bundesweit (alle 16 Länder), false = nur in einzelnen Ländern. */
+  bundesweit: boolean;
+  /** Offizielle Kürzel der betroffenen Bundesländer (leer bei bundesweit). */
+  laender: string[];
   /** Lesbares Kürzel-Label, z. B. "BW, BY, HE, NW, RP, SL" oder "bundesweit". */
   laenderLabel: string;
 }
@@ -68,7 +72,13 @@ function addTage(d: Date, tage: number): Date {
 
 /** Erzeugt ein bundesweites Feiertagsobjekt. */
 function bundesweit(datum: Date, name: string): Feiertag {
-  return { datum: formatDatum(datum), name, laenderLabel: 'bundesweit' };
+  return {
+    datum: formatDatum(datum),
+    name,
+    bundesweit: true,
+    laender: [],
+    laenderLabel: 'bundesweit',
+  };
 }
 
 /** Erzeugt ein regionales Feiertagsobjekt mit expliziter Länderliste. */
@@ -76,6 +86,8 @@ function regional(datum: Date, name: string, laender: string[]): Feiertag {
   return {
     datum: formatDatum(datum),
     name,
+    bundesweit: false,
+    laender,
     laenderLabel: laender.join(', '),
   };
 }
@@ -140,10 +152,12 @@ export function feiertageFuerZeitraum(von: string, bis: string): Feiertag[] {
 }
 
 /**
- * Liefert den kompakten Anzeigetext eines Feiertags für die Spalte
- * "Kommentare / Abwesenheiten / Feiertage", z. B.
- * "Fronleichnam (BW, BY, HE, NW, RP, SL)".
+ * Liefert den kompakten Anzeigetext eines Feiertags, z. B.
+ * "Fronleichnam (BW, BY, HE, NW, RP, SL)" für regionale Feiertage.
+ * Bundesweite Feiertage liefern nur den Namen ohne Kürzel.
  */
 export function feiertagLabel(feiertag: Feiertag): string {
-  return `${feiertag.name} (${feiertag.laenderLabel})`;
+  return feiertag.bundesweit
+    ? feiertag.name
+    : `${feiertag.name} (${feiertag.laenderLabel})`;
 }
