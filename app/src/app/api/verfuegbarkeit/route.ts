@@ -116,15 +116,26 @@ export async function GET(request: Request) {
          od.date_id,
          o.name AS kursname,
          o.status AS offer_status,
-         -- Status-Ableitung: Ein in edoobox abgesagter Kurs (Status '5') sowie
-         -- ein geschlossener Kurs (Status '3') ohne gebuchte Teilnehmer gelten
-         -- als 'abgesagt'. Eine manuelle Zuweisung (tz.status) wird dadurch
-         -- überschrieben, damit abgesagte/geschlossene Angebote in der
-         -- Trainerverfügbarkeit zuverlässig als abgesagt erscheinen.
+         -- Status-Ableitung (konsistent zur Kursabfrage /api/trainer/zeitplan):
+         -- 1) Abgesagt: edoobox-Status '5'/'0' sowie '3' ohne Teilnehmer.
+         -- 2) Schutz-Bedingung (Exklusivität): Die Automatik ändert den Status
+         --    NUR, wenn er exakt 'ausgeschrieben' ist (bzw. null/leer). Ist bereits
+         --    ein anderer Status vergeben (manuell gesetzt, 'bestätigt',
+         --    'unter Vorbehalt', 'keine Zuordnung' …), bleibt er unangetastet.
+         -- 3) Stufe 1: genau 1 Anmeldung → 'unter Vorbehalt'.
+         -- 4) Stufe 2: 2 oder mehr Anmeldungen → 'bestätigt'.
          CASE
            WHEN o.status = '5'
+             OR o.status = '0'
              OR (o.status = '3' AND COALESCE(tn.teilnehmer, 0) = 0)
            THEN 'abgesagt'
+           WHEN tz.status IS NOT NULL
+             AND tz.status <> 'ausgeschrieben'
+           THEN tz.status
+           WHEN COALESCE(tn.teilnehmer, 0) >= 2
+           THEN 'bestätigt'
+           WHEN COALESCE(tn.teilnehmer, 0) = 1
+           THEN 'unter Vorbehalt'
            ELSE COALESCE(tz.status, 'ausgeschrieben')
          END AS zuweisung_status,
          COALESCE(tn.teilnehmer, 0) AS teilnehmer,

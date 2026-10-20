@@ -315,10 +315,39 @@ function effektiverZuweisungsstatus(
   teilnehmer: number,
   bisherigerStatus: string | null
 ): string {
-  if (offerStatus === '5' || (offerStatus === '3' && teilnehmer === 0)) {
+  if (
+    offerStatus === '5' ||
+    offerStatus === '0' ||
+    (offerStatus === '3' && teilnehmer === 0)
+  ) {
     return 'abgesagt';
   }
-  return bisherigerStatus ?? 'ausgeschrieben';
+
+  // Schutz-Bedingung (Exklusivität): Die Automatik darf den Zuweisungsstatus
+  // NUR dann ändern, wenn er exakt 'ausgeschrieben' ist (bzw. leer / keine
+  // Zuordnung). Liegt bereits ein anderer Status vor (manuell gesetzt,
+  // 'bestätigt', 'unter Vorbehalt' …), bleibt er unangetastet.
+  const automatischBerechtigt =
+    bisherigerStatus === null ||
+    bisherigerStatus === 'keine Zuordnung' ||
+    bisherigerStatus === 'ausgeschrieben';
+
+  if (!automatischBerechtigt) {
+    return bisherigerStatus ?? 'ausgeschrieben';
+  }
+
+  // Stufe 2: 2 oder mehr Anmeldungen → 'bestätigt'.
+  if (teilnehmer >= 2) {
+    return 'bestätigt';
+  }
+
+  // Stufe 1: genau 1 Anmeldung → 'unter Vorbehalt'.
+  if (teilnehmer === 1) {
+    return 'unter Vorbehalt';
+  }
+
+  // Keine Anmeldungen → 'ausgeschrieben' (Standard).
+  return 'ausgeschrieben';
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +539,12 @@ export async function GET(request: Request) {
                NOW() - ($2::int * INTERVAL '1 day')
              )
          AND o.status <> '0'
+         -- Harte Filterung: Testkurse (Kursname enthaelt 'Test', case-
+         -- insensitiv) werden bereits auf Datenbankebene ausgeschlossen.
+         -- Hintergrund-Syncs koennen soft-geloeschte Testdatensaetze immer
+         -- wieder neu spiegeln (Edoobox ist Single Source of Truth), deshalb
+         -- duerfen sie niemals in Kursplanung/Kalender auftauchen.
+         AND o.name NOT ILIKE '%test%'
        -- Deterministische Zuweisungs-Reihenfolge: Bei mehreren Zuweisungen
        -- je Termin (z. B. Altbestaende nach Trainerwechsel) gewinnt stets der
        -- juengste, gueltige Eintrag. Die JS-Deduplizierung (erste Zeile je

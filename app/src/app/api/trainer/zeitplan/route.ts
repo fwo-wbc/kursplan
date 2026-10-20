@@ -130,26 +130,61 @@ function slotFuerStart(startUhr: number | null): SlotCode {
 }
 
 /**
- * Leitet den einheitlichen Kursstatus ab:
- * - 'abgesagt'   bei edoobox-Status '0' oder manuell abgesagter Zuweisung
- * - 'bestätigt'  bei manuell bestätigter Zuweisung oder edoobox-Status '2'
- * - 'unter Vorbehalt' sobald mindestens 1 Anmeldung vorliegt
- * - sonst 'ausgeschrieben' (Standard)
+ * Leitet den einheitlichen Kursstatus ab – drei Stufen vorrangig anhand der
+ * eingehenden Anmeldungen (Buchungs-/Teilnehmerzahl je Kurs):
+ *
+ * 1. Schutz-Bedingung (Exklusivität): Die Automatik darf den Zuweisungsstatus
+ *    NUR dann ändern, wenn der aktuelle Status exakt 'ausgeschrieben' ist
+ *    (bzw. null / leer). Liegt bereits ein anderer Status vor (manuell gesetzt,
+ *    'bestätigt', 'unter Vorbehalt' …), wird der Status unangetastet gelassen.
+ * 2. Stufe 1: Genau 1 Anmeldung  → 'unter Vorbehalt'
+ * 3. Stufe 2: 2 oder mehr Anmeldungen → 'bestätigt'
+ *
+ * Übergeordnet bleibt 'abgesagt' bei edoobox-Status '0'/'5' bzw. manuell
+ * abgesagter Zuweisung wirksam.
  */
 function kursStatus(
   offerStatus: string | null,
   zuweisungStatus: string | null,
   teilnehmer: number
 ): KursStatus {
-  if (offerStatus === '0' || zuweisungStatus === 'abgesagt') {
+  if (
+    offerStatus === '0' ||
+    offerStatus === '5' ||
+    zuweisungStatus === 'abgesagt'
+  ) {
     return 'abgesagt';
   }
-  if (zuweisungStatus === 'bestätigt' || offerStatus === '2') {
+
+  // Garantierte Durchführung (edoobox-Status '2') ist offer-seitig bestätigt –
+  // unabhängig von der Anmelde-Automatik.
+  if (offerStatus === '2') {
     return 'bestätigt';
   }
-  if (teilnehmer >= 1) {
+
+  // Schutz-Bedingung (Exklusivität): Die Automatik darf den Zuweisungsstatus
+  // NUR dann ändern, wenn er exakt 'ausgeschrieben' ist (bzw. leer/null).
+  // Jeder bereits vergebene Status ('keine Zuordnung', 'bestätigt',
+  // 'unter Vorbehalt', 'abgesagt' …) bleibt unangetastet.
+  const automatischBerechtigt =
+    zuweisungStatus === null || zuweisungStatus === 'ausgeschrieben';
+
+  if (!automatischBerechtigt) {
+    // Bereits gesetzter Status bleibt unangetastet (manuell/gesetzt).
+    return zuweisungStatus as KursStatus;
+  }
+
+  // Stufe 2: 2 oder mehr Anmeldungen → 'bestätigt'.
+  if (teilnehmer >= 2) {
+    return 'bestätigt';
+  }
+
+  // Stufe 1: genau 1 Anmeldung → 'unter Vorbehalt'.
+  if (teilnehmer === 1) {
     return 'unter Vorbehalt';
   }
+
+  // Keine Anmeldungen → 'ausgeschrieben' (Standard).
   return 'ausgeschrieben';
 }
 

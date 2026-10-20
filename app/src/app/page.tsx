@@ -907,12 +907,25 @@ function lastMinuteHinweis(kurs: Kurs, diffTage: number): KursHinweis | null {
  * 'keine Zuordnung' bleibt der Wert null und es erscheint kein Hinweis.
  * Abgesagte Kurse (Zuweisungsstatus 'abgesagt', edoobox-Status '5') sowie
  * geschlossene Kurse (Status '3') ohne Teilnehmer zeigen keinen Hinweis.
+ * Datumsabgleich: Vergangene Termine (Start vor dem heutigen Tag, Tagesbeginn
+ * 00:00 ohne Uhrzeit-Fokus) rendern das Badge ebenfalls nicht mehr; es ist
+ * ausschließlich für aktuelle und zukünftige Kurse relevant.
  */
-function trainerNichtVerfuegbarHinweis(kurs: Kurs): KursHinweis | null {
+function trainerNichtVerfuegbarHinweis(
+  kurs: Kurs,
+  heuteIso: string
+): KursHinweis | null {
   if (kurs.trainer_verfuegbar !== false) return null;
   if (kurs.zuweisung_status === 'abgesagt') return null;
   if (kurs.offer_status === '5') return null;
   if (kurs.offer_status === '3' && (kurs.teilnehmer ?? 0) === 0) return null;
+
+  // Datumsabgleich (Tagesbeginn, ohne Uhrzeit-Fokus): Das Badge erscheint nur
+  // dann, wenn das Kursdatum größer oder gleich dem heutigen Datum ist.
+  const start = kursStartDate(kurs);
+  if (!start) return null;
+  if (toIsoDate(start) < heuteIso) return null;
+
   return {
     text: 'Trainer nicht verfügbar',
     className:
@@ -969,7 +982,7 @@ function kursHatBadge(
     case 'lastminute':
       return lastMinuteHinweis(kurs, diffTageBisStart(kurs, heuteIso)) !== null;
     case 'trainer':
-      return trainerNichtVerfuegbarHinweis(kurs) !== null;
+      return trainerNichtVerfuegbarHinweis(kurs, heuteIso) !== null;
     case 'tnliste':
       return tnListeHinweis(kurs) !== null;
     case 'konflikt':
@@ -2373,7 +2386,10 @@ export default function Home() {
                 const diffTage = diffTageBisStart(kurs, heuteIso);
                 const hinweisSchliessung = schliessungHinweis(kurs, heuteIso);
                 const hinweisLastMinute = lastMinuteHinweis(kurs, diffTage);
-                const hinweisTrainer = trainerNichtVerfuegbarHinweis(kurs);
+                const hinweisTrainer = trainerNichtVerfuegbarHinweis(
+                  kurs,
+                  heuteIso
+                );
                 const hinweisTnListe = tnListeHinweis(kurs);
 
                 // Klickbare Hinweis-Badges: Schlüssel + Hinweis-Paar für die
