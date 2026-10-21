@@ -240,7 +240,7 @@ export default function TrainerPage() {
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
-            <Users className="w-5 h-5 text-blue-600" />
+            <Users className="w-5 h-5 text-cd-blue" />
             Trainerkürzel
           </h1>
           <p className="text-xs text-slate-500 mt-1">
@@ -261,12 +261,12 @@ export default function TrainerPage() {
           className={`mb-4 p-3 rounded-lg text-sm font-medium border flex items-center gap-2 ${
             feedback.type === 'success'
               ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-              : 'bg-rose-50 border-rose-300 text-rose-800'
+              : 'bg-red-50 border-red-300 text-red-800'
           }`}
         >
           <span
             className={`w-2 h-2 rounded-full shrink-0 ${
-              feedback.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500'
+              feedback.type === 'success' ? 'bg-emerald-500' : 'bg-red-500'
             }`}
           />
           {feedback.text}
@@ -313,7 +313,7 @@ export default function TrainerPage() {
           <span className="text-sm">Lade Trainer…</span>
         </div>
       ) : error ? (
-        <div className="p-4 rounded-lg border border-rose-300 bg-rose-50 text-rose-800 text-sm flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="p-4 rounded-lg border border-red-300 bg-red-50 text-red-800 text-sm flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4" />
             <span>{error}</span>
@@ -321,7 +321,7 @@ export default function TrainerPage() {
           <button
             type="button"
             onClick={loadTrainer}
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg transition"
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Erneut versuchen

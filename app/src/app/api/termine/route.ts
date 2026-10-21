@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { SLOT_ZEITEN } from '@/lib/umwandlung';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -129,6 +130,180 @@ function ersterTerminStart(kurs: Kurs): number {
   if (!first || !first.date_start) return Number.MAX_SAFE_INTEGER;
   const zeit = new Date(first.date_start).getTime();
   return Number.isNaN(zeit) ? Number.MAX_SAFE_INTEGER : zeit;
+}
+
+/**
+ * Lädt aktive Vor-Reservierungen (public.termin_reservierung) und überführt
+ * sie in Kurs-Objekte mit dem Status 'Reservierung'. Geladen werden alle
+ * gültigen, aktiven Reservierungs-Zustände (Whitelist: 'angeboten',
+ * 'bestaetigt', 'reserviert', 'neu'); explizit ausgeschlossen sind
+ * stornierte/abgelaufene und Test-Einträge. Diese Reservierungen sind
+ * bewusst KEINE edoobox-Angebote (edoobox bleibt Single Source of Truth) –
+ * sie werden als zusätzliche Einträge an Monatsübersicht/Kursplanung
+ * durchgereicht, damit angefragte Firmenkurse sichtbar sind, bevor sie per
+ * P96 in ein Kursangebot umgewandelt werden.
+ *
+ * Die Slot-Zeiten (KT1/KT2/KT3/ganztags) stammen aus der zentralen
+ * Definition SLOT_ZEITEN (lib/umwandlung) und werden als JSON-Parameter
+ * übergeben – die DB erzeugt daraus die Berliner date_start/date_end.
+ */
+async function ladeReservierungen(fromDatum: string | null): Promise<Kurs[]> {
+  const slotZeitenJson = JSON.stringify(
+    Object.entries(SLOT_ZEITEN).map(([code, z]) => ({
+      code,
+      von: z.von,
+      bis: z.bis,
+    }))
+  );
+
+  const result = await query(
+    `SELECT
+       tr.id::text            AS reservierung_id,
+       tr.kd_nr,
+       tr.thema,
+       tr.datum,
+       tr.slot_code,
+       tr.status              AS reservierung_status,
+       t.id                   AS trainer_id,
+       t.vorname              AS trainer_vorname,
+       t.nachname             AS trainer_nachname,
+       t.kuerzel              AS trainer_kuerzel,
+       (tr.datum + COALESCE(slot.von, TIME '09:00:00'))
+         AT TIME ZONE 'Europe/Berlin' AS date_start,
+       (tr.datum + COALESCE(slot.bis, TIME '17:00:00'))
+         AT TIME ZONE 'Europe/Berlin' AS date_end
+     FROM public.termin_reservierung tr
+     LEFT JOIN public.trainer t ON t.id = tr.trainer_id
+     -- LEFT JOIN LATERAL statt CROSS JOIN: Schlaegt der Slot-Match fehl
+     -- (z. B. abweichende Gross-/Kleinschreibung oder unbekannter
+     -- slot_code), bleibt die Reservierung in jedem Fall erhalten. Die
+     -- Zeiten fallen dann ueber COALESCE auf 09:00-17:00 Uhr zurueck.
+     LEFT JOIN LATERAL (
+       SELECT (z->>'von')::time AS von,
+              (z->>'bis')::time AS bis
+       FROM jsonb_array_elements($2::jsonb) AS z
+       WHERE LOWER(z->>'code') = LOWER(tr.slot_code)
+     ) slot ON TRUE
+     WHERE tr.status IN ('angeboten', 'bestaetigt', 'reserviert', 'neu')
+       -- Harte Filterung analog zu den edoobox-Kursen (o.name NOT ILIKE
+       -- '%test%'): Test-Eintraege (Thema enthaelt 'Test', case-insensitiv)
+       -- werden bereits auf Datenbankebene ausgeschlossen und erscheinen
+       -- niemals in Kursplanung/Kalender.
+       AND tr.thema NOT ILIKE '%test%'
+       AND tr.datum >= COALESCE(
+             $1::date,
+             (NOW() - ($3::int * INTERVAL '1 day'))::date
+           )
+     ORDER BY tr.datum ASC, tr.id ASC`,
+    [fromDatum, slotZeitenJson, STANDARD_RUECKBLICK_TAGE]
+  );
+
+  const rowsWeltA = result.rows as Record<string, unknown>[];
+
+  // Welt B: Unverbindliche Trainer-Reservierungen (public.trainer_reservierung).
+  // Diese Reservierungen hängen direkt an einem Trainer (nicht an einem
+  // edoobox-Offer) – der LEFT JOIN auf public.trainer liefert das
+  // Trainerprofil. Start/Ende setzen sich aus datum + start_time/end_time
+  // (TZ Europe/Berlin) zusammen, analog zu Welt A.
+  const resultB = await query(
+    `SELECT
+       tr.id::text            AS reservierung_id,
+       tr.trainer_id,
+       tr.kunde,
+       t.vorname              AS trainer_vorname,
+       t.nachname             AS trainer_nachname,
+       t.kuerzel              AS trainer_kuerzel,
+       (tr.datum + tr.start_time)
+         AT TIME ZONE 'Europe/Berlin' AS date_start,
+       (tr.datum + tr.end_time)
+         AT TIME ZONE 'Europe/Berlin' AS date_end
+     FROM public.trainer_reservierung tr
+     LEFT JOIN public.trainer t ON t.id = tr.trainer_id
+     WHERE tr.datum >= COALESCE(
+             $1::date,
+             (NOW() - ($2::int * INTERVAL '1 day'))::date
+           )
+     ORDER BY tr.datum ASC, tr.id ASC`,
+    [fromDatum, STANDARD_RUECKBLICK_TAGE]
+  );
+
+  const rowsWeltB = resultB.rows as Record<string, unknown>[];
+
+  // Gemeinsame Überführung einer Roh-Zeile in eine Reservierungs-Kursstruktur
+  // mit genau einem Termin. Beide Welten teilen sich exakt dieses Muster –
+  // unterschieden nur durch die ID-Präfixe der entity-Bereiche.
+  const baueKurs = (
+    row: Record<string, unknown>,
+    praefixOffer: string,
+    praefixDate: string
+  ): Kurs => {
+    const trainerId = row.trainer_id !== null ? Number(row.trainer_id) : null;
+    const kuerzel = String(row.trainer_kuerzel ?? '').trim();
+    const vorname = String(row.trainer_vorname ?? '').trim();
+    const nachname = String(row.trainer_nachname ?? '').trim();
+    return {
+      offer_id: `${praefixOffer}${String(row.reservierung_id)}`,
+      termine: [
+        {
+          date_id: `${praefixDate}${String(row.reservierung_id)}`,
+          // pg liefert timestamptz als Date-Objekt; toJSON() erzeugt den
+          // ISO-8601-String (UTC), exakt wie JSON.stringify es für die
+          // edoobox-Termine tut – die Monatsübersicht formatiert dann in
+          // Europe/Berlin.
+          date_start:
+            row.date_start !== null ? (row.date_start as Date).toJSON() : null,
+          date_end:
+            row.date_end !== null ? (row.date_end as Date).toJSON() : null,
+        },
+      ],
+      date_status: 'Reservierung',
+      offer_status: null,
+      // Welt A liefert 'thema', Welt B 'kunde' – beides fällt auf den
+      // gemeinsamen Anzeigenamen.
+      offer_name: String(row.thema ?? row.kunde ?? 'Reservierung'),
+      offer_type: null,
+      kursnr: row.kd_nr !== null ? String(row.kd_nr) : null,
+      teilnehmer: 0,
+      max_plaetze: null,
+      einnahmen: 0,
+      tags: [],
+      zuweisungen:
+        trainerId !== null
+          ? [
+              {
+                id: null,
+                trainer_id: trainerId,
+                status: 'Reservierung',
+                notiz: null,
+                honorar_manuell: null,
+                quelle: 'lokal' as const,
+                trainer: {
+                  vorname: vorname !== '' ? vorname : null,
+                  nachname: nachname !== '' ? nachname : null,
+                  kuerzel: kuerzel !== '' ? kuerzel : null,
+                },
+              },
+            ]
+          : [],
+      zuweisung_status: 'Reservierung',
+      trainer_verfuegbarkeit: {},
+      trainer_verfuegbar: null,
+      optionen: {
+        einladungslink: false,
+        last_minute: false,
+        abgerechnet: false,
+      },
+      trainer_kuerzel: kuerzel !== '' ? kuerzel : 'n. v.',
+      hat_trainer: trainerId !== null,
+    } as Kurs;
+  };
+
+  // Beide Reservierungs-Welten zusammenführen und zurückgeben: zuerst
+  // Welt A (termin_reservierung), dann Welt B (trainer_reservierung).
+  return [
+    ...rowsWeltA.map((row) => baueKurs(row, 'reservierung-', 'res-')),
+    ...rowsWeltB.map((row) => baueKurs(row, 'trainer-res-', 'tres-')),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -566,6 +741,12 @@ export async function GET(request: Request) {
       lokaleZuweisungen: Map<number, Zuweisung>;
       edooboxZuweisungen: Map<number, Zuweisung>;
       termineMap: Map<string, KursTermin>;
+      /**
+       * Kursweit aktive 'n. v.'-Sperre: Mindestens ein Termin trägt eine lokale
+       * Zuweisung mit trainer_id NULL und Status 'keine Zuordnung'. Sie
+       * unterdrückt sämtliche edoobox-Leiter für den gesamten Kurs.
+       */
+      aufhebungAktiv: boolean;
     }
 
     const kursMap = new Map<string, KursBuild>();
@@ -605,6 +786,7 @@ export async function GET(request: Request) {
           lokaleZuweisungen: new Map<number, Zuweisung>(),
           edooboxZuweisungen: new Map<number, Zuweisung>(),
           termineMap: new Map<string, KursTermin>(),
+          aufhebungAktiv: false,
         };
         kursMap.set(gruppenSchluessel, build);
       }
@@ -644,6 +826,21 @@ export async function GET(request: Request) {
         row.edoo_admin_id !== null &&
         row.lokale_edoobox_admin_id !== null &&
         row.lokale_edoobox_admin_id === row.edoo_admin_id;
+
+      // Lokale 'n. v.'-Aufhebung: Eine Zuweisungszeile mit Status 'keine
+      // Zuordnung' markiert den Kurs als bewusst ohne Trainer zu führen
+      // (die Zeile trägt weiterhin die trainer_id des zuletzt zugewiesenen
+      // Trainers, da trainer_id NOT NULL ist). Sie überschreibt die
+      // edoobox-Leiter (primäre Trainerquelle) für den gesamten Kurs –
+      // unabhängig davon, ob date_leader den letzten Trainer noch einmal
+      // spiegelt (Trainerwechsel-Rückkanal P98 entfernt den Leiter nur für
+      // eine einzelne date_id).
+      if (
+        row.zuweisung_id !== null &&
+        row.zuweisung_status === 'keine Zuordnung'
+      ) {
+        build.aufhebungAktiv = true;
+      }
 
       if (
         row.zuweisung_id !== null &&
@@ -721,7 +918,10 @@ export async function GET(request: Request) {
         return zeitA - zeitB;
       });
 
-      if (build.edooboxZuweisungen.size > 0) {
+      // Bei einer aktiven 'n. v.'-Sperre (trainer_id NULL / 'keine Zuordnung')
+      // bleiben sämtliche edoobox-Leiter unberücksichtigt – der Kurs erscheint
+      // als 'n. v.', bis er bewusst neu zugewiesen wird.
+      if (build.edooboxZuweisungen.size > 0 && !build.aufhebungAktiv) {
         for (const [trainerId, edooZ] of build.edooboxZuweisungen) {
           const lokal = build.lokaleZuweisungen.get(trainerId);
           if (lokal) {
@@ -731,12 +931,18 @@ export async function GET(request: Request) {
           }
           build.kurs.zuweisungen.push(edooZ);
         }
-      } else {
+      } else if (!build.aufhebungAktiv) {
         build.kurs.zuweisungen.push(...build.lokaleZuweisungen.values());
       }
 
       return build.kurs;
     });
+
+    // Aktive Vor-Reservierungen (public.termin_reservierung) als zusätzliche
+    // Kurse mit Status 'Reservierung' anhängen – sie sind keine edoobox-
+    // Angebote, sollen aber in Monatsübersicht/Kursplanung sichtbar sein.
+    const reservierungen = await ladeReservierungen(fromDatum);
+    kurse.push(...reservierungen);
 
     // Kurse nach dem fruehesten Termin-Start sortieren.
     kurse.sort((a, b) => ersterTerminStart(a) - ersterTerminStart(b));
@@ -747,7 +953,14 @@ export async function GET(request: Request) {
 
     // Effektiven Zuweisungsstatus je Kurs ableiten (konsistent zur ersten
     // Zuweisung, wie im Frontend verwendet).
+    //
+    // WICHTIG: Reservierungen (public.termin_reservierung) behalten ihren im
+    // ladeReservierungen()-Mapping gesetzten Zustand unverändert. date_status
+    // UND zuweisung_status müssen garantiert als String 'Reservierung'
+    // durchgereicht werden – auch ohne zugewiesenen Trainer, sonst würde der
+    // Fallback zuweisungen[0]?.status den Zuweisungsstatus auf null absenken.
     for (const kurs of kurse) {
+      if (kurs.date_status === 'Reservierung') continue;
       kurs.zuweisung_status = kurs.zuweisungen[0]?.status ?? null;
       const ersteZuweisung = kurs.zuweisungen[0] ?? null;
       kurs.trainer_kuerzel = ersteZuweisung?.trainer?.kuerzel?.trim() || 'n. v.';
@@ -763,6 +976,12 @@ export async function GET(request: Request) {
     // geschlossene Kurse (Status '3') ohne Teilnehmer erzeugen grundsätzlich
     // keine Verfügbarkeitswarnung (trainer_verfuegbar = null).
     for (const kurs of kurse) {
+      // Reservierungen lösen keine Verfügbarkeitsprüfung aus – sie sind
+      // reine Vor-Reservierungen ohne edoobox-Kurshintergrund.
+      if (kurs.zuweisung_status === 'Reservierung') {
+        kurs.trainer_verfuegbar = null;
+        continue;
+      }
       const effektivAbgesagt =
         kurs.zuweisung_status === 'abgesagt' ||
         kurs.offer_status === '5' ||

@@ -277,11 +277,15 @@ export async function POST(request: Request) {
 
   const { date_id, date_ids, trainer_id, status, notiz, honorar_manuell } = body;
 
-  // Eingaben normalisieren: Strings trimmen, Trainer-ID strikt validieren.
+  // Eingaben normalisieren: Strings trimmen.
   const dateIds = normalizeDateIds(date_ids, date_id);
   const trainerIdValue = parseTrainerId(trainer_id);
 
-  // Validierung: Pflichtfelder
+  // Validierung: date_ids und trainer_id (positive Ganzzahl) sind Pflicht.
+  // Eine Aufhebung ('n. v.') wird über den Status 'keine Zuordnung' geführt;
+  // die Zuweisungs-Zeile trägt dabei weiterhin den zuletzt zugewiesenen
+  // Trainer, weil public.trainer_zuweisung.trainer_id NOT NULL ist und per
+  // FK an public.trainer(id) gebunden ist.
   if (dateIds.length === 0 || trainerIdValue === null) {
     return NextResponse.json(
       {
@@ -332,6 +336,23 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Zuerst ggf. vorhandene ANDERE Trainer-Zuweisungen derselben date_ids
+    // entfernen. Der bisherige UPSERT hat nur Paare (date_id, trainer_id)
+    // aktualisiert und ließ beim Trainerwechsel die alte Zeile stehen
+    // (Dublette). Die Kursplanung las daraufhin wieder den alten Trainer.
+    // Anschließend wird die neue Zuweisung eingetragen bzw. der Status der
+    // bestehenden Zeile aktualisiert. Eine Aufhebung ('n. v.') wird über den
+    // Status 'keine Zuordnung' geführt: Die Zeile des zuletzt zugewiesenen
+    // Trainers bleibt erhalten und markiert den Kurs dauerhaft als bewusst
+    // ohne Trainer – unabhängig davon, welchen Leiter edoobox zwischenzeitlich
+    // spiegelt (trainer_id ist NOT NULL und per FK an public.trainer gebunden).
+    await query(
+      `DELETE FROM public.trainer_zuweisung
+       WHERE date_id = ANY($1::text[])
+         AND trainer_id IS DISTINCT FROM $2::int`,
+      [dateIds, trainerIdValue]
+    );
+
     // Einheitlich für alle zugehörigen date_ids aktualisieren. Der
     // UNIQUE-Constraint (date_id, trainer_id) verhindert Duplikate. Wird
     // honorar_manuell nicht übergeben, bleibt der bestehende Wert unangetastet.
@@ -347,7 +368,7 @@ export async function POST(request: Request) {
                notiz = EXCLUDED.notiz,
                honorar_manuell = EXCLUDED.honorar_manuell
              RETURNING *`,
-            [dateIds, trainerIdValue, statusValue, notizValue, honorarManuell]
+            [dateIds, trainerIdValue as number, statusValue, notizValue, honorarManuell]
           )
         : await query(
             `INSERT INTO public.trainer_zuweisung (date_id, trainer_id, status, notiz)
@@ -358,12 +379,16 @@ export async function POST(request: Request) {
                status = EXCLUDED.status,
                notiz = EXCLUDED.notiz
              RETURNING *`,
-            [dateIds, trainerIdValue, statusValue, notizValue]
+            [dateIds, trainerIdValue as number, statusValue, notizValue]
           );
 
     // Asynchroner n8n-Rückkanal: Trainerzuweisung an edoobox melden.
+    // Bei einer Aufhebung ('keine Zuordnung') wird nichts weitergemeldet,
+    // damit der Workflow den Trainersync nicht erneut anstößt.
     // Der Request wird nicht blockiert; Fehler werden intern geloggt.
-    void notifyTrainerSync(trainerIdValue, dateIds);
+    if (statusValue !== 'keine Zuordnung') {
+      void notifyTrainerSync(trainerIdValue as number, dateIds);
+    }
 
     return NextResponse.json(
       { zuweisungen: result.rows as TrainerZuweisung[], date_ids: dateIds },

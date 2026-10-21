@@ -12,11 +12,13 @@ import {
   TriangleAlert,
   ArrowRightLeft,
   LayoutDashboard,
+  Bookmark,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Kursplanung', icon: LayoutDashboard },
   { href: '/kalender', label: 'Monatsübersicht', icon: CalendarDays },
+  { href: '/reservierungen', label: 'Reservierungen', icon: Bookmark },
   { href: '/trainer/verfuegbarkeit', label: 'Trainerverfügbarkeiten', icon: CalendarRange },
   { href: '/trainer', label: 'Trainer verwalten', icon: Users },
   {
@@ -156,7 +158,7 @@ export default function Navigation() {
                 href={item.href}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900"
               >
-                <Icon className="w-4 h-4" />
+                <Icon className="w-4 h-4 text-cd-blue" />
                 {item.label}
               </a>
             );
@@ -173,7 +175,9 @@ export default function Navigation() {
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
               }`}
             >
-              <Icon className="w-4 h-4" />
+              <Icon
+                className={`w-4 h-4 ${isActive ? 'text-white' : 'text-cd-blue'}`}
+              />
               {item.label}
             </Link>
           );

@@ -6,13 +6,20 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Loader2,
   CalendarDays,
+  CalendarRange,
   CheckCircle2,
   AlertCircle,
   BookMarked,
+  LayoutDashboard,
   Lock,
   RefreshCw,
 } from 'lucide-react';
-import { feiertageFuerZeitraum, feiertagLabel, type Feiertag } from '@/lib/feiertage';
+import {
+  feiertageFuerZeitraum,
+  feiertagLabel,
+  zeitumstellungHinweiseFuerJahr,
+  type Feiertag,
+} from '@/lib/feiertage';
 import HeaderLogo from '../../components/HeaderLogo';
 
 // ---------------------------------------------------------------------------
@@ -42,6 +49,8 @@ interface KursRow {
   zuweisung_status: string | null;
   start_time: string | null;
   end_time: string | null;
+  /** Gebuchte Teilnehmer (Ist-Anzahl) – geliefert von /api/verfuegbarkeit. */
+  teilnehmer: number;
 }
 
 /** Eine unverbindliche Trainer-Reservierung (Firmenanfrage). */
@@ -242,7 +251,7 @@ function statusSlotClasses(status: string | null): string {
     case 'bestätigt':
       return 'bg-emerald-600 text-white font-medium border border-emerald-700 hover:bg-emerald-700';
     case 'abgesagt':
-      return 'bg-rose-50 text-rose-700 border border-rose-300 line-through opacity-80 hover:bg-rose-100';
+      return 'bg-red-50 text-red-700 border border-red-300 line-through opacity-80 hover:bg-red-100';
     default:
       return 'bg-slate-200 border-slate-300 text-slate-600';
   }
@@ -261,6 +270,20 @@ function formatUhrzeit(zeit: string | null): string {
  *  Beispiel: "Excel Grundlagen Modul 4: Tabellenverknüpfungen" → "Excel Grundlagen Modul 4". */
 function kuerzeAngebotstitel(titel: string | null): string {
   return titel ? titel.split(':')[0].trim() : '';
+}
+
+/** true, wenn die Teilnehmerzahl an den Kurstitel angehängt werden soll:
+ *  nur bei Kursen, deren Zuweisungsstatus NICHT „ausgeschrieben“ (bzw. der
+ *  Standardwert für nicht zugewiesene/offene Kurse) ist, und wenn mindestens
+ *  ein Teilnehmer gebucht ist (0 bzw. undefined bleibt unsichtbar). */
+function zeigeTeilnehmerAnzahl(
+  teilnehmer: number | undefined,
+  status: string | null
+): boolean {
+  const s = (status ?? '').toLowerCase();
+  const offen =
+    s === '' || s === 'ausgeschrieben' || s === 'offen' || s === 'angefragt';
+  return !offen && typeof teilnehmer === 'number' && teilnehmer > 0;
 }
 
 /** Rangfolge für den primären Kurs: bestätigt > unter Vorbehalt > ausgeschrieben > abgesagt. */
@@ -324,7 +347,7 @@ function statusBadgeClasses(status: string | null): string {
     case 'bestätigt':
       return 'bg-emerald-600 text-white font-medium border-emerald-700';
     case 'abgesagt':
-      return 'bg-rose-50 text-rose-700 border-rose-200 line-through';
+      return 'bg-red-50 text-red-700 border-red-200 line-through';
     default:
       return 'bg-slate-100 text-slate-600 border-slate-200';
   }
@@ -625,6 +648,22 @@ function VerfuegbarkeitContent() {
       toDateStr(zeitraum.bis)
     )) {
       map.set(f.datum, f);
+    }
+    return map;
+  }, [zeitraum]);
+
+  // Zeitumstellungs-Hinweise (Beginn Sommerzeit MESZ im März, Ende Sommerzeit
+  // MEZ im Oktober) im aktuell sichtbaren Zeitraum – rein informativ, analog
+  // zu den Faschingstagen OHNE Auswirkung auf die lilane Feiertagsfarbe der
+  // Tageszelle.
+  const zeitumstellungHinweise = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (
+      let j = zeitraum.von.getFullYear();
+      j <= zeitraum.bis.getFullYear();
+      j += 1
+    ) {
+      Object.assign(map, zeitumstellungHinweiseFuerJahr(j));
     }
     return map;
   }, [zeitraum]);
@@ -1761,6 +1800,7 @@ function VerfuegbarkeitContent() {
     const istHeute = datumStr === heuteStr;
     const wochenende = datum.getDay() === 0 || datum.getDay() === 6;
     const feiertag = feiertageImZeitraum.get(datumStr) ?? null;
+    const hinweis = zeitumstellungHinweise[datumStr] ?? null;
     const frei = zustand.vm && zustand.nm;
     const teilweise = zustand.vm !== zustand.nm;
     // Rücknahme-Sperre: VM/NM darf nicht mehr entfernt werden, wenn in diesem
@@ -1875,6 +1915,17 @@ function VerfuegbarkeitContent() {
           </span>
         </button>
 
+        {/* Zeitumstellungs-Hinweis (MESZ-Beginn / MEZ-Beginn): rein informativ
+            in dezentem Grau – löst KEINE lilane Tageszellenfarbe aus. */}
+        {hinweis && (
+          <div
+            className="mt-0.5 px-1 text-[9px] leading-tight text-slate-500"
+            title={`${hinweis} – kein gesetzlicher Feiertag (rein informativ)`}
+          >
+            {hinweis}
+          </div>
+        )}
+
         {/* VM / NM Segmente (Einzeltag-Umschaltung analog zur Monatskachel).
             Rücknahme gesperrt, wenn der Slot durch Kurse belegt ist. */}
         <div className="mt-0.5 flex gap-0.5">
@@ -1949,6 +2000,17 @@ function VerfuegbarkeitContent() {
                   <span className="flex items-center gap-1 min-w-0 w-full leading-none">
                     <span className="font-semibold shrink-0">{uhrzeit}</span>
                     <span className="truncate flex-1 min-w-0">{titel}</span>
+                    {zeigeTeilnehmerAnzahl(
+                      kurs.teilnehmer,
+                      kurs.zuweisung_status
+                    ) && (
+                      <span
+                        className="shrink-0 font-semibold opacity-75"
+                        title={`${kurs.teilnehmer} Teilnehmer`}
+                      >
+                        ({kurs.teilnehmer} TN)
+                      </span>
+                    )}
                   </span>
                 </button>
               </div>
@@ -2178,6 +2240,7 @@ function VerfuegbarkeitContent() {
     const istHeute = datumStr === heuteStr;
     const wochenende = datum.getDay() === 0 || datum.getDay() === 6;
     const feiertag = feiertageImZeitraum.get(datumStr) ?? null;
+    const hinweis = zeitumstellungHinweise[datumStr] ?? null;
     const frei = zustand.vm && zustand.nm;
     const teilweise = zustand.vm !== zustand.nm;
     // Rücknahme-Sperre: VM/NM darf nicht mehr entfernt werden, wenn in diesem
@@ -2328,12 +2391,25 @@ function VerfuegbarkeitContent() {
                   {/* Nur Uhrzeit + Kurstitel – die Farbkodierung des Elements
                       trägt den Status (analog zur Excel-Tabelle / Legende). */}
                   <span
-                    className={`flex-1 min-w-0 truncate rounded-md border px-1.5 py-0.5 text-[10px] leading-tight ${statusBadgeClasses(
+                    className={`flex flex-1 min-w-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] leading-tight ${statusBadgeClasses(
                       kurs.zuweisung_status
                     )}`}
                     title={kurs.kursname ?? 'Kurs'}
                   >
-                    {kuerzeAngebotstitel(kurs.kursname) || 'Kurs'}
+                    <span className="truncate min-w-0">
+                      {kuerzeAngebotstitel(kurs.kursname) || 'Kurs'}
+                    </span>
+                    {zeigeTeilnehmerAnzahl(
+                      kurs.teilnehmer,
+                      kurs.zuweisung_status
+                    ) && (
+                      <span
+                        className="shrink-0 opacity-75 whitespace-nowrap"
+                        title={`${kurs.teilnehmer} Teilnehmer`}
+                      >
+                        ({kurs.teilnehmer} TN)
+                      </span>
+                    )}
                   </span>
                 </div>
               ))}
@@ -2403,7 +2479,7 @@ function VerfuegbarkeitContent() {
                         }}
                         title="Reservierung löschen"
                         aria-label="Reservierung löschen"
-                        className="shrink-0 rounded border border-slate-300 bg-white px-1 text-slate-600 hover:bg-rose-100 hover:text-rose-700 transition"
+                        className="shrink-0 rounded border border-slate-300 bg-white px-1 text-slate-600 hover:bg-red-100 hover:text-red-700 transition"
                       >
                         ×
                       </button>
@@ -2437,6 +2513,14 @@ function VerfuegbarkeitContent() {
             </span>
           ) : (
             <span className="text-slate-300">–</span>
+          )}
+          {hinweis && (
+            <div
+              className="mt-0.5 text-[10px] leading-tight text-slate-500"
+              title={`${hinweis} – kein gesetzlicher Feiertag (rein informativ)`}
+            >
+              {hinweis}
+            </div>
           )}
         </td>
       </tr>
@@ -2538,15 +2622,15 @@ function VerfuegbarkeitContent() {
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-800">
-      <div className="w-full max-w-[85%] mx-auto px-4 lg:px-6 pb-16">
+      <div className="w-full max-w-[85%] mx-auto px-4 lg:px-6">
         {/* Kopfzeile */}
         <header className="mb-4 pt-2 flex items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-bold flex items-center gap-2">
-              <CalendarDays className="w-5 h-5 text-blue-600" />
+              <CalendarRange className="w-5 h-5 text-cd-blue" />
               Verfügbarkeit pflegen
             </h1>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-500 mt-1">
               Stufenlose Wochenliste mit Vormittag / Nachmittag – Änderungen werden automatisch gespeichert.
             </p>
           </div>
@@ -2555,10 +2639,10 @@ function VerfuegbarkeitContent() {
             {istAdmin && (
               <Link
                 href="/"
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium hover:bg-slate-100 transition"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900"
               >
-                <CalendarDays className="w-4 h-4 text-slate-500" />
-                Zur Kursplanung
+                <LayoutDashboard className="w-4 h-4 text-cd-blue" />
+                Kursplanung
               </Link>
             )}
             <HeaderLogo />
@@ -2606,7 +2690,7 @@ function VerfuegbarkeitContent() {
                 aria-pressed={ansicht === 'monat'}
                 className={`px-3 py-2 text-sm font-medium transition ${
                   ansicht === 'monat'
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-[#285DAA] text-white'
                     : 'bg-white text-slate-600 hover:bg-slate-100'
                 }`}
               >
@@ -2618,7 +2702,7 @@ function VerfuegbarkeitContent() {
                 aria-pressed={ansicht === 'liste'}
                 className={`px-3 py-2 text-sm font-medium transition ${
                   ansicht === 'liste'
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-[#285DAA] text-white'
                     : 'bg-white text-slate-600 hover:bg-slate-100'
                 }`}
               >
@@ -2643,8 +2727,8 @@ function VerfuegbarkeitContent() {
               )}
               {saveStatus === 'error' && (
                 <>
-                  <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
-                  <span className="text-rose-700">Speichern fehlgeschlagen</span>
+                  <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+                  <span className="text-red-700">Speichern fehlgeschlagen</span>
                 </>
               )}
             </div>
@@ -2673,7 +2757,7 @@ function VerfuegbarkeitContent() {
             className="inline-flex items-center justify-between gap-1.5 w-48 min-w-[190px] px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 font-semibold text-slate-800 hover:bg-blue-100 transition whitespace-nowrap"
           >
             <span className="flex items-center gap-1.5 min-w-0">
-              <CalendarDays className="w-4 h-4 text-blue-600 shrink-0" />
+              <CalendarDays className="w-4 h-4 text-cd-blue shrink-0" />
               <span className="truncate">{sichtbarerMonat}</span>
             </span>
             <span className="text-slate-500 shrink-0" aria-hidden="true">▾</span>
@@ -2715,7 +2799,7 @@ function VerfuegbarkeitContent() {
             type="button"
             onClick={springeZuHeute}
             title={ansicht === 'liste' ? 'Zum heutigen Tag springen' : 'Zur aktuellen Woche springen'}
-            className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
+            className="px-3 py-2 rounded-lg bg-[#285DAA] text-white text-sm font-medium hover:bg-[#1E4A87] transition"
           >
             Heute
           </button>
@@ -2762,7 +2846,7 @@ function VerfuegbarkeitContent() {
           </div>
         ) : loadError ? (
           <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-500">
-            <AlertCircle className="w-6 h-6 text-rose-500" />
+            <AlertCircle className="w-6 h-6 text-red-500" />
             <p className="text-sm">Daten konnten nicht geladen werden.</p>
             <button
               type="button"
@@ -2797,7 +2881,7 @@ function VerfuegbarkeitContent() {
             <div
               ref={scrollRef}
               onScroll={handleScroll}
-              className="overflow-y-scroll overflow-x-auto [scrollbar-gutter:stable] max-h-[calc(100vh-320px)] min-h-[420px] pr-2"
+              className="overflow-y-scroll overflow-x-auto [scrollbar-gutter:stable] max-h-[calc(100vh-320px)] min-h-[min(420px,calc(100vh_-_320px))] pr-2"
             >
               <div ref={topSentinelRef} className="h-1" aria-hidden="true" />
               {ansicht === 'liste' ? (
@@ -2865,7 +2949,7 @@ function VerfuegbarkeitContent() {
                 Kurs bestätigt
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block w-3.5 h-3.5 rounded bg-rose-50 border border-rose-300" />
+                <span className="inline-block w-3.5 h-3.5 rounded bg-red-50 border border-red-300" />
                 Kurs abgesagt
               </span>
               <span className="inline-flex items-center gap-1.5">
@@ -2939,7 +3023,7 @@ function VerfuegbarkeitContent() {
             </div>
 
             {modalHinweis && (
-              <p className="mt-3 text-xs text-rose-600">{modalHinweis}</p>
+              <p className="mt-3 text-xs text-red-600">{modalHinweis}</p>
             )}
             {modalInfo && (
               <p className="mt-3 text-xs text-emerald-700">{modalInfo}</p>
@@ -3051,7 +3135,7 @@ function VerfuegbarkeitContent() {
                               : 'Termin entfernen'
                           }
                           aria-label="Termin entfernen"
-                          className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded border border-slate-300 bg-white text-slate-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-300 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded border border-slate-300 bg-white text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           ×
                         </button>
@@ -3193,7 +3277,7 @@ function VerfuegbarkeitContent() {
             )}
 
             {resFehler && (
-              <p className="mt-3 text-xs text-rose-600">{resFehler}</p>
+              <p className="mt-3 text-xs text-red-600">{resFehler}</p>
             )}
 
             <div className="mt-5 flex flex-wrap justify-end gap-2">

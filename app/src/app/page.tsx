@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   CalendarDays,
+  LayoutDashboard,
   Loader2,
   AlertTriangle,
   RefreshCw,
@@ -114,6 +115,18 @@ interface Kurs {
   hat_trainer?: boolean;
 }
 
+/** Ein Anzeige-Eintrag der flachen Terminliste: ein Kurs-Einzeltermin. */
+interface FlacherTermin {
+  /** Der zugehörige Kurs (Zuweisung, Status, Optionen gelten kursweit). */
+  kurs: Kurs;
+  /** Der konkrete Einzeltermin, der in dieser Zeile angezeigt wird. */
+  termin: KursTermin;
+  /** 0-basierter Index des Termins im Termin-Array des Kurses. */
+  terminIndex: number;
+  /** Gesamtzahl der Termine des Kurses (für „Tag X von N“). */
+  terminAnzahl: number;
+}
+
 /** Pro Kurs angezeigtes Auto-Save-Feedback. */
 interface Feedback {
   type: 'success' | 'error';
@@ -186,7 +199,7 @@ function cleanupStatusBadgeClass(status: string | null): string {
     case 'unter Vorbehalt':
       return 'bg-amber-100 text-amber-700 border-amber-200';
     case 'abgesagt':
-      return 'bg-rose-100 text-rose-700 border-rose-200';
+      return 'bg-red-100 text-red-700 border-red-200';
     case 'keine Zuordnung':
       return 'bg-slate-100 text-slate-600 border-slate-200';
     default:
@@ -266,8 +279,8 @@ const ZUWEISUNG_STATUS_CONFIG: Record<
     dotClassName: 'bg-emerald-500',
   },
   abgesagt: {
-    selectClassName: 'bg-rose-50 text-rose-800 border-rose-300 focus:ring-rose-500',
-    dotClassName: 'bg-rose-500',
+    selectClassName: 'bg-red-50 text-red-800 border-red-300 focus:ring-red-500',
+    dotClassName: 'bg-red-500',
   },
 };
 
@@ -298,7 +311,7 @@ const STATUS_CONFIG: Record<string, { label: string; badgeClasses: string }> = {
   },
   'Abgesagt': {
     label: 'Abgesagt',
-    badgeClasses: 'bg-rose-50 text-rose-700 border-rose-200 line-through opacity-75',
+    badgeClasses: 'bg-red-50 text-red-700 border-red-200 line-through opacity-75',
   },
   'Unbekannt': {
     label: 'Unbekannt',
@@ -720,7 +733,7 @@ function kursHinweise(kurs: Kurs): KursHinweis[] {
   if (kurs.date_status === 'Abgesagt') {
     hinweise.push({
       text: 'Abgesagt',
-      className: 'bg-rose-50 text-rose-700 border-rose-200',
+      className: 'bg-red-50 text-red-700 border-red-200',
     });
   }
 
@@ -753,7 +766,7 @@ function kursHinweise(kurs: Kurs): KursHinweis[] {
     if (frei <= 0) {
       hinweise.push({
         text: 'Ausgebucht',
-        className: 'bg-rose-50 text-rose-700 border-rose-200',
+        className: 'bg-red-50 text-red-700 border-red-200',
       });
     } else if (frei <= 2) {
       hinweise.push({
@@ -1151,7 +1164,7 @@ function HonorarZelle({
               onClick={reset}
               title="Manuellen Wert zurücksetzen"
               aria-label="Manuellen Wert zurücksetzen"
-              className="absolute right-0 top-1/2 -translate-y-1/2 inline-flex items-center justify-center w-5 h-5 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-100 transition"
+              className="absolute right-0 top-1/2 -translate-y-1/2 inline-flex items-center justify-center w-5 h-5 rounded-full text-slate-400 hover:text-red-600 hover:bg-red-100 transition"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -1423,6 +1436,56 @@ export default function Home() {
     selectedKw,
     selectedTrainerFilter,
   ]);
+
+  // Flache Terminliste: Jeder Einzeltermin eines Kurses wird zu einem eigenen
+  // Anzeige-Eintrag (mehrtägige Kurse erscheinen an jedem Kurstag). Die Liste
+  // wird strikt chronologisch nach Datum und Startzeit sortiert.
+  const flacheTermine = useMemo(() => {
+    const eintraege: FlacherTermin[] = [];
+
+    for (const kurs of gefilterteKurse) {
+      const termine = [...kurs.termine].sort((a, b) => {
+        const zeitA = toDate(a.date_start)?.getTime() ?? 0;
+        const zeitB = toDate(b.date_start)?.getTime() ?? 0;
+        return zeitA - zeitB;
+      });
+
+      if (termine.length === 0) {
+        // Fallback: Kurs ohne Termine trotzdem anzeigen (ein Eintrag).
+        eintraege.push({
+          kurs,
+          termin: {
+            date_id: kursKey(kurs),
+            date_start: null,
+            date_end: null,
+          },
+          terminIndex: 0,
+          terminAnzahl: 1,
+        });
+        continue;
+      }
+
+      termine.forEach((termin, index) => {
+        eintraege.push({
+          kurs,
+          termin,
+          terminIndex: index,
+          terminAnzahl: termine.length,
+        });
+      });
+    }
+
+    // Chronologisch nach Datum + Startzeit sortieren (stabil).
+    eintraege.sort((a, b) => {
+      const zeitA =
+        toDate(a.termin.date_start)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const zeitB =
+        toDate(b.termin.date_start)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      return zeitA - zeitB;
+    });
+
+    return eintraege;
+  }, [gefilterteKurse]);
 
   // Konflikt-Erkennung: gleicher Trainer an sich überschneidenden Terminen
   // (mehrtägige Kurse werden über ihre Einzeltermine geprüft).
@@ -1802,7 +1865,7 @@ export default function Home() {
   // Bei Erfolg werden Kürzel (und ggf. der neue Titel) lokal übernommen,
   // bei Abbruch bzw. Fehler bleibt die Zeile unverändert.
   const handleTrainerChange = useCallback(
-    async (kurs: Kurs, neuesKuerzel: string) => {
+    async (kurs: Kurs, neuesKuerzel: string, terminDateId?: string) => {
       const key = kursKey(kurs);
       const aktuelleZuweisung = kurs.zuweisungen[0] ?? null;
       const altesKuerzel = aktuelleZuweisung?.trainer?.kuerzel?.trim() ?? '';
@@ -1837,15 +1900,116 @@ export default function Home() {
         return;
       }
 
+      // Alle Einzeltermine des Kurses sammeln: Die Trainerzuweisung gilt laut
+      // Backend einheitlich für den gesamten Kurs, das Persistieren erfolgt
+      // aber zwingend date_id-basiert (nie über die offer_id). Die date_id der
+      // aktuell bearbeiteten Zeile wird dabei garantiert mit übergeben.
+      const dateIds = kurs.termine
+        .map((termin) => termin.date_id)
+        .filter((id) => id.trim() !== '');
+      const konkretId = terminDateId?.trim();
+      if (konkretId && !dateIds.includes(konkretId)) {
+        dateIds.push(konkretId);
+      }
+      if (dateIds.length === 0) {
+        showFeedback(
+          key,
+          'error',
+          'Fehler bei der Trainerzuweisung: keine gültige date_id vorhanden.'
+        );
+        return;
+      }
+
+      // Kürzel in die eindeutige Trainer-ID auflösen (für den lokalen Upsert).
+      const istAufhebung = neuesKuerzel === 'n. v.';
+      let trainerId: number | null = null;
+      if (!istAufhebung) {
+        const trainer = aktiveTrainer.find(
+          (t) => (t.kuerzel?.trim() ?? '') === neuesKuerzel
+        );
+        if (!trainer) {
+          showFeedback(
+            key,
+            'error',
+            `Fehler bei der Trainerzuweisung: unbekanntes Kürzel "${neuesKuerzel}".`
+          );
+          return;
+        }
+        trainerId = trainer.id;
+      }
+
+      // Für die Aufhebung ('n. v.') dient die Zeile des zuletzt zugewiesenen
+      // Trainers als Träger des Status 'keine Zuordnung' (trainer_id ist in
+      // public.trainer_zuweisung NOT NULL und per FK an public.trainer(id)
+      // gebunden). Ohne bisherige Zuweisung gibt es nichts aufzuheben.
+      const bisherigeTrainerId = aktuelleZuweisung?.trainer_id ?? null;
+      if (istAufhebung && bisherigeTrainerId === null) {
+        showFeedback(
+          key,
+          'error',
+          'Fehler bei der Trainerzuweisung: keine aktive Zuweisung zum Aufheben vorhanden.'
+        );
+        return;
+      }
+
+      // Status, der persistent geschrieben wird: Bei 'n. v.' lautet er
+      // 'keine Zuordnung'; bei einem Trainerwechsel wird ein bestehender
+      // Status übernommen (eine evtl. noch vorhandene 'keine Zuordnung'-
+      // Sperr-Zeile darf dabei nicht weitergereicht werden -> 'ausgeschrieben').
+      const neuerZuweisungStatus = istAufhebung
+        ? 'keine Zuordnung'
+        : aktuelleZuweisung?.status &&
+            aktuelleZuweisung.status !== 'keine Zuordnung'
+          ? aktuelleZuweisung.status
+          : 'ausgeschrieben';
+
+      // Lokale Persistenz-Hilfe: Upsert über die eindeutigen date_ids
+      // (nie über die offer_id). Bei 'n. v.' wird die trainer_id des
+      // bisherigen Trainers mit Status 'keine Zuordnung' übergeben.
+      const persistiereLokal = async (
+        trainerIdInt: number | null,
+        statusWert: string
+      ) => {
+        const resp = await fetch('/api/zuweisung', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date_ids: dateIds,
+            trainer_id: trainerIdInt,
+            status: statusWert,
+            notiz: aktuelleZuweisung?.notiz ?? null,
+          }),
+        });
+        const respData = (await resp.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        if (!resp.ok) {
+          throw new Error(respData.error ?? `HTTP ${resp.status}`);
+        }
+      };
+
       // Auswahl für die Dauer des Vorgangs sperren (disabled + Ladezustand).
       setSavingTrainerKeys((prev) => new Set(prev).add(key));
 
       try {
+        // 1) Lokale Persistenz (public.trainer_zuweisung): date_id-basiert.
+        //    Bei 'n. v.' (Status 'keine Zuordnung') bleibt die Zeile des
+        //    bisherigen Trainers erhalten; der nachfolgende Sync blendet den
+        //    edoobox-Leiter des Kurses aus.
+        await persistiereLokal(
+          istAufhebung ? bisherigeTrainerId : trainerId,
+          neuerZuweisungStatus
+        );
+
+        // 2) edoobox-Rückkanal (P98): Titel & Termin-Trainer in edoobox
+        //    anpassen. Die date_ids werden mit übertragen, damit der Workflow
+        //    bei mehrtägigen Kursen alle Einzeltermine vereinheitlichen kann.
         const res = await fetch('/api/trainer-zuweisung', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             offer_id: offerId,
+            date_ids: dateIds,
             neuer_trainer_kuerzel: neuesKuerzel,
             altes_trainer_kuerzel: altesKuerzel,
           }),
@@ -1860,7 +2024,15 @@ export default function Home() {
           throw new Error(data.error ?? `HTTP ${res.status}`);
         }
 
-        // Nach erfolgreichem POST den Hintergrund-Sync anstoßen (die
+        // 3) Bei Aufhebung die lokale 'n. v.'-Sperre NACH P98 erneut setzen:
+        //    P98 löscht bei 'n. v.' in seinem lokalen DB-Update die Zuweisung
+        //    je date_id. Ohne Nachziehen würde der folgende Sync den zuvor
+        //    noch gespiegelten edoobox-Leiter wieder sichtbar machen.
+        if (istAufhebung) {
+          await persistiereLokal(bisherigeTrainerId, 'keine Zuordnung');
+        }
+
+        // Nach erfolgreichem Speichern den Hintergrund-Sync anstoßen (die
         // Navigation hört auf 'kursplan:trigger-sync' und startet den Sync).
         window.dispatchEvent(new CustomEvent('kursplan:trigger-sync'));
 
@@ -1882,7 +2054,7 @@ export default function Home() {
             // 'n. v.' hebt die Zuweisung auf (Status null), jede Trainer-
             // Zuweisung setzt 'ausgeschrieben', sofern kein Status stand.
             status:
-              neuesKuerzel === 'n. v.'
+              istAufhebung
                 ? null
                 : (bisherige?.status ?? 'ausgeschrieben'),
             trainer: {
@@ -1894,11 +2066,15 @@ export default function Home() {
             ...k,
             zuweisungen: [neueZuweisung],
             trainer_kuerzel: neuesKuerzel,
-            hat_trainer: neuesKuerzel !== 'n. v.',
+            hat_trainer: !istAufhebung,
           };
         });
 
-        showFeedback(key, 'success', 'Trainer zugewiesen');
+        showFeedback(
+          key,
+          'success',
+          istAufhebung ? 'Zuweisung aufgehoben' : 'Trainer zugewiesen'
+        );
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('Fehler bei der Trainerzuweisung:', err);
@@ -1911,7 +2087,7 @@ export default function Home() {
         });
       }
     },
-    [patchKurs, showFeedback]
+    [patchKurs, showFeedback, aktiveTrainer]
   );
 
   function dateStatusInfo(
@@ -1935,10 +2111,10 @@ export default function Home() {
   in5Tagen.setDate(in5Tagen.getDate() + 5);
   const in5TagenIso = toIsoDate(in5Tagen);
 
-  const naechsterKurstagIso = gefilterteKurse.reduce<string | null>(
-    (fruehester, kurs) => {
-      if (istKursAusgenommen(kurs)) return fruehester;
-      const start = kursStartDate(kurs);
+  const naechsterKurstagIso = flacheTermine.reduce<string | null>(
+    (fruehester, eintrag) => {
+      if (istKursAusgenommen(eintrag.kurs)) return fruehester;
+      const start = toDate(eintrag.termin.date_start);
       if (!start) return fruehester;
       const iso = toIsoDate(start);
       if (iso < heuteIso) return fruehester;
@@ -1947,13 +2123,13 @@ export default function Home() {
     null
   );
 
-  // Index des allerersten Kurses am ersten anstehenden Kurstag.
+  // Index des allerersten Eintrags am ersten anstehenden Kurstag.
   const indexNaechsterKurstag =
     naechsterKurstagIso === null
       ? -1
-      : gefilterteKurse.findIndex((kurs) => {
-          if (istKursAusgenommen(kurs)) return false;
-          const start = kursStartDate(kurs);
+      : flacheTermine.findIndex((eintrag) => {
+          if (istKursAusgenommen(eintrag.kurs)) return false;
+          const start = toDate(eintrag.termin.date_start);
           return start !== null && toIsoDate(start) === naechsterKurstagIso;
         });
 
@@ -1992,7 +2168,7 @@ export default function Home() {
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
-            <CalendarDays className="w-5 h-5 text-blue-600" />
+            <LayoutDashboard className="w-5 h-5 text-cd-blue" />
             Kursplanung
           </h1>
           <p className="text-xs text-slate-500 mt-1">
@@ -2015,7 +2191,7 @@ export default function Home() {
             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg hover:bg-slate-100 transition shrink-0"
             title="Doppelte Trainer-Zuweisungen erkennen und bereinigen"
           >
-            <Wand2 className="w-4 h-4 text-blue-600" />
+            <Wand2 className="w-4 h-4 text-cd-blue" />
             Zuweisungen bereinigen
           </button>
           <HeaderLogo />
@@ -2037,8 +2213,8 @@ export default function Home() {
                   aria-pressed={active}
                   className={`px-3 py-1.5 text-xs font-semibold rounded-full border transition ${
                     active
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
+                      ? 'bg-cd-blue text-white border-cd-blue'
+                      : 'bg-white text-cd-blue border-cd-blue/40 hover:bg-cd-blue/10'
                   }`}
                 >
                   {option.label}
@@ -2245,9 +2421,9 @@ export default function Home() {
                 type="button"
                 onClick={() => scrollToToday(true)}
                 title="Zum nächsten anstehenden Termin springen"
-                className="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-cd-blue hover:bg-cd-blue/90 text-white text-xs font-semibold rounded-lg transition whitespace-nowrap"
               >
-                <CalendarDays className="w-3.5 h-3.5" />
+                <CalendarDays className="w-3.5 h-3.5 text-white" />
                 Heute
               </button>
               {hatAktiveFilter && (
@@ -2261,7 +2437,10 @@ export default function Home() {
                 </button>
               )}
               <span className="text-xs text-slate-500 whitespace-nowrap">
-                Zeige {gefilterteKurse.length} von {kurse.length} Kursen
+                Zeige {flacheTermine.length} von {kurse.reduce(
+                  (n, k) => n + Math.max(1, k.termine.length),
+                  0
+                )} Terminen
               </span>
             </div>
           </div>
@@ -2274,7 +2453,7 @@ export default function Home() {
           <span className="text-sm">Lade Kurse und Trainer...</span>
         </div>
       ) : error ? (
-        <div className="p-4 rounded-lg border border-rose-300 bg-rose-50 text-rose-800 text-sm flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="p-4 rounded-lg border border-red-300 bg-red-50 text-red-800 text-sm flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4" />
             <span>{error}</span>
@@ -2282,7 +2461,7 @@ export default function Home() {
           <button
             type="button"
             onClick={() => loadData()}
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg transition"
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Erneut versuchen
@@ -2326,15 +2505,20 @@ export default function Home() {
               </tr>
             </thead>
             <tbody>
-              {gefilterteKurse.map((kurs, index) => {
+              {flacheTermine.map((eintrag, index) => {
+                const kurs = eintrag.kurs;
+                const termin = eintrag.termin;
                 const zuweisung = kurs.zuweisungen[0] ?? null;
                 const hatTrainer = zuweisung !== null && zuweisung.trainer_id !== null;
                 const effektivStatus: ZuweisungStatus =
                   hatTrainer && isZuweisungStatus(zuweisung.status)
                     ? zuweisung.status
                     : 'keine Zuordnung';
+                // Kursbezogener Schlüssel (Feedback, Ladezustand, Konflikte)
+                // und eindeutiger Zeilenschlüssel je Einzeltermin.
                 const key = kursKey(kurs);
-                const startDatum = kursStartDate(kurs);
+                const rowKey = `${key}#${termin.date_id}`;
+                const startDatum = toDate(termin.date_start);
                 const kursIso = startDatum ? toIsoDate(startDatum) : null;
                 const istAusgenommen = istKursAusgenommen(kurs);
                 const istNaechsterKurstag =
@@ -2364,14 +2548,14 @@ export default function Home() {
                 const belegungBadgeClass = !hatLimit
                   ? 'bg-slate-50 text-slate-600 border-slate-200'
                   : quote < 0.25
-                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    ? 'bg-red-50 text-red-700 border-red-200'
                     : quote < 0.7
                       ? 'bg-amber-50 text-amber-700 border-amber-200'
                       : 'bg-emerald-50 text-emerald-700 border-emerald-200';
                 const teilnehmerText = hatLimit
                   ? `${kurs.teilnehmer}/${maxPlaetze}`
                   : `${kurs.teilnehmer}/-`;
-                const zeit = kursZeitraum(kurs);
+                const zeit = formatZeitraum(termin.date_start, termin.date_end);
                 const optionen = kurs.optionen ?? LEERE_OPTIONEN;
 
                 // Interaktive Trainer-Auswahl: laufende Umzuweisung (P98) für
@@ -2425,7 +2609,7 @@ export default function Home() {
 
                 return (
                   <tr
-                    key={key}
+                    key={rowKey}
                     id={istHeuteZeile ? 'row-today' : undefined}
                     data-date={startDatum ? toIsoDate(startDatum) : undefined}
                     className={`border-b border-slate-100 last:border-b-0 align-top transition-colors ${istHeuteZeile ? 'scroll-mt-32 ' : ''}${
@@ -2455,6 +2639,13 @@ export default function Home() {
                           {zeit.detail}
                         </div>
                       )}
+                      {eintrag.terminAnzahl > 1 && (
+                        <div className="mt-0.5">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200 whitespace-nowrap">
+                            Tag {eintrag.terminIndex + 1} von {eintrag.terminAnzahl}
+                          </span>
+                        </div>
+                      )}
                     </td>
 
                     {/* Kurs */}
@@ -2479,8 +2670,8 @@ export default function Home() {
                         aria-pressed={selectedTitel === kurs.offer_name}
                         className={`text-left font-medium transition ${
                           selectedTitel === kurs.offer_name
-                            ? 'text-indigo-700 underline decoration-indigo-400 decoration-2 underline-offset-2'
-                            : 'text-slate-800 hover:text-indigo-600 hover:underline hover:decoration-indigo-300'
+                            ? 'text-cd-blue underline decoration-cd-blue decoration-2 underline-offset-2'
+                            : 'text-slate-800 hover:text-cd-blue hover:underline hover:decoration-cd-blue/50'
                         }`}
                       >
                         {kuerzeAngebotstitel(kurs.offer_name) || '–'}
@@ -2513,8 +2704,8 @@ export default function Home() {
                                 aria-pressed={istAktiv}
                                 className={`text-[11px] px-1.5 py-0.5 rounded font-medium border cursor-pointer transition ${
                                   istAktiv
-                                    ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm ring-2 ring-indigo-300'
-                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                    ? 'bg-cd-blue text-white border-cd-blue shadow-sm ring-2 ring-cd-blue/30'
+                                    : 'bg-cd-blue/10 text-cd-blue border-cd-blue/30 hover:bg-cd-blue/20'
                                 }`}
                               >
                                 {tag}
@@ -2549,8 +2740,8 @@ export default function Home() {
                                 aria-pressed={badgeAktiv(key)}
                                 className={`${hinweis.className} cursor-pointer transition ${
                                   badgeAktiv(key)
-                                    ? 'ring-2 ring-indigo-400'
-                                    : 'hover:ring-2 hover:ring-indigo-200'
+                                    ? 'ring-2 ring-cd-blue'
+                                    : 'hover:ring-2 hover:ring-cd-blue/40'
                                 }`}
                               >
                                 {hinweis.text}
@@ -2573,8 +2764,8 @@ export default function Home() {
                               aria-pressed={badgeAktiv('konflikt')}
                               className={`bg-red-600 text-yellow-300 font-semibold px-2 py-0.5 rounded text-xs cursor-pointer transition ${
                                 badgeAktiv('konflikt')
-                                  ? 'ring-2 ring-indigo-400'
-                                  : 'hover:ring-2 hover:ring-indigo-200'
+                                  ? 'ring-2 ring-cd-blue'
+                                  : 'hover:ring-2 hover:ring-cd-blue/40'
                               }`}
                             >
                               Terminkonflikt
@@ -2619,7 +2810,7 @@ export default function Home() {
                     <td
                       className={`px-3 py-3 text-right whitespace-nowrap tabular-nums font-medium align-top ${
                         deckungsbeitrag !== null && deckungsbeitrag < 0
-                          ? 'text-rose-600'
+                          ? 'text-red-600'
                           : 'text-slate-600'
                       }`}
                     >
@@ -2634,7 +2825,7 @@ export default function Home() {
                         marge === null
                           ? 'text-slate-400'
                           : marge < 0
-                            ? 'text-rose-600 font-medium'
+                            ? 'text-red-600 font-medium'
                             : 'text-emerald-700'
                       }`}
                     >
@@ -2651,7 +2842,11 @@ export default function Home() {
                             value={kurs.trainer_kuerzel || 'n. v.'}
                             disabled={istTrainerSaving}
                             onChange={(e) =>
-                              handleTrainerChange(kurs, e.target.value)
+                              handleTrainerChange(
+                                kurs,
+                                e.target.value,
+                                termin.date_id
+                              )
                             }
                             title="Trainer zuweisen – edoobox & Kurstitel werden angepasst"
                             aria-label={`Trainer für Kurs ${kurs.offer_name ?? ''}`}
@@ -2701,14 +2896,14 @@ export default function Home() {
                           className={`mt-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold border ${
                             feedbackEntry.type === 'success'
                               ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                              : 'bg-rose-100 text-rose-800 border-rose-300'
+                              : 'bg-red-100 text-red-800 border-red-300'
                           }`}
                         >
                           <span
                             className={`w-1.5 h-1.5 rounded-full ${
                               feedbackEntry.type === 'success'
                                 ? 'bg-emerald-500'
-                                : 'bg-rose-500'
+                                : 'bg-red-500'
                             }`}
                           />
                           {feedbackEntry.text}
@@ -2818,7 +3013,7 @@ export default function Home() {
                 id="cleanup-modal-titel"
                 className="text-lg font-bold text-slate-800 flex items-center gap-2"
               >
-                <Wand2 className="w-5 h-5 text-blue-600" />
+                <Wand2 className="w-5 h-5 text-cd-blue" />
                 Zuweisungen bereinigen
               </h2>
               <button
@@ -2834,7 +3029,7 @@ export default function Home() {
             <div className="px-5 py-4">
               {/* Fehleranzeige */}
               {cleanupFehler && (
-                <div className="mb-4 flex items-start gap-2 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">
+                <div className="mb-4 flex items-start gap-2 p-3 rounded-lg bg-red-50 text-red-700 text-sm">
                   <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                   <div>
                     <p className="font-semibold">Bereinigung fehlgeschlagen</p>
@@ -2887,9 +3082,9 @@ export default function Home() {
                         {cleanupErgebnis.zusammenfassung.bereinigt}
                       </p>
                     </div>
-                    <div className="p-3 rounded-lg bg-rose-50 border border-rose-200">
-                      <p className="text-xs font-semibold text-rose-600">Konflikte</p>
-                      <p className="text-xl font-bold text-rose-700">
+                    <div className="p-3 rounded-lg bg-red-50 border border-red-200">
+                      <p className="text-xs font-semibold text-red-600">Konflikte</p>
+                      <p className="text-xl font-bold text-red-700">
                         {cleanupErgebnis.zusammenfassung.konflikte}
                       </p>
                     </div>

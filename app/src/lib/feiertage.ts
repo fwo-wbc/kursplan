@@ -161,3 +161,42 @@ export function feiertagLabel(feiertag: Feiertag): string {
     ? feiertag.name
     : `${feiertag.name} (${feiertag.laenderLabel})`;
 }
+
+/**
+ * Liefert die europäischen Zeitumstellungen (MEZ ↔ MESZ) eines Jahres als
+ * Map ISO-Tag → Anzeigetext. Die Termine werden rein kalendarisch dynamisch
+ * berechnet:
+ *  - Beginn der Sommerzeit (MESZ): letzter Sonntag im März (02:00 → 03:00).
+ *  - Ende der Sommerzeit (Normalzeit / MEZ): letzter Sonntag im Oktober
+ *    (03:00 → 02:00).
+ *
+ * WICHTIG: Diese Ereignisse sind KEINE gesetzlichen Feiertage und dürfen die
+ * lilane Hintergrundfarbe einer Tageszelle NICHT auslösen – sie werden rein
+ * informativ als dezent grauer Text angezeigt (analog zu den Faschings-
+ * Hinweisen Rosenmontag/Fastnacht in der Monatsübersicht).
+ */
+export function zeitumstellungHinweiseFuerJahr(
+  jahr: number
+): Record<string, string> {
+  /** Letzter Sonntag des Monats (0-basiert) als ISO-Datum. */
+  const letzterSonntagImMonat = (monat: number): string => {
+    // Vom letzten Tag des Monats (Tag 0 des Folgemonats) rückwärts bis zum
+    // Sonntag laufen – garantiert den letzten Sonntag des Zielmonats.
+    let d = new Date(Date.UTC(jahr, monat + 1, 0));
+    while (d.getUTCDay() !== 0) {
+      // Exakt einen Tag vom tatsächlichen Datum abziehen (Monatsgrenzen
+      // werden von Date.UTC automatisch normalisiert).
+      d = new Date(
+        Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - 1)
+      );
+    }
+    return formatDatum(d);
+  };
+
+  return {
+    // März (Index 2): letzter Sonntag im März → Beginn Sommerzeit (MESZ).
+    [letzterSonntagImMonat(2)]: '⏰ Beginn Sommerzeit (MESZ)',
+    // Oktober (Index 9): letzter Sonntag im Oktober → Ende Sommerzeit (MEZ).
+    [letzterSonntagImMonat(9)]: '⏰ Ende Sommerzeit (MEZ)',
+  };
+}

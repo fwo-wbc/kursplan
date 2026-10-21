@@ -177,14 +177,14 @@ const AMPEL_KLASSEN: Record<KursStatus, string> = {
   ausgeschrieben: 'bg-blue-100 border-blue-300 text-blue-900',
   'unter Vorbehalt': 'bg-amber-100 border-amber-300 text-amber-900',
   bestätigt: 'bg-emerald-100 border-emerald-300 text-emerald-900',
-  abgesagt: 'bg-rose-100 border-rose-300 text-rose-900 line-through',
+  abgesagt: 'bg-red-100 border-red-300 text-red-900 line-through',
 };
 
 const AMPEL_DOT: Record<KursStatus, string> = {
   ausgeschrieben: 'bg-blue-500',
   'unter Vorbehalt': 'bg-amber-400',
   bestätigt: 'bg-emerald-500',
-  abgesagt: 'bg-rose-500',
+  abgesagt: 'bg-red-500',
 };
 
 /** Statusoptionen für das Aktionsmenü am Kursblock. */
@@ -517,6 +517,15 @@ export default function ZeitplanPage() {
   }
 
   function openEditReservation(res: ReservierungEintrag, datum: string) {
+    // Status aus dem Altbestand normalisieren: Nur Werte der Frontend-Whitelist
+    // (STATUS_OPTIONEN) werden übernommen, alles andere fällt auf den gültigen
+    // Initial-Status 'angeboten' zurück – so kann der nachfolgende PUT nie an
+    // der Status-Validierung scheitern.
+    const normalisierterStatus = STATUS_OPTIONEN.some(
+      (o) => o.value === res.status
+    )
+      ? res.status
+      : 'angeboten';
     setDialog({
       open: true,
       editing: res,
@@ -524,7 +533,7 @@ export default function ZeitplanPage() {
       kd_nr: res.kd_nr,
       thema: res.thema,
       frist_ende: res.frist_ende,
-      status: res.status,
+      status: normalisierterStatus,
       notiz: res.notiz ?? '',
     });
     setDialogError(null);
@@ -938,7 +947,7 @@ export default function ZeitplanPage() {
         <header className="mb-4 shrink-0 flex items-center justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-xl font-bold flex items-center gap-2">
-              <CalendarRange className="w-5 h-5 text-blue-600" />
+              <CalendarRange className="w-5 h-5 text-cd-blue" />
               Dozenten-Planung
             </h1>
             <p className="text-xs text-slate-500">
@@ -1079,7 +1088,7 @@ export default function ZeitplanPage() {
         <div className="flex-1 min-h-0 overflow-y-auto">
         {/* Warnhinweis */}
         {saveError && (
-          <div className="mb-3 flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <div className="mb-3 flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
             <AlertCircle className="w-4 h-4" />
             {saveError}
           </div>
@@ -1093,7 +1102,7 @@ export default function ZeitplanPage() {
           </div>
         ) : loadError ? (
           <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-500">
-            <AlertCircle className="w-6 h-6 text-rose-500" />
+            <AlertCircle className="w-6 h-6 text-red-500" />
             <p className="text-sm">Zeitplan konnte nicht geladen werden.</p>
             <button
               type="button"
@@ -1445,7 +1454,7 @@ export default function ZeitplanPage() {
             Bestätigt
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block w-3.5 h-3.5 rounded bg-rose-500" />
+            <span className="inline-block w-3.5 h-3.5 rounded bg-red-500" />
             Abgesagt
           </span>
           <span className="inline-flex items-center gap-1.5">
@@ -1466,7 +1475,7 @@ export default function ZeitplanPage() {
           <div className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-slate-200 p-5">
             <div className="flex items-start justify-between mb-4">
               <h2 className="text-base font-bold flex items-center gap-2">
-                <Pencil className="w-4 h-4 text-blue-600" />
+                <Pencil className="w-4 h-4 text-cd-blue" />
                 {dialog.editing ? 'Reservierung bearbeiten' : 'Neue Reservierung'}
               </h2>
               <button
@@ -1607,7 +1616,7 @@ export default function ZeitplanPage() {
                         onClick={() => removeTermin(index)}
                         title="Termin entfernen"
                         aria-label="Termin entfernen"
-                        className="shrink-0 rounded-md border border-slate-300 px-1.5 py-1.5 text-slate-400 hover:border-rose-300 hover:text-rose-600 transition"
+                        className="shrink-0 rounded-md border border-slate-300 px-1.5 py-1.5 text-slate-400 hover:border-red-300 hover:text-red-600 transition"
                       >
                         <X className="w-3 h-3" />
                       </button>
@@ -1618,7 +1627,7 @@ export default function ZeitplanPage() {
             </div>
 
             {dialogError && (
-              <div className="mt-3 flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
                 <AlertCircle className="w-4 h-4" />
                 {dialogError}
               </div>
@@ -1630,7 +1639,7 @@ export default function ZeitplanPage() {
                   type="button"
                   onClick={() => deleteReservation(dialog.editing!.id)}
                   disabled={dialogSaving}
-                  className="mr-auto px-3 py-2 rounded-lg border border-rose-300 bg-rose-50 text-rose-700 text-sm font-medium hover:bg-rose-100 transition disabled:opacity-60"
+                  className="mr-auto px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 text-sm font-medium hover:bg-red-100 transition disabled:opacity-60"
                 >
                   Löschen
                 </button>
@@ -1667,7 +1676,7 @@ export default function ZeitplanPage() {
           <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl border border-slate-200 p-5">
             <div className="flex items-start justify-between mb-4">
               <h2 className="text-base font-bold flex items-center gap-2">
-                <Wand2 className="w-4 h-4 text-blue-600" />
+                <Wand2 className="w-4 h-4 text-cd-blue" />
                 In Kurs umwandeln
               </h2>
               <button
@@ -1798,7 +1807,7 @@ export default function ZeitplanPage() {
             </div>
 
             {umwandlungError && (
-              <div className="mt-3 flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
                 <AlertCircle className="w-4 h-4" />
                 {umwandlungError}
               </div>
@@ -1862,7 +1871,7 @@ export default function ZeitplanPage() {
             </div>
 
             {cleanError && (
-              <div className="mt-3 flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
                 <AlertCircle className="w-4 h-4" />
                 {cleanError}
               </div>

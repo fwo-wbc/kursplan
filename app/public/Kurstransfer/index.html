@@ -15,14 +15,39 @@
     * { box-sizing: border-box; }
     body { font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
     .wrap { max-width: 1200px; margin: 0 auto; }
+
+    /* Header-Redesign: sauberes Flexbox-Layout (Titel links, Aktionen rechts) */
     header.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
-    header.top h1 { font-size: 1.4rem; margin: 0; }
+    .hdr-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .hdr-title .hdr-sub { min-width: 0; }
+    header.top h1 { font-size: 1.25rem; font-weight: 700; margin: 0; white-space: nowrap; }
     header.top .sub { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
 
-    .app-nav { display: flex; align-items: center; gap: 4px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-    .app-nav a { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; font-size: 0.9rem; font-weight: 500; text-decoration: none; color: #475569; transition: background 0.15s, color 0.15s; }
-    .app-nav a:hover { background: #f1f5f9; color: #0f172a; }
-    .app-nav a.active { background: #2563eb; color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+    /* Header-Aktionen: Flex-Box rechts (Button "Kursplanung" + Firmenlogo, 16px Abstand) */
+    .hdr-actions { display: flex; gap: 16px; align-items: center; }
+    .hdr-logo { height: 44px; width: auto; display: block; object-fit: contain; flex-shrink: 0; }
+
+    /* Button "Kursplanung": identisches Design wie die Navigation der Kursplanung
+       (Inline-Link: transparent, Text slate-600, Icon cd-blue, Hover slate-100) */
+    .btn-kursplanung {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+      color: #475569;
+      font-size: 14px;
+      font-weight: 500;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 6px 12px;
+      border-radius: 8px;
+      transition: background-color 0.15s, color 0.15s;
+    }
+    .btn-kursplanung:hover {
+      background-color: #f1f5f9;
+      color: #0f172a;
+    }
 
     .toolbar { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
     .toolbar .spacer { flex: 1 1 auto; }
@@ -54,6 +79,7 @@
 
     /* Subline unter der Button-Reihe */
     .toolbar-subline { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 0.875rem; gap: 12px; }
+    .subline-left { display: flex; align-items: center; gap: 16px; min-width: 0; flex-wrap: wrap; }
     #selection-count { font-weight: 400; color: var(--muted); white-space: nowrap; }
     #selection-count.highlight { font-weight: 700; color: var(--primary); }
     #status-inline-message { color: var(--muted); text-align: right; transition: opacity 0.4s ease; word-wrap: break-word; }
@@ -105,20 +131,32 @@
 </head>
 <body>
   <div class="wrap">
-    <nav class="app-nav" aria-label="Hauptnavigation">
-      <a href="../">Zur Kursplanung</a>
-      <a href="index.html" class="active" aria-current="page">Kurstransfer</a>
-    </nav>
-
     <header class="top">
-      <div>
-        <h1>Kurstransfer zu edoobox</h1>
-        <div class="sub">Kurstermine auswählen & in edoobox eintragen (Standard-Datei: Kurstransfer-MS-Office.xlsx)</div>
+      <!-- Linke Seite (Titel-Bereich): Transfer-Icon (ArrowRightLeft, #285DAA) + Seitentitel -->
+      <div class="hdr-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#285DAA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 3 4 7l4 4"/>
+          <path d="M4 7h16"/>
+          <path d="m16 21 4-4-4-4"/>
+          <path d="M20 17H4"/>
+        </svg>
+        <div class="hdr-sub">
+          <h1>Kurstransfer</h1>
+          <div class="sub">Kurstermine auswählen & in edoobox eintragen (Standard-Datei: Kurstransfer-MS-Office.xlsx)</div>
+        </div>
       </div>
-      <div class="stats" id="stats">
-        <span>Gesamt: <b id="statTotal">0</b></span>
-        <span>Offen: <b id="statOpen">0</b></span>
-        <span>Erledigt: <b id="statDone">0</b></span>
+      <!-- Rechte Seite (Aktions-Bereich): Button "Kursplanung" (hell) links, globales Firmenlogo ganz rechts -->
+      <div class="hdr-actions">
+        <a href="../" class="btn-kursplanung">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#285daa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="7" height="9" x="3" y="3" rx="1"></rect>
+            <rect width="7" height="5" x="14" y="3" rx="1"></rect>
+            <rect width="7" height="9" x="14" y="12" rx="1"></rect>
+            <rect width="7" height="5" x="3" y="16" rx="1"></rect>
+          </svg>
+          <span>Kursplanung</span>
+        </a>
+        <img class="hdr-logo" src="/logo.png" alt="Logo" width="240" height="60">
       </div>
     </header>
 
@@ -139,7 +177,14 @@
         <button id="btn-sync-edoobox" type="button" disabled>In edoobox eintragen</button>
       </div>
       <div class="toolbar-subline">
-        <span id="selection-count">0 Termine ausgewählt</span>
+        <div class="subline-left">
+          <div class="stats" id="stats">
+            <span>Gesamt: <b id="statTotal">0</b></span>
+            <span>Offen: <b id="statOpen">0</b></span>
+            <span>Erledigt: <b id="statDone">0</b></span>
+          </div>
+          <span id="selection-count">0 Termine ausgewählt</span>
+        </div>
         <span id="status-inline-message" role="status" aria-live="polite"></span>
       </div>
     </div>

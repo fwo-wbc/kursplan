@@ -7,6 +7,8 @@ import { NextResponse } from 'next/server';
 /** Erwarteter Request-Body für die Trainer-Umzuweisung eines Kursangebots. */
 interface TrainerZuweisungBody {
   offer_id?: unknown;
+  /** Einzeltermine (date_id) des Kurses – mehrtägige Besetzung vereinheitlichen. */
+  date_ids?: unknown;
   neuer_trainer_kuerzel?: unknown;
   altes_trainer_kuerzel?: unknown;
 }
@@ -72,6 +74,16 @@ export async function POST(request: Request) {
       ? body.altes_trainer_kuerzel.trim()
       : undefined;
 
+  // date_ids (optional): bereinigtes String-Array der betroffenen
+  // Einzeltermine. Wird an den Workflow durchgereicht, damit mehrtägige
+  // Kurse kursweit vereinheitlicht werden können.
+  const dateIds = Array.isArray(body.date_ids)
+    ? body.date_ids
+        .filter((item): item is string => typeof item === 'string')
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0)
+    : [];
+
   if (offerId === '') {
     return NextResponse.json(
       { error: 'offer_id fehlt oder ist kein nicht-leerer String.' },
@@ -93,14 +105,19 @@ export async function POST(request: Request) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
+    const webhookPayload: Record<string, unknown> = {
+      offer_id: offerId,
+      neuer_trainer_kuerzel: kuerzelFuerWebhook,
+      altes_trainer_kuerzel: altesKuerzel,
+    };
+    if (dateIds.length > 0) {
+      webhookPayload.date_ids = dateIds;
+    }
+
     res = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        offer_id: offerId,
-        neuer_trainer_kuerzel: kuerzelFuerWebhook,
-        altes_trainer_kuerzel: altesKuerzel,
-      }),
+      body: JSON.stringify(webhookPayload),
       signal: controller.signal,
     });
 

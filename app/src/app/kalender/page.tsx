@@ -14,6 +14,7 @@ import HeaderLogo from '../components/HeaderLogo';
 import {
   feiertageFuerJahr as zentraleFeiertageFuerJahr,
   feiertagLabel,
+  zeitumstellungHinweiseFuerJahr,
   type Feiertag,
 } from '@/lib/feiertage';
 
@@ -53,6 +54,8 @@ interface Kurs {
   trainer_kuerzel?: string | null;
   /** true, wenn der Kurs eine aktive Trainer-Zuweisung besitzt. */
   hat_trainer?: boolean;
+  /** Gebuchte Teilnehmer (Ist-Anzahl) – geliefert von /api/termine. */
+  teilnehmer?: number | null;
 }
 
 /** Ein Kalendertag innerhalb des Monatsrasters. */
@@ -267,12 +270,17 @@ function feiertageFuerJahr(jahr: number): Record<string, Feiertag> {
 }
 
 /**
- * Liefert die nicht-gesetzlichen Faschings-Hinweise eines Jahres als
- * Map ISO-Tag → Anzeigename. Rosenmontag liegt 48 Tage, Fastnacht /
- * Faschingsdienstag 47 Tage vor Ostersonntag.
+ * Liefert die nicht-gesetzlichen Tages-Hinweise eines Jahres als
+ * Map ISO-Tag → Anzeigename:
+ *  - Fasching: Rosenmontag (48 Tage) und Fastnacht / Faschingsdienstag
+ *    (47 Tage) vor Ostersonntag.
+ *  - Europäische Zeitumstellung: Beginn der Sommerzeit (MESZ, letzter
+ *    Sonntag im März) und Ende der Sommerzeit (Normalzeit / MEZ, letzter
+ *    Sonntag im Oktober) – dynamisch berechnet in der zentralen Utility
+ *    zeitumstellungHinweiseFuerJahr().
  * WICHTIG: Diese Tage sind KEINE gesetzlichen Feiertage und dürfen die
  * lilane Hintergrundfarbe der Tageszelle NICHT auslösen – sie werden
- * ausschließlich als grauer Text angezeigt.
+ * ausschließlich als dezenter grauer Text angezeigt.
  */
 function hinweiseFuerJahr(jahr: number): Record<string, string> {
   const ostern = osterSonntag(jahr);
@@ -287,6 +295,10 @@ function hinweiseFuerJahr(jahr: number): Record<string, string> {
   };
   addOffset(-48, 'Rosenmontag');
   addOffset(-47, 'Fastnacht');
+
+  // Europäische Zeitumstellungen (MEZ ↔ MESZ) ergänzen – rein informativ,
+  // analog zu den Faschings-Tagen ohne lilane Tageszellenfarbe.
+  Object.assign(hinweise, zeitumstellungHinweiseFuerJahr(jahr));
   return hinweise;
 }
 
@@ -318,6 +330,7 @@ function trainerKuerzel(kurs: Kurs): string {
  * aus, wird der edoobox-Kursstatus (date_status) herangezogen.
  *  - bestätigt / Freigegeben            → grün
  *  - unter Vorbehalt                    → orange
+ *  - Reservierung / Reserviert          → grau
  *  - abgesagt                           → rot, durchgestrichen
  *  - ausgeschrieben / keine Zuordnung   → blau (Standard)
  */
@@ -327,7 +340,28 @@ function statusKlasse(kurs: Kurs): string {
   if (status === 'bestätigt' || status === 'freigegeben')
     return 'monats-kurs-bestaetigt';
   if (status === 'unter vorbehalt') return 'monats-kurs-vorbehalt';
+  if (status === 'reservierung' || status === 'reserviert')
+    return 'monats-kurs-reserviert';
   return 'monats-kurs-offen';
+}
+
+/**
+ * true, wenn die Teilnehmeranzahl an den Kurstitel angehängt werden soll.
+ * Nur Kurse, deren Zuweisungsstatus NICHT „ausgeschrieben“ (bzw. der
+ * Standardwert für nicht zugewiesene/offene Kurse) ist, tragen das Anhängsel.
+ * Abgedeckt werden dabei alle offenen Varianten (ausgeschrieben, offen,
+ * angefragt) sowie ein fehlender Status. Zusätzlich muss mindestens ein
+ * Teilnehmer gebucht sein (0 TN bzw. null bleibt unsichtbar).
+ */
+function zeigeTeilnehmer(kurs: Kurs): boolean {
+  const status = (kurs.zuweisung_status ?? kurs.date_status ?? '').toLowerCase();
+  const offen =
+    status === '' ||
+    status === 'ausgeschrieben' ||
+    status === 'offen' ||
+    status === 'angefragt';
+  const tn = kurs.teilnehmer;
+  return !offen && typeof tn === 'number' && tn > 0;
 }
 
 /** true, wenn der Kurs den Status „abgesagt“ trägt. */
@@ -469,13 +503,24 @@ export default function KalenderPage() {
       // soft-gelöschte Einträge, die die API-Filter in Ausnahmefällen
       // passieren, unter keinen Umständen gerendert.
       setKurse(
-        data.filter(
-          (kurs) =>
-            kurs !== null &&
-            Array.isArray(kurs.termine) &&
-            (kurs.offer_id !== null || kurs.offer_name !== null) &&
-            kurs.termine.some((t) => t && typeof t.date_id === 'string')
-        )
+        data.filter((kurs) => {
+          if (kurs === null || !Array.isArray(kurs.termine)) return false;
+          // Strategiewechsel: Reservierungen dürfen unter keinen Umständen
+          // mehr im Hauptkalender auftauchen (Welt A: public.termin_reservierung,
+          // Welt B: public.trainer_reservierung). Sie werden hier zwingend
+          // herausgefiltert und leben ausschließlich auf der separaten
+          // Reservierungsseite (Listenansicht & Monatsübersicht).
+          const status = String(kurs.date_status ?? '').toLowerCase();
+          if (status === 'reservierung' || status === 'reserviert') {
+            return false;
+          }
+          const hatIdentitaet =
+            kurs.offer_id !== null || kurs.offer_name !== null;
+          const hatTerminMitId = kurs.termine.some(
+            (t) => t && typeof t.date_id === 'string'
+          );
+          return hatIdentitaet && hatTerminMitId;
+        })
       );
     } catch (err: unknown) {
       console.error('Fehler beim Laden der Monatsübersicht:', err);
@@ -618,7 +663,7 @@ export default function KalenderPage() {
       <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
-            <CalendarDays className="w-5 h-5 text-blue-600" />
+            <CalendarDays className="w-5 h-5 text-cd-blue" />
             Monatsübersicht
           </h1>
           <p className="text-xs text-slate-500 mt-1">
@@ -650,7 +695,7 @@ export default function KalenderPage() {
           className="inline-flex items-center justify-between gap-1.5 w-48 min-w-[190px] px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 font-semibold text-slate-800 hover:bg-blue-100 transition whitespace-nowrap"
         >
           <span className="flex items-center gap-1.5 min-w-0">
-            <CalendarDays className="w-4 h-4 text-blue-600 shrink-0" />
+            <CalendarDays className="w-4 h-4 text-cd-blue shrink-0" />
             <span className="truncate">{monatsTitel}</span>
           </span>
           <span className="text-slate-500 shrink-0" aria-hidden="true">▾</span>
@@ -689,11 +734,11 @@ export default function KalenderPage() {
           <ChevronRight className="w-4 h-4" />
         </button>
 
-        {/* Element 4: Heute (Primär-Button, durchgehend blau) */}
+        {/* Element 4: Heute (Primär-Button, durchgehend CD-Blau) */}
         <button
           type="button"
           onClick={zuHeute}
-          className="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition"
+          className="px-3 py-1.5 rounded-lg text-sm font-medium bg-cd-blue text-white hover:bg-cd-blue/90 transition"
         >
           Heute
         </button>
@@ -709,12 +754,16 @@ export default function KalenderPage() {
           Aktualisieren
         </button>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-700 select-none cursor-pointer">
+        <label
+          className={`inline-flex items-center gap-2 text-sm select-none cursor-pointer ${
+            abgesagteAusblenden ? 'text-cd-blue font-medium' : 'text-slate-700'
+          }`}
+        >
           <input
             type="checkbox"
             checked={abgesagteAusblenden}
             onChange={(e) => setAbgesagteAusblenden(e.target.checked)}
-            className="w-4 h-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+            className="w-4 h-4 rounded border-cd-blue/40 text-cd-blue focus:ring-cd-blue"
           />
           Abgesagte Kurse ausblenden
         </label>
@@ -727,7 +776,7 @@ export default function KalenderPage() {
       </div>
 
       {error && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           {error}
         </div>
@@ -797,7 +846,7 @@ export default function KalenderPage() {
                     {hinweis && (
                       <div
                         className="monats-tag-hinweis"
-                        title={`${hinweis} – 48 bzw. 47 Tage vor Ostersonntag, kein gesetzlicher Feiertag`}
+                        title={`${hinweis} – kein gesetzlicher Feiertag (rein informativ)`}
                       >
                         {hinweis}
                       </div>
@@ -806,6 +855,7 @@ export default function KalenderPage() {
                       {sichtbare.map((eintrag, index) => {
                         const { kurs, startZeit } = eintrag;
                         const kuerzel = trainerKuerzel(kurs);
+                        const anzeigeTeilnehmer = zeigeTeilnehmer(kurs);
                         return (
                           <li
                             key={`${kurs.offer_id ?? kurs.termine[0]?.date_id ?? 'unbekannt'}-${iso}-${startZeit ?? 'ohne-zeit'}-${index}`}
@@ -818,6 +868,14 @@ export default function KalenderPage() {
                             <span className="monats-kurs-titel">
                               {kuerzeTitel(kurs.offer_name)}
                             </span>
+                            {anzeigeTeilnehmer && (
+                              <span
+                                className="monats-kurs-tn"
+                                title={`${kurs.teilnehmer} Teilnehmer`}
+                              >
+                                ({kurs.teilnehmer} TN)
+                              </span>
+                            )}
                             <span
                               className={`monats-kurs-trainer ${trainerBadgeKlasse(
                                 eintrag.hasConflict,
@@ -868,7 +926,7 @@ export default function KalenderPage() {
           Ausgeschrieben / Offen
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full bg-rose-500" aria-hidden="true" />
+          <span className="w-3 h-3 rounded-full bg-red-500" aria-hidden="true" />
           <span className="line-through">Abgesagt</span>
         </span>
       </div>
@@ -987,9 +1045,9 @@ export default function KalenderPage() {
           align-self: flex-start;
         }
 
-        /* Nicht-gesetzliche Faschings-Hinweise (Rosenmontag, Fastnacht):
-         * rein informativ in Grau – lösen KEINE lilane Tageszellenfarbe aus.
-         * 48 bzw. 47 Tage vor Ostersonntag, aber kein gesetzlicher Feiertag. */
+        /* Nicht-gesetzliche Hinweise (Fasching: Rosenmontag, Fastnacht sowie
+         * Zeitumstellung MEZ ↔ MESZ): rein informativ in Grau – lösen KEINE
+         * lilane Tageszellenfarbe aus (kein gesetzlicher Feiertag). */
         .monats-tag-hinweis {
           font-size: 0.5625rem;
           font-weight: 500;
@@ -1027,9 +1085,9 @@ export default function KalenderPage() {
         }
 
         .monats-kurs-abgesagt {
-          background-color: #ffe4e6; /* rose-100 */
-          border-color: #fda4af;     /* rose-300 */
-          color: #9f1239;            /* rose-800 */
+          background-color: #fee2e2; /* red-100 */
+          border-color: #fca5a5;     /* red-300 */
+          color: #991b1b;            /* red-800 */
           text-decoration: line-through;
           opacity: 0.75;
         }
@@ -1064,6 +1122,25 @@ export default function KalenderPage() {
           color: #b45309;            /* amber-700 – wie Kurstitel */
         }
 
+        /* Reservierung: dezentes Grau (slate-100 / slate-700) – hebt sich
+         * klar von Grün, Orange, Rot und Blau ab. Trainerkürzel und Uhrzeit
+         * erben die Farbe über 'color: inherit' (bzw. die expliziten
+         * Titel-/Zeit-Regeln) exakt vom Status-Container. */
+        .monats-kurs-reserviert {
+          background-color: #f1f5f9; /* slate-100 */
+          border-color: #cbd5e1;     /* slate-300 */
+          color: #334155;            /* slate-700 – Statusfarbe wird an Textelemente vererbt */
+        }
+
+        .monats-kurs-reserviert .monats-kurs-titel {
+          color: #334155;            /* slate-700 */
+          font-weight: 600;
+        }
+
+        .monats-kurs-reserviert .monats-kurs-zeit {
+          color: #334155;            /* slate-700 – wie Kurstitel */
+        }
+
         .monats-kurs-offen {
           color: #1d4ed8;            /* blue-700 – Statusfarbe wird an Textelemente vererbt */
         }
@@ -1088,6 +1165,17 @@ export default function KalenderPage() {
           min-width: 0;
           overflow: hidden;
           text-overflow: ellipsis;
+        }
+
+        /* Teilnehmeranzahl: dezentes Anhängsel direkt hinter dem Kurstitel.
+         * Erbt die Statusfarbe des Kurs-Containers (color: inherit) und wirkt
+         * durch Transparenz bewusst untergeordnet; reduziert sich nie auf eine
+         * Ellipse und bleibt daher immer vollständig sichtbar. */
+        .monats-kurs-tn {
+          flex-shrink: 0;
+          color: inherit;
+          opacity: 0.7;
+          margin-left: 0.125rem;
         }
 
         /* Reguläres Trainerkürzel: einfarbiger Text ohne Badge – kein

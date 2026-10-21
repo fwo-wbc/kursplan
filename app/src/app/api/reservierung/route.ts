@@ -148,12 +148,25 @@ function validiereStammfelder(body: ReservierungBody): ReservierungStamm {
     throw new Error('thema darf höchstens 255 Zeichen lang sein.');
   }
 
-  const statusValue =
-    typeof body.status === 'string' && body.status.trim() !== ''
-      ? body.status.trim()
-      : 'angeboten';
-  if (!STATUS_WERTE.includes(statusValue as ReservierungStatus)) {
-    throw new Error("status muss 'angeboten' oder 'bestaetigt' sein.");
+  // Status-Normalisierung statt hartem 400: Jeder fehlende, leere oder
+  // unbekannte Status-Wert (z. B. Altwert 'storniert' aus dem Altbestand
+  // oder 'neu'/'reserviert' aus älteren Frontends) wird auf den gültigen
+  // Initial-Status 'angeboten' zurückgesetzt. Damit kann ein Reservierungs-
+  // Insert nie stillschweigend an der Status-Whitelist scheitern. Der
+  // DB-CHECK-Constraint erlaubt aktuell ('angeboten','bestaetigt',
+  // 'abgelaufen','storniert'); gespeichert wird hier bewusst nur das schlanke
+  // Modell 'angeboten'|'bestaetigt'.
+  const rohStatus =
+    typeof body.status === 'string' ? body.status.trim() : '';
+  const statusValue: ReservierungStatus = STATUS_WERTE.includes(
+    rohStatus as ReservierungStatus
+  )
+    ? (rohStatus as ReservierungStatus)
+    : 'angeboten';
+  if (rohStatus && statusValue !== rohStatus) {
+    console.warn(
+      `Ungültiger Reservierungs-Status "${rohStatus}" – wird als 'angeboten' gespeichert.`
+    );
   }
 
   const notiz = normalizeString(body.notiz);
@@ -364,9 +377,10 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (err: unknown) {
+    const msg = toErrorMessage(err);
     console.error('Fehler beim Anlegen der Reservierung:', err);
     return NextResponse.json(
-      { error: 'Datenbankfehler beim Anlegen der Reservierung.' },
+      { error: 'Datenbankfehler beim Anlegen der Reservierung.', detail: msg },
       { status: 500 }
     );
   }
@@ -444,9 +458,10 @@ export async function PUT(request: Request) {
 
     return NextResponse.json(mapReservierung(result.rows[0]), { status: 200 });
   } catch (err: unknown) {
+    const msg = toErrorMessage(err);
     console.error('Fehler beim Aktualisieren der Reservierung:', err);
     return NextResponse.json(
-      { error: 'Datenbankfehler beim Aktualisieren der Reservierung.' },
+      { error: 'Datenbankfehler beim Aktualisieren der Reservierung.', detail: msg },
       { status: 500 }
     );
   }

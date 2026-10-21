@@ -8,13 +8,25 @@ html {
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --cd-blue: #285daa;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-cd-blue: var(--cd-blue);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+}
+
+/* CD-Farbe (#285DAA) als Standard für alle Lucide-Icons der gesamten App.
+   Explizite Tailwind-Farbklassen (z. B. text-white in der aktiven Navigation
+   oder Statusfarben) haben Vorrang, da Utilities später im Stylesheet
+   ausgegeben werden als die components-Ebene. */
+@layer components {
+  .lucide {
+    color: var(--color-cd-blue);
+  }
 }
 
 @media (prefers-color-scheme: dark) {
