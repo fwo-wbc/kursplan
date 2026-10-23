@@ -459,20 +459,56 @@ async function ladeTrainerVerfuegbarkeiten(
 // die Zuweisungs-Status in der Oberfläche stets aktuell sind.
 // ---------------------------------------------------------------------------
 async function aktualisiereAbgesagteZuweisungen(): Promise<void> {
-  // Nur echte Stornierungen/Schließungen (Status '3' = Geschlossen,
-  // '5' = Abgesagt) sowie Archiv-/Lösch-Flags werten eine Zuweisung als
-  // abgesagt. Status '4' (Freigegeben) ist bewusst NICHT enthalten.
+  // Regel 1: Explizit abgesagte edoobox-Kurse (Status '5') sowie Archiv-/
+  // Lösch-Flags werten eine Zuweisung immer als abgesagt.
+  // Regel 2: Geschlossene Kurse (Status '3') nur dann, wenn weder Einnahmen
+  // noch gebuchte Teilnehmer existieren (erfolglos geschlossen). Ein
+  // erfolgreich geschlossener Kurs (Einnahmen > 0 oder Teilnehmer > 0,
+  // z. B. Anmeldeschluss) lässt den Zuweisungsstatus unangetastet, damit
+  // er manuell gesteuert werden kann. Status '4' (Freigegeben) ist bewusst
+  // NICHT enthalten.
   await query(
     `UPDATE public.trainer_zuweisung z
      SET status = 'abgesagt',
          updated_at = NOW()
      FROM edoobox_raw.offer_date od
      JOIN edoobox_raw.offer o ON o.offer_id = od.offer_id
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(quantity)
+                FILTER (WHERE ist_teilnehmer), 0)::int     AS teilnehmer,
+              COALESCE(SUM(amount_net * quantity)
+                FILTER (WHERE ist_erloes), 0)::numeric     AS einnahmen
+       FROM (
+         SELECT DISTINCT ON (b.booking_id, st.quelle, p.amount_net)
+                p.quantity, p.amount_net, st.ist_erloes, st.ist_teilnehmer
+         FROM edoobox_raw.booking b
+         JOIN edoobox_raw.booking_position p ON p.booking_id = b.booking_id
+         CROSS JOIN LATERAL kursplan.einstufung(p.pricecategory_name, p.amount_net)
+                AS st(ist_erloes, ist_teilnehmer, quelle)
+         WHERE b.offer_id = od.offer_id
+           AND b.is_deleted IS NOT TRUE
+           AND b.status = 'gebucht'
+           AND p.last_synced_at = (
+             SELECT MAX(p2.last_synced_at)
+             FROM edoobox_raw.booking_position p2
+             WHERE p2.booking_id = p.booking_id
+           )
+         ORDER BY b.booking_id, st.quelle, p.amount_net,
+                  p.last_synced_at DESC NULLS LAST, p.quantity DESC
+       ) dedup
+     ) tn ON true
      WHERE z.date_id = od.date_id
-       AND (o.status IN ('3', '5')
-            OR o.is_archived IS TRUE
-            OR o.is_deleted IS TRUE
-            OR od.is_deleted IS TRUE)
+       AND (
+         -- Regel 1: explizit abgesagt bzw. archiviert/gelöscht.
+         o.status = '5'
+         OR o.is_archived IS TRUE
+         OR o.is_deleted IS TRUE
+         OR od.is_deleted IS TRUE
+         -- Regel 2: geschlossen UND ohne Einnahmen UND ohne Teilnehmer.
+         OR (o.status = '3'
+             AND COALESCE(tn.einnahmen, 0) = 0
+             AND COALESCE(tn.teilnehmer, 0) = 0)
+       )
        AND z.status IN ('ausgeschrieben', 'unter Vorbehalt')`
   );
 }
@@ -488,12 +524,13 @@ async function aktualisiereAbgesagteZuweisungen(): Promise<void> {
 function effektiverZuweisungsstatus(
   offerStatus: string | null,
   teilnehmer: number,
+  einnahmen: number,
   bisherigerStatus: string | null
 ): string {
   if (
     offerStatus === '5' ||
     offerStatus === '0' ||
-    (offerStatus === '3' && teilnehmer === 0)
+    (offerStatus === '3' && teilnehmer === 0 && einnahmen === 0)
   ) {
     return 'abgesagt';
   }
@@ -854,6 +891,7 @@ export async function GET(request: Request) {
           status: effektiverZuweisungsstatus(
             row.offer_status,
             row.teilnehmer ?? 0,
+            row.einnahmen !== null ? Number(row.einnahmen) : 0,
             row.zuweisung_status
           ),
           notiz: row.zuweisung_notiz,
@@ -889,6 +927,7 @@ export async function GET(request: Request) {
           status: effektiverZuweisungsstatus(
             row.offer_status,
             row.teilnehmer ?? 0,
+            row.einnahmen !== null ? Number(row.einnahmen) : 0,
             row.date_status === 'Garantierte Durchführung' ? 'bestätigt' : 'ausgeschrieben'
           ),
           notiz: 'Aus edoobox gespiegelt',
@@ -959,9 +998,24 @@ export async function GET(request: Request) {
     // UND zuweisung_status müssen garantiert als String 'Reservierung'
     // durchgereicht werden – auch ohne zugewiesenen Trainer, sonst würde der
     // Fallback zuweisungen[0]?.status den Zuweisungsstatus auf null absenken.
+    //
+    // Absicherung: Ein in edoobox abgesagter (Status '5') bzw. geschlossener
+    // (Status '3' ohne Teilnehmer) Kurs muss seinen 'Abgesagt'-Status an das
+    // Frontend ausliefern, auch wenn das Array `zuweisungen` leer ist (kein
+    // Trainer, 'n. v.'). Andernfalls würde zuweisungen[0]?.status den
+    // übergeordneten Status mit null bzw. 'ausgeschrieben' überschreiben und
+    // der Kurs erschiene im Kalender fälschlich blau statt rot.
     for (const kurs of kurse) {
       if (kurs.date_status === 'Reservierung') continue;
-      kurs.zuweisung_status = kurs.zuweisungen[0]?.status ?? null;
+      const effektivAbgesagt =
+        kurs.offer_status === '5' ||
+        kurs.offer_status === '0' ||
+        (kurs.offer_status === '3' &&
+          (kurs.teilnehmer ?? 0) === 0 &&
+          (kurs.einnahmen ?? 0) === 0);
+      kurs.zuweisung_status = effektivAbgesagt
+        ? 'abgesagt'
+        : (kurs.zuweisungen[0]?.status ?? null);
       const ersteZuweisung = kurs.zuweisungen[0] ?? null;
       kurs.trainer_kuerzel = ersteZuweisung?.trainer?.kuerzel?.trim() || 'n. v.';
       kurs.hat_trainer = ersteZuweisung !== null && ersteZuweisung.trainer_id !== null;
@@ -985,7 +1039,9 @@ export async function GET(request: Request) {
       const effektivAbgesagt =
         kurs.zuweisung_status === 'abgesagt' ||
         kurs.offer_status === '5' ||
-        (kurs.offer_status === '3' && (kurs.teilnehmer ?? 0) === 0);
+        (kurs.offer_status === '3' &&
+          (kurs.teilnehmer ?? 0) === 0 &&
+          (kurs.einnahmen ?? 0) === 0);
       if (effektivAbgesagt) {
         kurs.trainer_verfuegbar = null;
         continue;

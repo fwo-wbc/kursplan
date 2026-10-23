@@ -2,187 +2,143 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
 import {
   CalendarDays,
   CalendarRange,
   Users,
-  RefreshCw,
-  Check,
-  TriangleAlert,
   ArrowRightLeft,
   LayoutDashboard,
   Bookmark,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
-const NAV_ITEMS = [
-  { href: '/', label: 'Kursplanung', icon: LayoutDashboard },
-  { href: '/kalender', label: 'Monatsübersicht', icon: CalendarDays },
-  { href: '/reservierungen', label: 'Reservierungen', icon: Bookmark },
-  { href: '/trainer/verfuegbarkeit', label: 'Trainerverfügbarkeiten', icon: CalendarRange },
-  { href: '/trainer', label: 'Trainer verwalten', icon: Users },
+/**
+ * Hauptnavigation in drei logische Blöcke gegliedert, optisch getrennt
+ * durch dezente vertikale Trennlinien:
+ *
+ * - Block „Kurse“:    Kursmanagement, Monatsübersicht, Reservierungen
+ * - Block „Personal“: Trainerverfügbarkeiten, Trainer verwalten
+ * - Block „System“:   Kurstransfer (der Sync-Button sitzt unten in der
+ *                     Aktionszeile der Kursmanagement-Seite)
+ */
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  external?: boolean;
+};
+
+type NavGroup = {
+  label: string;
+  items: NavItem[];
+};
+
+const NAV_GROUPS: NavGroup[] = [
   {
-    href: '/Kurstransfer/index.html',
-    label: 'Kurstransfer',
-    icon: ArrowRightLeft,
-    external: true,
+    label: 'Kurse',
+    items: [
+      { href: '/', label: 'Kursmanagement', icon: LayoutDashboard },
+      { href: '/kalender', label: 'Monatsübersicht', icon: CalendarDays },
+      { href: '/reservierungen', label: 'Reservierungen', icon: Bookmark },
+    ],
+  },
+  {
+    label: 'Personal',
+    items: [
+      {
+        href: '/trainer/verfuegbarkeit',
+        label: 'Trainerverfügbarkeiten',
+        icon: CalendarRange,
+      },
+      { href: '/trainer', label: 'Trainer verwalten', icon: Users },
+    ],
+  },
+  {
+    label: 'System',
+    items: [
+      {
+        href: '/Kurstransfer/index.html',
+        label: 'Kurstransfer',
+        icon: ArrowRightLeft,
+        external: true,
+      },
+    ],
   },
 ];
 
-type SyncStatus = 'idle' | 'loading' | 'success' | 'error';
-
-function SyncButton() {
-  const [status, setStatus] = useState<SyncStatus>('idle');
-  const [resetTimer, setResetTimer] = useState<ReturnType<typeof setTimeout> | null>(
-    null
-  );
-
-  async function handleSync() {
-    if (status === 'loading') return;
-
-    setStatus('loading');
-    try {
-      const response = await fetch('/api/sync/p90', {
-        method: 'POST',
-        // Festes Timeout, damit der Button bei hängendem n8n-Webhook nicht ewig lädt.
-        signal: AbortSignal.timeout(20000),
-      });
-      if (!response.ok) {
-        throw new Error(`Sync fehlgeschlagen (Status ${response.status})`);
-      }
-      setStatus('success');
-      // Die Hauptseite (page.tsx) lädt ihre Kursdaten clientseitig in den
-      // lokalen React-State (loadData -> fetch /api/termine). router.refresh()
-      // aktualisiert nur Server-Component-Payloads, nicht diesen Client-State.
-      // Deshalb garantierter Voll-Reload nach kurzer Verzögerung, damit der
-      // Nutzer kurz das grüne Erfolgs-Icon sieht.
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('kursplan:reload-silent'));
-      }, 600);
-    } catch {
-      // Fehler oder Timeout: Ladezustand zuverlässig beenden.
-      setStatus('error');
-    }
-
-    // Nach kurzem Feedback zurück in den Ruhezustand.
-    if (resetTimer) clearTimeout(resetTimer);
-    setResetTimer(
-      setTimeout(() => {
-        setStatus('idle');
-        setResetTimer(null);
-      }, 2500)
-    );
-  }
-
-  // Auf den Hintergrund-Sync-Auslöser aus page.tsx reagieren
-  // (kursplan:trigger-sync) und den bestehenden Sync automatisch starten.
-  useEffect(() => {
-    const onTriggerSync = () => {
-      void handleSync();
-    };
-    window.addEventListener('kursplan:trigger-sync', onTriggerSync);
-    return () => window.removeEventListener('kursplan:trigger-sync', onTriggerSync);
-  }, [handleSync]);
-
-  const isLoading = status === 'loading';
-  const Icon =
-    status === 'success' ? Check : status === 'error' ? TriangleAlert : RefreshCw;
-  const label =
-    status === 'loading'
-      ? 'Synchronisiere...'
-      : status === 'success'
-        ? 'Synchronisiert'
-        : status === 'error'
-          ? 'Fehler beim Sync'
-          : 'Sync';
-
-  return (
-    <button
-      type="button"
-      onClick={handleSync}
-      disabled={isLoading}
-      aria-label="edoobox synchronisieren"
-      title="edoobox synchronisieren"
-      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium border transition ${
-        status === 'success'
-          ? 'border-green-300 bg-green-50 text-green-700'
-          : status === 'loading' || status === 'error'
-            ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
-            : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
-      } disabled:opacity-60 disabled:cursor-not-allowed`}
-    >
-      <Icon
-        className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''} ${
-          status === 'success'
-            ? 'text-green-600'
-            : status === 'loading' || status === 'error'
-              ? 'text-white'
-              : 'text-slate-500'
-        }`}
-      />
-      {label}
-    </button>
-  );
-}
+// Flache Liste über alle Blöcke, wird nur für die Aktiverkennung verwendet.
+const NAV_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
 
 export default function Navigation() {
   const pathname = usePathname();
 
-  // Bedingtes Rendering: Auf der Monatsübersicht (/kalender) wird der
-  // "Monatsübersicht"-Button ausgeblendet und stattdessen der Button
-  // "Kursplanung" (/) angezeigt. Umgekehrt wird auf der Kursplanung der
-  // "Kursplanung"-Button ausgeblendet und "Monatsübersicht" angezeigt.
-  const isKalender = pathname === '/kalender';
-  const isKursplanung = pathname === '/';
-
-  const visibleNavItems = NAV_ITEMS.filter((item) => {
-    if (item.href === '/kalender' && isKalender) return false;
-    if (item.href === '/' && isKursplanung) return false;
-    return true;
-  });
+  // Aktiverkennung über "längsten Präfix-Treffer": Ein Unterpfad wie
+  // /trainer/zeitplan markiert den übergeordneten Menüpunkt (/trainer),
+  // während /trainer/verfuegbarkeit weiterhin exakt seinem eigenen Eintrag
+  // zugeordnet bleibt (keine Doppel-Markierung).
+  const aktiverHref =
+    [...NAV_ITEMS]
+      .filter(
+        (item) =>
+          pathname === item.href ||
+          (item.href !== '/' &&
+            pathname.startsWith(item.href.endsWith('/') ? item.href : `${item.href}/`))
+      )
+      .sort((a, b) => b.href.length - a.href.length)[0]?.href ?? null;
 
   return (
-    <>
-      <SyncButton />
-      <nav className="flex items-center gap-1" aria-label="Hauptnavigation">
-        {visibleNavItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = pathname === item.href;
+    <nav
+      className="flex flex-wrap items-center gap-1"
+      aria-label="Hauptnavigation"
+    >
+      {NAV_GROUPS.map((group, groupIndex) => {
+        return (
+          <div
+            key={group.label}
+            className={`flex flex-wrap items-center gap-1 ${
+              groupIndex > 0 ? 'border-l border-slate-300 pl-4 ml-2' : ''
+            }`}
+          >
+            {group.items.map((item) => {
+              const Icon = item.icon;
+              const isActive = aktiverHref === item.href;
 
-          // Statische HTML-Datei (Kurstransfer) liegt außerhalb der Next.js-Routen
-          // und wird deshalb als normales <a>-Element gerendert.
-          if (item.external) {
-            return (
-              <a
-                key={item.href}
-                href={item.href}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-              >
-                <Icon className="w-4 h-4 text-cd-blue" />
-                {item.label}
-              </a>
-            );
-          }
+              // Statische HTML-Datei (Kurstransfer) liegt außerhalb der Next.js-Routen
+              // und wird deshalb als normales <a>-Element gerendert.
+              if (item.external) {
+                return (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                  >
+                    <Icon className="w-4 h-4 text-cd-blue" />
+                    {item.label}
+                  </a>
+                );
+              }
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={isActive ? 'page' : undefined}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                isActive
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              }`}
-            >
-              <Icon
-                className={`w-4 h-4 ${isActive ? 'text-white' : 'text-cd-blue'}`}
-              />
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
-    </>
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                    isActive
+                      ? 'bg-cd-blue text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <Icon
+                    className={`w-4 h-4 ${isActive ? 'text-white' : 'text-cd-blue'}`}
+                  />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        );
+      })}
+    </nav>
   );
 }

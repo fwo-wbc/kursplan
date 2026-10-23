@@ -9,14 +9,14 @@ import {
   AlertTriangle,
   RefreshCw,
 } from 'lucide-react';
-import Navigation from '../components/Navigation';
-import HeaderLogo from '../components/HeaderLogo';
+import AppHeader from '../components/AppHeader';
 import {
   feiertageFuerJahr as zentraleFeiertageFuerJahr,
   feiertagLabel,
   zeitumstellungHinweiseFuerJahr,
   type Feiertag,
 } from '@/lib/feiertage';
+import { kopiereInZwischenablage } from '@/lib/clipboard';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -107,11 +107,66 @@ const MONATSNAMEN = [
   'Dezember',
 ];
 
+/** Deutsche Monatskürzel für Überhang-Tage (z. B. „31. Okt“ / „1. Dez“). */
+const MONATSKUERZEL = [
+  'Jan',
+  'Feb',
+  'Mär',
+  'Apr',
+  'Mai',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Okt',
+  'Nov',
+  'Dez',
+];
+
 /** Maximale Anzahl sichtbarer Kurs-Einträge pro Tageszelle. */
 const MAX_KURSE_PRO_TAG = 4;
 
 /** Fallback-Kürzel, wenn kein Trainer zugewiesen ist. */
 const KEIN_TRAINER = 'n. v.';
+
+/** localStorage-Schlüssel für die persistierten Filtereinstellungen.
+ *  Hinweis: Der Wochenenden-Schlüssel wurde bewusst neu vergeben, da sich
+ *  die Semantik von „sichtbar" zu „ausblenden" geändert hat. Ein alter
+ *  Wert von kalender:wochenenden-sichtbar = true („sichtbar") darf nicht
+ *  fälschlich als „ausblenden" interpretiert werden. */
+const LS_KEY_WOCHENENDEN_AUSBLENDEN = 'kalender:wochenenden-ausblenden';
+const LS_KEY_ABGESAGTE_AUSBLENDEN = 'kalender:abgesagte-ausblenden';
+
+/** Liest einen gespeicherten Boolean-Wert aus dem localStorage (nie werfend).
+ *  Der Wert wird zuerst sicher per JSON.parse in einen Boolean überführt
+ *  (gültiges JSON: "true"/"false"). Ist das JSON ungültig oder der Wert kein
+ *  Boolean, greift der einfache String-Vergleich; ohne Eintrag der Fallback. */
+function readStoredBoolean(key: string, fallback: boolean): boolean {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return fallback;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed === 'boolean') return parsed;
+    } catch {
+      /* kein gültiges JSON – der String-Vergleich unten greift */
+    }
+    return raw === 'true';
+  } catch {
+    return fallback;
+  }
+}
+
+/** Schreibt einen Boolean-Wert in den localStorage (nie werfend). */
+function writeStoredBoolean(key: string, wert: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, String(wert));
+  } catch {
+    /* localStorage nicht verfügbar (z. B. Privacy-Modus) – bewusst ignorieren. */
+  }
+}
 
 const timeFormatter = new Intl.DateTimeFormat('de-DE', {
   hour: '2-digit',
@@ -326,16 +381,29 @@ function trainerKuerzel(kurs: Kurs): string {
 
 /**
  * Liefert die Status-CSS-Klasse eines Kurses für die Monatsansicht.
- * Grundlage ist der Zuweisungsstatus (wie in der Kursplanung); fällt dieser
- * aus, wird der edoobox-Kursstatus (date_status) herangezogen.
+ * Höchste Priorität hat der allgemeine Kurs-/Termin-Status aus edoobox
+ * (date_status): 'Abgesagt' bzw. 'Geschlossen' → immer rot, unabhängig davon,
+ * ob eine Trainer-Zuweisung existiert oder der Kurs 'n. v.' ohne Trainer
+ * geführt wird. Erst danach greift die Zuweisungsauswertung (wie in der
+ * Kursplanung) bzw. der Standard-Fallback auf Blau.
+ *  - abgesagt / geschlossen             → rot, durchgestrichen
  *  - bestätigt / Freigegeben            → grün
  *  - unter Vorbehalt                    → orange
  *  - Reservierung / Reserviert          → grau
- *  - abgesagt                           → rot, durchgestrichen
  *  - ausgeschrieben / keine Zuordnung   → blau (Standard)
  */
 function statusKlasse(kurs: Kurs): string {
-  const status = (kurs.zuweisung_status ?? kurs.date_status ?? '').toLowerCase();
+  // ABSOLUTE PRIORITÄT: Edoobox-Kursstatus. Abgesagt (Status '5') bzw.
+  // Geschlossen (Status '3') müssen zuverlässig rot erscheinen, auch wenn
+  // zuweisung_status fehlt (kein Trainer, 'n. v.') oder 'ausgeschrieben'
+  // lautet – sonst würde der Kurs fälschlich blau dargestellt.
+  const dateStatus = (kurs.date_status ?? '').toLowerCase();
+  if (dateStatus === 'abgesagt' || dateStatus === 'geschlossen') {
+    return 'monats-kurs-abgesagt';
+  }
+
+  // Zuweisungsstatus-Auswertung (konsistent zur Kursplanung).
+  const status = (kurs.zuweisung_status ?? dateStatus ?? '').toLowerCase();
   if (status === 'abgesagt') return 'monats-kurs-abgesagt';
   if (status === 'bestätigt' || status === 'freigegeben')
     return 'monats-kurs-bestaetigt';
@@ -479,8 +547,53 @@ export default function KalenderPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filter: abgesagte Kurse aus der Tagesliste ausblenden.
+  // ----- Persistierte Filtereinstellungen (localStorage) --------------------
+  // Die Default-Werte sind bewusst statisch und lesen beim ersten Rendern KEIN
+  // localStorage. Dadurch sind Server- und Client-Erst-Render identisch und
+  // Next.js meldet keinen Hydration-Mismatch. Die gespeicherten Werte werden
+  // erst nach dem Mount per useEffect angewendet (Client-only-Zugriff).
+  //
+  // Guard-Flag 'filtersGeladen': Die Write-Effekte werden erst aktiviert,
+  // NACHDEM der Mount-Effekt beide Werte aus dem localStorage gelesen hat.
+  // Ohne dieses Flag liefen die Write-Effekte beim allerersten Mount noch mit
+  // den statischen Default-Werten und überschrieben die zuvor gespeicherten
+  // Einstellungen – genau die Ursache des F5-Persistenz-Bugs.
+
+  // true, sobald die persistierten Filterwerte beim Mount geladen wurden.
+  const [filtersGeladen, setFiltersGeladen] = useState<boolean>(false);
+
+  // Filter: abgesagte Kurse aus der Tagesliste ausblenden (checked = ausblenden).
   const [abgesagteAusblenden, setAbgesagteAusblenden] = useState<boolean>(false);
+
+  // Filter: Wochenend-Spalten (Sa/So) ausblenden (true) oder anzeigen (false).
+  // Ein gesetzter Haken bedeutet IMMER „ausblenden" – Checkbox, Grid-Aufbau
+  // (5 vs. 7 Spalten) und Filter-Logik hängen an exakt dieser Semantik.
+  const [wochenendenAusblenden, setWochenendenAusblenden] = useState<boolean>(false);
+
+  // Nach dem Mount die gespeicherten Filterwerte aus dem localStorage laden.
+  // Beide Werte werden sicher als Boolean geparst (readStoredBoolean / JSON).
+  useEffect(() => {
+    setWochenendenAusblenden(
+      readStoredBoolean(LS_KEY_WOCHENENDEN_AUSBLENDEN, false)
+    );
+    setAbgesagteAusblenden(
+      readStoredBoolean(LS_KEY_ABGESAGTE_AUSBLENDEN, false)
+    );
+    setFiltersGeladen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Jede Filteränderung wird sofort dauerhaft im Browser gespeichert –
+  // aber erst, NACHDEM die gespeicherten Werte initial angewendet wurden.
+  useEffect(() => {
+    if (!filtersGeladen) return;
+    writeStoredBoolean(LS_KEY_WOCHENENDEN_AUSBLENDEN, wochenendenAusblenden);
+  }, [filtersGeladen, wochenendenAusblenden]);
+
+  useEffect(() => {
+    if (!filtersGeladen) return;
+    writeStoredBoolean(LS_KEY_ABGESAGTE_AUSBLENDEN, abgesagteAusblenden);
+  }, [filtersGeladen, abgesagteAusblenden]);
 
   // Kurse laden (gleicher Endpunkt wie die Kursplanungs-Übersicht).
   const loadData = useCallback(async (silent = false) => {
@@ -660,21 +773,10 @@ export default function KalenderPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-800 sm:p-6">
-      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <CalendarDays className="w-5 h-5 text-cd-blue" />
-            Monatsübersicht
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Alle Kurse im Monatsraster – Uhrzeit, Kurztitel und Trainerkürzel je Tag.
-          </p>
-        </div>
-        <div className="flex items-center gap-4 shrink-0">
-          <Navigation />
-          <HeaderLogo />
-        </div>
-      </header>
+      <AppHeader />
+      <p className="mb-6 text-xs text-slate-500">
+        Alle Kurse im Monatsraster – Uhrzeit, Kurztitel und Trainerkürzel je Tag.
+      </p>
 
       {/* Monats-Navigation: Monats-Auswahl → ‹ → › → Heute → Aktualisieren */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -756,6 +858,20 @@ export default function KalenderPage() {
 
         <label
           className={`inline-flex items-center gap-2 text-sm select-none cursor-pointer ${
+            wochenendenAusblenden ? 'text-cd-blue font-medium' : 'text-slate-700'
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={wochenendenAusblenden}
+            onChange={(e) => setWochenendenAusblenden(e.target.checked)}
+            className="w-4 h-4 rounded border-cd-blue/40 text-cd-blue focus:ring-cd-blue"
+          />
+          Wochenenden ausblenden
+        </label>
+
+        <label
+          className={`inline-flex items-center gap-2 text-sm select-none cursor-pointer ${
             abgesagteAusblenden ? 'text-cd-blue font-medium' : 'text-slate-700'
           }`}
         >
@@ -782,18 +898,35 @@ export default function KalenderPage() {
         </div>
       )}
 
-      {/* Kalender-Raster: 1 KW-Spalte + 7 Wochentage (Mo–So) */}
+      {/* Kalender-Raster: 1 KW-Spalte + 5 (Mo–Fr) bzw. 7 (Mo–So) Wochentage.
+          Die Spaltenzahl wird dynamisch an den Wochenenden-Filter gekoppelt:
+          6 Spalten (Wochenenden ausgeblendet) oder 8 Spalten (sichtbar). */}
       <div className="monats-scroll">
-        <div className="monats-grid" role="grid" aria-label={monatsTitel}>
+        <div
+          className="monats-grid"
+          role="grid"
+          aria-label={monatsTitel}
+          style={{
+            gridTemplateColumns: wochenendenAusblenden
+              ? '3.5rem repeat(5, minmax(0, 1fr))'
+              : '3.5rem repeat(7, minmax(0, 1fr))',
+          }}
+        >
           {/* Kopfzeile */}
           <div className="monats-kopf monats-kw-kopf" role="columnheader">
             KW
           </div>
-          {WOCHENTAGE.map((tag) => (
-            <div key={tag} className="monats-kopf monats-wochentag" role="columnheader">
-              {tag}
-            </div>
-          ))}
+          {WOCHENTAGE.filter((_, index) => !wochenendenAusblenden || index < 5).map(
+            (tag) => (
+              <div
+                key={tag}
+                className="monats-kopf monats-wochentag"
+                role="columnheader"
+              >
+                {tag}
+              </div>
+            )
+          )}
 
           {/* Wochenzeilen */}
           {raster.map((woche, index) => (
@@ -805,7 +938,9 @@ export default function KalenderPage() {
               >
                 {woche.kw}
               </div>
-              {woche.tage.map((tag, index) => {
+              {woche.tage
+                .filter((_, tagIndex) => !wochenendenAusblenden || tagIndex < 5)
+                .map((tag, index) => {
                 const iso = toIsoDate(tag.datum);
                 const feiertag = feiertage[iso];
                 const hinweis = hinweise[iso];
@@ -817,6 +952,9 @@ export default function KalenderPage() {
                 // Gesetzliche Feiertage färben die komplette Tageszelle seicht
                 // lila (purple-50). Die heute-Klasse überschreibt sie bewusst,
                 // damit der lokale Tagesfokus (blau + Rahmen) erhalten bleibt.
+                // Bei ausgeblendeten Wochenenden werden Sa/So gar nicht erst
+                // gerendert (Filter in der Wochen-Schleife); das Grid besitzt
+                // dann exakt 5 Tages-Spalten (Mo–Fr) plus die KW-Spalte.
                 const zellenKlassen = [
                   'monats-tag',
                   tag.imMonat ? '' : 'monats-tag-fremd',
@@ -832,17 +970,31 @@ export default function KalenderPage() {
                     role="gridcell"
                     className={zellenKlassen}
                   >
-                    <div className="monats-tag-nummer">{tag.datum.getDate()}</div>
-                    {feiertag && (
-                      <div
-                        className="monats-tag-feiertag"
-                        title={feiertag.bundesweit
-                          ? `${feiertag.name} (bundesweiter Feiertag)`
-                          : `${feiertag.name} (${feiertag.laenderLabel})`}
-                      >
-                        {feiertagLabel(feiertag)}
+                    {/* Kopf-Container für Datum + Feiertag: Flex ohne Wrap –
+                        der Feiertag beginnt direkt hinter der Tageszahl in
+                        derselben Zeile; sein Text bricht bei langen Namen
+                        (z. B. „Reformationstag (BB, HB, HH, MV, NI, SN, ST,
+                        SH, TH)“) bzw. schmalen Zellen INNERHALB des Badges
+                        um, statt als kompakter Block in eine zweite Zeile zu
+                        rutschen. Überhang-Tage erhalten das Monatskürzel,
+                        z. B. „31. Okt“ oder „1. Dez“. */}
+                    <div className="flex items-start gap-1">
+                      <div className="monats-tag-nummer">
+                        {tag.imMonat
+                          ? tag.datum.getDate()
+                          : `${tag.datum.getDate()}.${'\u00A0'}${MONATSKUERZEL[tag.datum.getMonth()]}`}
                       </div>
-                    )}
+                      {feiertag && (
+                        <div
+                          className="monats-tag-feiertag"
+                          title={feiertag.bundesweit
+                            ? `${feiertag.name} (bundesweiter Feiertag)`
+                            : `${feiertag.name} (${feiertag.laenderLabel})`}
+                        >
+                          {feiertagLabel(feiertag)}
+                        </div>
+                      )}
+                    </div>
                     {hinweis && (
                       <div
                         className="monats-tag-hinweis"
@@ -859,13 +1011,19 @@ export default function KalenderPage() {
                         return (
                           <li
                             key={`${kurs.offer_id ?? kurs.termine[0]?.date_id ?? 'unbekannt'}-${iso}-${startZeit ?? 'ohne-zeit'}-${index}`}
-                            title={kurs.offer_name ?? ''}
+                            title={`${kurs.kursnr ?? 'Ohne Nr.'}`}
                             className={`monats-kurs ${statusKlasse(kurs)}`}
                           >
                             <span className="monats-kurs-zeit">
                               {startZeit ?? '–:––'}
                             </span>
-                            <span className="monats-kurs-titel">
+                            <span
+                              className="monats-kurs-titel"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void kopiereInZwischenablage(kurs.kursnr ?? '');
+                              }}
+                            >
                               {kuerzeTitel(kurs.offer_name)}
                             </span>
                             {anzeigeTeilnehmer && (
@@ -940,7 +1098,10 @@ export default function KalenderPage() {
       <style>{`
         /* ------------------------------------------------------------------
          * Monatsübersicht: CSS-Grid im Outlook-Stil
-         * 1 schmale KW-Spalte links + 7 gleich breite Tages-Spalten (Mo–So).
+         * 1 schmale KW-Spalte links + 5 (Mo–Fr) bzw. 7 (Mo–So) gleich breite
+         * Tages-Spalten – die Spaltenzahl wird über wochenendenAusblenden
+         * dynamisch als Inline-Style gesetzt (kein display:none, keine
+         * Leerspalten, in die Folgezellen rutschen können).
          * ------------------------------------------------------------------ */
         .monats-scroll {
           overflow-x: auto;
@@ -996,6 +1157,13 @@ export default function KalenderPage() {
           background-color: #ffffff; /* white – Zebra-Zeile (ungerade) */
         }
 
+        /* Wochenenden ausgeblendet: Die Spaltenzahl wird von der Komponente
+         * dynamisch über den Inline-Style des .monats-grid umgeschaltet
+         * (6 Spalten: KW-Spalte + Mo–Fr statt 8). Sa/So werden in Kopfzeile
+         * und Wochen-Schleife gar nicht erst gerendert – dadurch entstehen
+         * keine Leerspalten, in die Elemente der nächsten Woche rutschen
+         * könnten (kein display:none erforderlich). */
+
         .monats-tag {
           background-color: #ffffff;
           min-height: 7.5rem;
@@ -1027,6 +1195,8 @@ export default function KalenderPage() {
           line-height: 1;
           align-self: flex-start;
           padding: 0 0.25rem;
+          white-space: nowrap; /* „31. Okt“ bleibt als Einheit – nur das
+                                  Feiertags-Badge darf umbrechen */
         }
 
         /* Feiertag als lilafarbenes Badge – farblich passend zur
@@ -1040,8 +1210,16 @@ export default function KalenderPage() {
           border-radius: 0.25rem;
           padding: 0.125rem 0.25rem;
           line-height: 1.15;
-          white-space: normal;       /* Name + Länderkürzel brechen bei Bedarf um */
-          overflow-wrap: break-word; /* lange Kürzelketten sauber umbrechen */
+          white-space: normal;
+          /* 'anywhere' statt 'break-word': Ermöglicht den Umbruch an jeder
+           * Zeichenstelle innerhalb des Badge-Texts – z. B. hinter "SH," in
+           * "Buß- und Bettag (SN)" bzw. "Fronleichnam (BW, BY, HE, NW, RP,
+           * SL)" – und verkleinert zugleich die min-content-Breite des
+           * Flex-Items. Dadurch kann das Badge in der Breite nachgeben und
+           * bleibt oben im Kopfcontainer stehen, statt die Zelle zu sprengen
+           * oder mitsamt Text abgeschnitten zu werden. */
+          overflow-wrap: anywhere;
+          min-width: 0;
           align-self: flex-start;
         }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { query, transaction } from '@/lib/db';
+import { logEvent } from '@/lib/logger';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -52,6 +53,14 @@ function toErrorMessage(err: unknown): string {
     return err.message;
   }
   return String(err);
+}
+
+/** Wandelt einen unbekannten Fehler in ein JSONB-taugliches Objekt um. */
+function toErrorObject(err: unknown): unknown {
+  if (err instanceof Error) {
+    return { name: err.name, message: err.message, stack: err.stack };
+  }
+  return err;
 }
 
 /** Prüft, ob ein String das Format YYYY-MM-DD besitzt und ein gültiges Datum ist. */
@@ -285,7 +294,12 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ reservierungen }, { status: 200 });
   } catch (err: unknown) {
+    const msg = toErrorMessage(err);
     console.error('Fehler beim Laden der Reservierungen:', err);
+    await logEvent('ERROR', 'API_RESERVIERUNG', `Fehler beim Laden der Reservierungen: ${msg}`, {
+      fehler: toErrorObject(err),
+      endpoint: 'GET /api/reservierung',
+    });
     return NextResponse.json(
       { error: 'Datenbankfehler beim Laden der Reservierungen.' },
       { status: 500 }
@@ -379,6 +393,10 @@ export async function POST(request: Request) {
   } catch (err: unknown) {
     const msg = toErrorMessage(err);
     console.error('Fehler beim Anlegen der Reservierung:', err);
+    await logEvent('ERROR', 'API_RESERVIERUNG', `Fehler beim Anlegen der Reservierung: ${msg}`, {
+      fehler: toErrorObject(err),
+      endpoint: 'POST /api/reservierung',
+    });
     return NextResponse.json(
       { error: 'Datenbankfehler beim Anlegen der Reservierung.', detail: msg },
       { status: 500 }
@@ -460,6 +478,10 @@ export async function PUT(request: Request) {
   } catch (err: unknown) {
     const msg = toErrorMessage(err);
     console.error('Fehler beim Aktualisieren der Reservierung:', err);
+    await logEvent('ERROR', 'API_RESERVIERUNG', `Fehler beim Aktualisieren der Reservierung: ${msg}`, {
+      fehler: toErrorObject(err),
+      endpoint: 'PUT /api/reservierung',
+    });
     return NextResponse.json(
       { error: 'Datenbankfehler beim Aktualisieren der Reservierung.', detail: msg },
       { status: 500 }
@@ -507,7 +529,12 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (err: unknown) {
+    const msg = toErrorMessage(err);
     console.error('Fehler beim Löschen der Reservierung:', err);
+    await logEvent('ERROR', 'API_RESERVIERUNG', `Fehler beim Löschen der Reservierung: ${msg}`, {
+      fehler: toErrorObject(err),
+      endpoint: 'DELETE /api/reservierung',
+    });
     return NextResponse.json(
       { error: 'Datenbankfehler beim Löschen der Reservierung.' },
       { status: 500 }

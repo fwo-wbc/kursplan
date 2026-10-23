@@ -13,8 +13,7 @@ import {
   Check,
   X,
 } from 'lucide-react';
-import Navigation from '../components/Navigation';
-import HeaderLogo from '../components/HeaderLogo';
+import AppHeader from '../components/AppHeader';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -237,22 +236,11 @@ export default function TrainerPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-800 sm:p-6">
-      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <Users className="w-5 h-5 text-cd-blue" />
-            Trainerkürzel
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Übersicht der gespiegelten Trainerkürzel aus edoobox. Kürzel und Status werden
-            über edoobox gesteuert, die Vergütungssätze lokal gepflegt.
-          </p>
-        </div>
-        <div className="flex items-center gap-4 shrink-0">
-          <Navigation />
-          <HeaderLogo />
-        </div>
-      </header>
+      <AppHeader />
+      <p className="mb-6 text-xs text-slate-500">
+        Übersicht der gespiegelten Trainerkürzel aus edoobox. Kürzel und Status werden
+        über edoobox gesteuert, die Vergütungssätze lokal gepflegt.
+      </p>
 
       {/* Feedback-Banner */}
       {feedback && (

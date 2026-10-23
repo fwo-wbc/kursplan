@@ -3,10 +3,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   CalendarDays,
-  LayoutDashboard,
   Loader2,
   AlertTriangle,
   RefreshCw,
+  Check,
+  TriangleAlert,
   Users,
   Search,
   FilterX,
@@ -16,8 +17,7 @@ import {
   FileText,
   Wand2,
 } from 'lucide-react';
-import Navigation from './components/Navigation';
-import HeaderLogo from './components/HeaderLogo';
+import AppHeader from './components/AppHeader';
 import { berechneHonorar } from '@/lib/honorar';
 
 // ---------------------------------------------------------------------------
@@ -1179,6 +1179,110 @@ function HonorarZelle({
 // Komponente
 // ---------------------------------------------------------------------------
 
+type SyncStatus = 'idle' | 'loading' | 'success' | 'error';
+
+/**
+ * Sync-Button der Kursmanagement-Seite. Saß früher ganz rechts in der
+ * Hauptnavigation (Navigation.tsx) und verschob beim Laden („Synchronisiere...“)
+ * die komplette obere Navigation. Er sitzt jetzt in der unteren Aktionszeile
+ * links neben „Zuweisungen bereinigen“. Hört weiterhin auf das Trigger-Event
+ * (kursplan:trigger-sync), das die Seite nach dem Speichern einer Zuweisung
+ * auslöst.
+ */
+function SyncButton() {
+  const [status, setStatus] = useState<SyncStatus>('idle');
+  const [resetTimer, setResetTimer] = useState<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+
+  const handleSync = useCallback(async () => {
+    if (status === 'loading') return;
+
+    setStatus('loading');
+    try {
+      const response = await fetch('/api/sync/p90', {
+        method: 'POST',
+        // Festes Timeout, damit der Button bei hängendem n8n-Webhook nicht ewig lädt.
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!response.ok) {
+        throw new Error(`Sync fehlgeschlagen (Status ${response.status})`);
+      }
+      setStatus('success');
+      // Die Hauptseite (page.tsx) lädt ihre Kursdaten clientseitig in den
+      // lokalen React-State (loadData -> fetch /api/termine). router.refresh()
+      // aktualisiert nur Server-Component-Payloads, nicht diesen Client-State.
+      // Deshalb garantierter Voll-Reload nach kurzer Verzögerung, damit der
+      // Nutzer kurz das grüne Erfolgs-Icon sieht.
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('kursplan:reload-silent'));
+      }, 600);
+    } catch {
+      // Fehler oder Timeout: Ladezustand zuverlässig beenden.
+      setStatus('error');
+    }
+
+    // Nach kurzem Feedback zurück in den Ruhezustand.
+    if (resetTimer) clearTimeout(resetTimer);
+    setResetTimer(
+      setTimeout(() => {
+        setStatus('idle');
+        setResetTimer(null);
+      }, 2500)
+    );
+  }, [status, resetTimer]);
+
+  // Auf den Hintergrund-Sync-Auslöser aus page.tsx reagieren
+  // (kursplan:trigger-sync) und den bestehenden Sync automatisch starten.
+  useEffect(() => {
+    const onTriggerSync = () => {
+      void handleSync();
+    };
+    window.addEventListener('kursplan:trigger-sync', onTriggerSync);
+    return () => window.removeEventListener('kursplan:trigger-sync', onTriggerSync);
+  }, [handleSync]);
+
+  const isLoading = status === 'loading';
+  const Icon =
+    status === 'success' ? Check : status === 'error' ? TriangleAlert : RefreshCw;
+  const label =
+    status === 'loading'
+      ? 'Synchronisiere...'
+      : status === 'success'
+        ? 'Synchronisiert'
+        : status === 'error'
+          ? 'Fehler beim Sync'
+          : 'Sync';
+
+  return (
+    <button
+      type="button"
+      onClick={handleSync}
+      disabled={isLoading}
+      aria-label="edoobox synchronisieren"
+      title="edoobox synchronisieren"
+      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+        status === 'success'
+          ? 'border-green-300 bg-green-50 text-green-700'
+          : status === 'loading' || status === 'error'
+            ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+            : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+      } disabled:opacity-60 disabled:cursor-not-allowed`}
+    >
+      <Icon
+        className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''} ${
+          status === 'success'
+            ? 'text-green-600'
+            : status === 'loading' || status === 'error'
+              ? 'text-white'
+              : 'text-slate-500'
+        }`}
+      />
+      {label}
+    </button>
+  );
+}
+
 export default function Home() {
   const [kurse, setKurse] = useState<Kurs[]>([]);
   const [trainer, setTrainer] = useState<Trainer[]>([]);
@@ -1201,6 +1305,15 @@ export default function Home() {
   const [selectedTag, setSelectedTag] = useState<string>('ALL');
   const [selectedBadge, setSelectedBadge] = useState<string>('ALL');
   const [selectedTitel, setSelectedTitel] = useState<string>('ALL');
+
+  // Mehrfachbearbeitung (L-10): date_id-Gruppe der aktuell markierten Termine
+  // sowie die Werte der Bulk-Aktionsleiste (Trainer-Kürzel, Zuweisungs-Status).
+  const [selectedTermine, setSelectedTermine] = useState<string[]>([]);
+  const [bulkTrainerKuerzel, setBulkTrainerKuerzel] = useState<string>('');
+  const [bulkStatus, setBulkStatus] = useState<string>('');
+  // Ladezustand des Bulk-Speicherns – deaktiviert den Button gegen Doppel-Klicks.
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   // Bereinigung doppelter Trainer-Zuweisungen (Button im Header + Report-Modal).
   const [cleanupOffen, setCleanupOffen] = useState<boolean>(false);
@@ -1486,6 +1599,223 @@ export default function Home() {
 
     return eintraege;
   }, [gefilterteKurse]);
+
+  // -------------------------------------------------------------------------
+  // Mehrfachbearbeitung (L-10): Auswahl-Logik über die sichtbaren Termine.
+  // -------------------------------------------------------------------------
+
+  // IDs aller aktuell SICHTBAREN (gefilterten) Einzeltermine – Grundlage für
+  // die „Alle auswählen"-Checkbox im Tabellenkopf.
+  const visibleTerminIds = useMemo(
+    () => flacheTermine.map((eintrag) => eintrag.termin.date_id),
+    [flacheTermine]
+  );
+
+  const alleSichtbarenSelektiert =
+    visibleTerminIds.length > 0 &&
+    visibleTerminIds.every((id) => selectedTermine.includes(id));
+
+  const einigeSichtbareSelektiert =
+    visibleTerminIds.some((id) => selectedTermine.includes(id)) &&
+    !alleSichtbarenSelektiert;
+
+  // „Alle auswählen" bzw. „Auswahl aufheben" – wirkt ausschließlich auf die
+  // aktuell sichtbaren (gefilterten) Termine; Markierungen auf ausgeblendeten
+  // Zeilen bleiben unangetastet.
+  const toggleAlleSichtbaren = useCallback(() => {
+    setSelectedTermine((prev) => {
+      const next = new Set(prev);
+      if (alleSichtbarenSelektiert) {
+        for (const id of visibleTerminIds) next.delete(id);
+      } else {
+        for (const id of visibleTerminIds) next.add(id);
+      }
+      return Array.from(next);
+    });
+  }, [alleSichtbarenSelektiert, visibleTerminIds]);
+
+  // Einzelnen Termin markieren bzw. die Markierung aufheben (date_id).
+  const toggleTermin = useCallback((id: string) => {
+    setSelectedTermine((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }, []);
+
+  // Indeterminate-Zustand der Kopf-Checkbox rendern („ein Teil ausgewählt").
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = einigeSichtbareSelektiert;
+    }
+  }, [einigeSichtbareSelektiert]);
+
+  // „Für alle übernehmen" (L-10): speichert die Bulk-Änderungen über
+  // PATCH /api/zuweisung/bulk. Es werden nur die Felder gesendet, die der
+  // Nutzer tatsächlich in den Bulk-Dropdowns gewählt hat.
+  const handleBulkUebernehmen = useCallback(async () => {
+    if (isSubmitting) return;
+
+    const gewaehlterTrainer = aktiveTrainer.find(
+      (t) => (t.kuerzel ?? '').trim() === bulkTrainerKuerzel
+    );
+
+    // Weder Trainer noch Status gewählt: keine sinnvolle Änderung möglich.
+    if (bulkTrainerKuerzel === '' && bulkStatus === '') {
+      setError('Bitte mindestens einen Trainer oder einen Status auswählen.');
+      return;
+    }
+
+    // Payload aufbauen – nur die vom Nutzer geänderten Felder übernehmen.
+    const payload: Record<string, unknown> = { date_ids: selectedTermine };
+    if (bulkTrainerKuerzel !== '') {
+      if (gewaehlterTrainer) {
+        payload.trainer_id = gewaehlterTrainer.id;
+        payload.trainer_kuerzel = gewaehlterTrainer.kuerzel;
+      } else {
+        // 'n. v.' = Aufhebung der Trainer-Zuweisung (Status 'keine Zuordnung').
+        payload.trainer_kuerzel = 'n. v.';
+      }
+    }
+    if (bulkStatus !== '') {
+      payload.status = bulkStatus;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/zuweisung/bulk', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(
+          data?.error ?? `Serverfehler beim Bulk-Update (Status ${res.status}).`
+        );
+      }
+
+      // Erfolg: ZUERST den lokalen Kurs-State optimistisch aktualisieren.
+      // Der Webhook/n8n-Sync zu edoobox benötigt im Hintergrund einige
+      // Sekunden; ein sofortiges loadData würde noch die alten Werte liefern.
+      // Das Zustandsbild unten entspricht exakt dem Ergebnis der Bulk-Route
+      // (public.trainer_zuweisung), wie es nach dem Sync in /api/termine
+      // ankommt: Ein Kurs gilt als betroffen, wenn eine seiner date_ids im
+      // Auswahl-Array markiert war; die geänderten Felder werden kursweit
+      // gesetzt (Zuweisung, Status und Trainer gelten einheitlich für den
+      // gesamten Kurs).
+      setKurse((prevKurse) =>
+        prevKurse.map((kurs) => {
+          const betroffen = (kurs.termine ?? []).some((termin) =>
+            selectedTermine.includes(termin.date_id)
+          );
+          if (!betroffen) return kurs;
+
+          // Strikte Immutability: Jedes verschachtelte Array/Objekt, das in
+          // diesem Update berührt wird, wird per Spread-Operator kopiert.
+          // Nur so erhält React eine neue Referenz und rendert zwingend neu.
+          const termineKopie = [...(kurs.termine ?? [])];
+          const bisherige = kurs.zuweisungen[0] ?? null;
+          // 'n. v.' (kein passender aktiver Trainer im Dropdown) = Aufhebung
+          // der Zuweisung – serverseitig wird Status 'keine Zuordnung' gesetzt.
+          const istAufhebung = bulkTrainerKuerzel.trim() !== '' && !gewaehlterTrainer;
+
+          // Effektiven Zuweisungsstatus bestimmen – konsistent zur Bulk-Route:
+          // ein explizit gewählter Status gewinnt, sonst setzt die Aufhebung
+          // 'keine Zuordnung'; ein Trainerwechsel ohne Status erzeugt eine
+          // neue Zuweisungs-Zeile mit 'ausgeschrieben' (bzw. behält den
+          // Status, wenn derselbe Trainer erneut bestätigt wird).
+          let neuerStatus: ZuweisungStatus | null = bisherige?.status ?? null;
+          if (bulkStatus !== '') {
+            neuerStatus = bulkStatus as ZuweisungStatus;
+          } else if (istAufhebung) {
+            neuerStatus = 'keine Zuordnung';
+          } else if (gewaehlterTrainer) {
+            neuerStatus =
+              bisherige?.trainer_id === gewaehlterTrainer.id
+                ? (bisherige?.status ?? 'ausgeschrieben')
+                : 'ausgeschrieben';
+          }
+
+          // Echte Aufhebung: Der Kurs gilt als bewusst ohne Trainer geführt
+          // (keine aktive Zuweisungs-Zeile im Grid), bis er erneut zugewiesen
+          // wird – exakt das Verhalten der 'n. v.'-Sperre in GET /api/termine.
+          if (istAufhebung && neuerStatus === 'keine Zuordnung') {
+            return {
+              ...kurs,
+              termine: termineKopie,
+              zuweisungen: [],
+              zuweisung_status: 'keine Zuordnung',
+              trainer_kuerzel: 'n. v.',
+              hat_trainer: false,
+            };
+          }
+
+          let neueZuweisung: Zuweisung;
+          if (gewaehlterTrainer) {
+            // Trainerwechsel: neue erste Zuweisung des Kurses.
+            neueZuweisung = {
+              ...(bisherige ?? {
+                id: null,
+                trainer_id: null,
+                status: null,
+                notiz: null,
+                honorar_manuell: null,
+                trainer: null,
+              }),
+              trainer_id: gewaehlterTrainer.id,
+              status: neuerStatus,
+              trainer: { kuerzel: gewaehlterTrainer.kuerzel },
+              quelle: 'lokal',
+            };
+          } else if (bisherige) {
+            // Nur Status-Änderung (inkl. Aufhebung mit explizitem Status):
+            // der bisherige Trainer bleibt unangetastet.
+            neueZuweisung = {
+              ...bisherige,
+              status: neuerStatus,
+              quelle: 'lokal',
+            };
+          } else {
+            // Weder Trainer noch bestehende Zuweisung: nichts zu ändern.
+            return kurs;
+          }
+
+          return {
+            ...kurs,
+            termine: termineKopie,
+            zuweisungen: [neueZuweisung],
+            zuweisung_status: neuerStatus,
+            trainer_kuerzel: neueZuweisung.trainer?.kuerzel?.trim() || 'n. v.',
+            hat_trainer: neueZuweisung.trainer_id !== null,
+          };
+        })
+      );
+
+      // Danach Auswahl und Dropdowns zurücksetzen. Ein erneuter Server-Abruf
+      // (loadData) ist bewusst nicht nötig: Das Optimistic Update oben hat den
+      // lokalen Kurs-State bereits vollständig und korrekt aktualisiert, ein
+      // sofortiger Refresh würde nur die noch alten edoobox-Sync-Werte liefern.
+      setSelectedTermine([]);
+      setBulkTrainerKuerzel('');
+      setBulkStatus('');
+    } catch (err: unknown) {
+      console.error('[L-10] Bulk-Update fehlgeschlagen:', err);
+      setError(
+        err instanceof Error ? err.message : 'Das Bulk-Update ist fehlgeschlagen.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [
+    isSubmitting,
+    selectedTermine,
+    bulkTrainerKuerzel,
+    bulkStatus,
+    aktiveTrainer,
+  ]);
 
   // Konflikt-Erkennung: gleicher Trainer an sich überschneidenden Terminen
   // (mehrtägige Kurse werden über ihre Einzeltermine geprüft).
@@ -2032,8 +2362,9 @@ export default function Home() {
           await persistiereLokal(bisherigeTrainerId, 'keine Zuordnung');
         }
 
-        // Nach erfolgreichem Speichern den Hintergrund-Sync anstoßen (die
-        // Navigation hört auf 'kursplan:trigger-sync' und startet den Sync).
+        // Nach erfolgreichem Speichern den Hintergrund-Sync anstoßen (der
+        // Sync-Button in der unteren Aktionszeile hört auf
+        // 'kursplan:trigger-sync' und startet den Sync).
         window.dispatchEvent(new CustomEvent('kursplan:trigger-sync'));
 
         // Zeile lokal aktualisieren: das Kürzel wird direkt auf die getroffene
@@ -2165,22 +2496,18 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-800 sm:p-6">
-      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <LayoutDashboard className="w-5 h-5 text-cd-blue" />
-            Kursplanung
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Traineranzeige wird aus edoobox übernommen; der Status wird bei
-            Änderung automatisch gespeichert.
-          </p>
-        </div>
-        <div className="flex items-center gap-4 shrink-0">
-          <Navigation />
+      <AppHeader />
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-slate-500">
+          Traineranzeige wird aus edoobox übernommen; der Status wird bei
+          Änderung automatisch gespeichert.
+        </p>
+        {/* Sync-Button + Bereinigen als gemeinsame, rechtsbündige
+            Aktionsgruppe in der unteren Zeile. */}
+        <div className="flex items-center gap-4 ml-auto">
+          <SyncButton />
           {/* Doppelte Trainer-Zuweisungen erkennen und bereinigen – bewusst an
-              letzter Position hinter dem 'Kurstransfer'-Link, da die Funktion
-              nur selten genutzt wird. */}
+              letzter Position, da die Funktion nur selten genutzt wird. */}
           <button
             type="button"
             onClick={() => {
@@ -2194,9 +2521,8 @@ export default function Home() {
             <Wand2 className="w-4 h-4 text-cd-blue" />
             Zuweisungen bereinigen
           </button>
-          <HeaderLogo />
         </div>
-      </header>
+      </div>
 
       {!isLoading && !error && kurse.length > 0 && (
         <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 bg-white border-b border-slate-200 shadow-sm mb-4 flex flex-col gap-3">
@@ -2478,10 +2804,100 @@ export default function Home() {
           <span className="text-sm">Keine Kurse entsprechen den aktiven Filtern.</span>
         </div>
       ) : (
-        <div className="overflow-auto max-h-[70vh] rounded-lg border border-slate-200 bg-white shadow-sm">
+        <>
+          {/* Bulk-Aktionsleiste (L-10): sichtbar nur bei mindestens einer Auswahl */}
+          {selectedTermine.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-cd-blue/30 bg-cd-blue/5 px-4 py-2.5 shadow-sm">
+              <span className="text-sm font-bold text-slate-800 whitespace-nowrap">
+                {selectedTermine.length} Termine ausgewählt
+              </span>
+
+              <div className="ml-auto flex flex-wrap items-center gap-3">
+                {/* Trainer zuweisen: alle aktiven Trainer inkl. „n. v." */}
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                  Trainer zuweisen
+                  <div className="relative">
+                    <select
+                      value={bulkTrainerKuerzel}
+                      onChange={(e) => setBulkTrainerKuerzel(e.target.value)}
+                      title="Trainer für alle ausgewählten Termine festlegen"
+                      className="text-xs border border-slate-300 rounded-md pl-2 pr-6 py-1.5 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">– nicht ändern –</option>
+                      <option value="n. v.">n. v.</option>
+                      {aktiveTrainer.map((t) => (
+                        <option key={t.id} value={(t.kuerzel ?? '').trim()}>
+                          {trainerLabel(t)}
+                        </option>
+                      ))}
+                    </select>
+                    <SelectChevron />
+                  </div>
+                </label>
+
+                {/* Status ändern: Standard-Zuweisungs-Statuswerte */}
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                  Status ändern
+                  <div className="relative">
+                    <select
+                      value={bulkStatus}
+                      onChange={(e) => setBulkStatus(e.target.value)}
+                      title="Zuweisungs-Status für alle ausgewählten Termine festlegen"
+                      className="text-xs border border-slate-300 rounded-md pl-2 pr-6 py-1.5 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">– nicht ändern –</option>
+                      <option value="bestätigt">Bestätigt</option>
+                      <option value="unter Vorbehalt">Unter Vorbehalt</option>
+                      <option value="abgesagt">Abgesagt</option>
+                    </select>
+                    <SelectChevron />
+                  </div>
+                </label>
+
+                {/* Primäre Bulk-Aktion (CD-Blau #285DAA) – speichert via PATCH /api/zuweisung/bulk */}
+                <button
+                  type="button"
+                  onClick={handleBulkUebernehmen}
+                  disabled={isSubmitting}
+                  title={
+                    isSubmitting
+                      ? 'Speichern läuft …'
+                      : 'Änderungen für alle ausgewählten Termine speichern'
+                  }
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-white text-xs font-semibold rounded-lg transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-60 disabled:cursor-not-allowed"
+                  style={{ backgroundColor: '#285DAA' }}
+                >
+                  {isSubmitting ? 'Speichern …' : 'Für alle übernehmen'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="overflow-auto max-h-[70vh] rounded-lg border border-slate-200 bg-white shadow-sm">
           <table className="w-full text-left text-sm min-w-[1280px]">
             <thead>
               <tr className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500">
+                {/* Mehrfachbearbeitung (L-10): „Alle sichtbaren Termine auswählen" */}
+                <th className="sticky top-0 z-10 bg-slate-50 px-3 py-3 font-semibold whitespace-nowrap text-center w-10">
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    checked={alleSichtbarenSelektiert}
+                    onChange={toggleAlleSichtbaren}
+                    disabled={flacheTermine.length === 0}
+                    aria-label={
+                      alleSichtbarenSelektiert
+                        ? 'Auswahl aller sichtbaren Termine aufheben'
+                        : 'Alle sichtbaren Termine auswählen'
+                    }
+                    title={
+                      alleSichtbarenSelektiert
+                        ? 'Alle sichtbaren Termine abwählen'
+                        : 'Alle sichtbaren Termine auswählen'
+                    }
+                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                </th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-3 py-3 font-semibold whitespace-nowrap text-center w-14">KW</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-3 py-3 font-semibold whitespace-nowrap">Datum & Zeit</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-3 py-3 font-semibold whitespace-nowrap">Kurs</th>
@@ -2558,6 +2974,9 @@ export default function Home() {
                 const zeit = formatZeitraum(termin.date_start, termin.date_end);
                 const optionen = kurs.optionen ?? LEERE_OPTIONEN;
 
+                // Mehrfachbearbeitung (L-10): Ist dieser Einzeltermin markiert?
+                const istSelektiert = selectedTermine.includes(termin.date_id);
+
                 // Interaktive Trainer-Auswahl: laufende Umzuweisung (P98) für
                 // den Ladezustand in dieser Zeile. Das aktuelle Kürzel kommt
                 // einheitlich aus kurs.trainer_kuerzel (keine hatTrainer-
@@ -2622,6 +3041,18 @@ export default function Home() {
                             : 'bg-slate-100/75 hover:bg-slate-100'
                     }`}
                   >
+                    {/* Mehrfachbearbeitung (L-10): Termin-Auswahl (date_id) */}
+                    <td className="px-2 py-3 text-center whitespace-nowrap align-top">
+                      <input
+                        type="checkbox"
+                        checked={istSelektiert}
+                        onChange={() => toggleTermin(termin.date_id)}
+                        aria-label={`Termin ${termin.date_id} auswählen`}
+                        title={istSelektiert ? 'Auswahl aufheben' : 'Termin auswählen'}
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                    </td>
+
                     {/* Kalenderwoche (ISO-8601, ermittelt über den Kursstart) */}
                     <td className="px-2 py-3 text-center whitespace-nowrap align-top">
                       <span className="inline-flex items-center justify-center min-w-[2rem] text-sm tabular-nums text-slate-600">
@@ -2992,6 +3423,7 @@ export default function Home() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* Modal: Bereinigung doppelter Trainer-Zuweisungen */}

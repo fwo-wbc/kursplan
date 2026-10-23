@@ -1,16 +1,13 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
-import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Loader2,
   CalendarDays,
-  CalendarRange,
   CheckCircle2,
   AlertCircle,
   BookMarked,
-  LayoutDashboard,
   Lock,
   RefreshCw,
 } from 'lucide-react';
@@ -20,7 +17,8 @@ import {
   zeitumstellungHinweiseFuerJahr,
   type Feiertag,
 } from '@/lib/feiertage';
-import HeaderLogo from '../../components/HeaderLogo';
+import AppHeader from '../../components/AppHeader';
+import { kopiereInZwischenablage } from '@/lib/clipboard';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -39,6 +37,12 @@ interface VerfuegbarkeitRow {
   datum: string;
   slot_code: string;
   status: string;
+  /** Beginn des Zeitfensters (HH:MM) – nur bei Zeitfenster-Slots gefüllt. */
+  start_time: string | null;
+  /** Ende des Zeitfensters (HH:MM) – nur bei Zeitfenster-Slots gefüllt. */
+  end_time: string | null;
+  /** true = fester, gebuchter Zeitfenster-Slot (nicht mehr löschbar). */
+  is_booked: boolean;
 }
 
 /** Ein bereits eingeteilter Kurstermin (Kurs-Slot in der Wochenansicht). */
@@ -46,6 +50,7 @@ interface KursRow {
   datum: string;
   date_id: string | null;
   kursname: string | null;
+  kursnr: string | null;
   zuweisung_status: string | null;
   start_time: string | null;
   end_time: string | null;
@@ -75,10 +80,24 @@ interface ResTerminZeile {
   ende: string;
 }
 
-/** Aggregierter VM/NM-Zustand eines Tages. */
+/** Ein stundengenaues Zeitfenster (slot_code 'z_HHMM_HHMM') eines Tages. */
+interface Zeitfenster {
+  /** Eindeutiger Slot-Code, z. B. 'z_0900_1100'. */
+  slot_code: string;
+  /** Beginn (HH:MM). */
+  start: string;
+  /** Ende (HH:MM). */
+  end: string;
+  /** true = fester, gebuchter Slot (Löschung gesperrt). */
+  is_booked: boolean;
+}
+
+/** Aggregierter VM/NM-Zustand eines Tages inkl. stundengenauer Zeitfenster. */
 interface DayState {
   vm: boolean;
   nm: boolean;
+  /** Stundengenaue Zeitfenster des Tages (slot_code 'z_HHMM_HHMM'). */
+  zeitfenster: Zeitfenster[];
 }
 
 /** Ein Eintrag für den Batch-Endpunkt POST /api/trainer/verfuegbarkeit/batch. */
@@ -86,6 +105,7 @@ interface BatchEintrag {
   datum: string;
   vm: boolean;
   nm: boolean;
+  zeitfenster?: Zeitfenster[];
 }
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -145,6 +165,15 @@ function toDateStr(d: Date): string {
 function parseDateStr(s: string): Date {
   const [y, m, t] = s.split('-').map(Number);
   return new Date(y, m - 1, t);
+}
+
+/** Monatsschlüssel "YYYY-MM" eines Datums – Vergleichsbasis für den aktuell
+ *  ausgewählten Ansichts-Monat (aktiverMonat liegt ebenfalls als "YYYY-MM" vor).
+ *  Wird für die Monatskürzel-Anzeige der Tageskacheln genutzt, damit Überhangtage
+ *  aus Vor- oder Folgemonat zuverlässig erkannt werden. */
+function monatsId(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  return `${d.getFullYear()}-${m}`;
 }
 
 /**
@@ -519,8 +548,28 @@ function VerfuegbarkeitContent() {
     return `${MONATSNAMEN[(monat || 1) - 1]} ${jahr}`;
   }, [aktiverMonat]);
 
-  // Wochenenden in der Wochenliste anzeigen (Standard: ausgeblendet).
-  const [wochenendenAnzeigen, setWochenendenAnzeigen] = useState<boolean>(false);
+  // Wochenenden in der Wochenliste ausblenden (Standard: aktiv – entspricht der
+  // bisherigen Optik „nur Mo–Fr“, nur ins Gegenteil verkehrt benannt). Die
+  // Einstellung wird in localStorage persistiert und nach einem Refresh wieder
+  // hergestellt. Der gespeicherte Wert wird erst NACH dem Mounting übernommen,
+  // damit Server- und Client-Render identisch starten und kein Hydration-
+  // Mismatch entsteht (analog zum isMounted-Muster weiter oben).
+  const [wochenendenAusblenden, setWochenendenAusblenden] = useState<boolean>(true);
+
+  // Persistenz: einmalig beim Mount den gespeicherten Wert aus localStorage laden.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const gespeichert = window.localStorage.getItem(
+        'verfuegbarkeit:wochenendenAusblenden'
+      );
+      if (gespeichert !== null) {
+        setWochenendenAusblenden(gespeichert === 'true');
+      }
+    } catch {
+      // localStorage nicht verfügbar (z. B. private Modi) – Standard bleibt aktiv.
+    }
+  }, []);
 
   // Ansichts-Steuerung: 'monat' (Wochenliste) oder 'liste' (fortlaufende
   // Tagesliste nach Vorbild der Dozenten-Planung). Die frühere separate
@@ -544,6 +593,11 @@ function VerfuegbarkeitContent() {
   // nie auf einem veralteten Closure-Zustand operieren.
   const availRef = useRef<Record<string, DayState>>(avail);
   availRef.current = avail;
+
+  // Stundengenaue Zeitfenster-Eingaben je Tag (Start-/Endzeit, HH:MM).
+  const [zeitfensterInputs, setZeitfensterInputs] = useState<
+    Record<string, { start: string; end: string }>
+  >({});
 
   // Scroll-Container und Sentinels für das bidirektionale Infinite Scrolling.
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -707,8 +761,35 @@ function VerfuegbarkeitContent() {
           ? { ...availRef.current }
           : {};
         for (const row of data.verfuegbarkeiten ?? []) {
+          if (row.slot_code.startsWith('z_')) {
+            // Stundengenaues Zeitfenster: merge-sicher mit Slot-Code-
+            // Eindeutigkeit aktualisieren (nie ins bestehende Array pushen),
+            // damit gelöschte Slots nach einem Reload zuverlässig verschwinden.
+            const basis =
+              map[row.datum] ?? { vm: false, nm: false, zeitfenster: [] };
+            const ohne = basis.zeitfenster.filter(
+              (z) => z.slot_code !== row.slot_code
+            );
+            const nochFrei =
+              row.status === 'frei' && !!row.start_time && !!row.end_time;
+            map[row.datum] = {
+              ...basis,
+              zeitfenster: nochFrei
+                ? [
+                    ...ohne,
+                    {
+                      slot_code: row.slot_code,
+                      start: row.start_time!.slice(0, 5),
+                      end: row.end_time!.slice(0, 5),
+                      is_booked: row.is_booked,
+                    },
+                  ]
+                : ohne,
+            };
+            continue;
+          }
           if (!map[row.datum]) {
-            map[row.datum] = { vm: false, nm: false };
+            map[row.datum] = { vm: false, nm: false, zeitfenster: [] };
           }
           if (row.status === 'frei' && VM_SLOTS.includes(row.slot_code)) {
             map[row.datum].vm = true;
@@ -894,6 +975,10 @@ function VerfuegbarkeitContent() {
             datum,
             vm: naechster.vm,
             nm: naechster.nm,
+            zeitfenster: naechster.zeitfenster.map((z) => ({
+              start_time: z.start,
+              end_time: z.end,
+            })),
           }),
         });
         if (!res.ok) {
@@ -957,7 +1042,8 @@ function VerfuegbarkeitContent() {
 
   const applyDay = useCallback(
     (datum: string, patch: Partial<DayState>) => {
-      const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
+      const aktuell =
+        availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
       const naechster: DayState = { ...aktuell, ...patch };
       setAvail((prev) => ({ ...prev, [datum]: naechster }));
       void saveDay(datum, naechster, aktuell);
@@ -965,8 +1051,61 @@ function VerfuegbarkeitContent() {
     [saveDay]
   );
 
+  /** Fügt ein stundengenaues Zeitfenster (Start/Ende) für einen Tag hinzu. */
+  const hinzufuegenZeitfenster = (datum: string) => {
+    const input = zeitfensterInputs[datum];
+    const start = input?.start;
+    const end = input?.end;
+    if (!start || !end) {
+      window.alert('Bitte Start- und Endzeit eingeben.');
+      return;
+    }
+    if (end <= start) {
+      window.alert('Die Endzeit muss nach der Startzeit liegen.');
+      return;
+    }
+    const aktuell =
+      availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
+    // Überlappung mit bereits eingetragenen Zeitfenstern dieses Tages vermeiden.
+    if (aktuell.zeitfenster.some((z) => z.start < end && z.end > start)) {
+      window.alert(
+        'Das Zeitfenster überschneidet sich mit einem bestehenden Zeitfenster dieses Tages.'
+      );
+      return;
+    }
+    const neuesZf: Zeitfenster = {
+      slot_code: `z_${start.replace(':', '')}_${end.replace(':', '')}`,
+      start,
+      end,
+      is_booked: false,
+    };
+    setZeitfensterInputs((prev) => {
+      const next = { ...prev };
+      delete next[datum];
+      return next;
+    });
+    applyDay(datum, { zeitfenster: [...aktuell.zeitfenster, neuesZf] });
+  };
+
+  /** Entfernt ein stundengenaues Zeitfenster – gebuchte Slots sind gesperrt. */
+  const entferneZeitfenster = (datum: string, slot_code: string) => {
+    const aktuell =
+      availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
+    const ziel = aktuell.zeitfenster.find((z) => z.slot_code === slot_code);
+    if (ziel?.is_booked) {
+      window.alert('Gebuchte Zeitfenster können nicht entfernt werden.');
+      return;
+    }
+    applyDay(datum, {
+      zeitfenster: aktuell.zeitfenster.filter(
+        (z) => z.slot_code !== slot_code
+      ),
+    });
+  };
+
   const toggleVm = (datum: string) => {
-    const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
+    const aktuell =
+      availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
     // Rücknahme sperren, wenn im VM-Slot (09:00–13:00) bereits Kurse liegen.
     if (
       aktuell.vm &&
@@ -978,7 +1117,8 @@ function VerfuegbarkeitContent() {
   };
 
   const toggleNm = (datum: string) => {
-    const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
+    const aktuell =
+      availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
     // Rücknahme sperren, wenn im NM-Slot (13:00–17:00) bereits Kurse liegen.
     if (
       aktuell.nm &&
@@ -990,7 +1130,8 @@ function VerfuegbarkeitContent() {
   };
 
   const toggleGanzerTag = (datum: string) => {
-    const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
+    const aktuell =
+      availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
     const istGanztags = aktuell.vm && aktuell.nm;
     // Ganztags-Rücknahme nur erlauben, wenn kein Slot durch Kurse belegt ist.
     if (istGanztags) {
@@ -1290,13 +1431,19 @@ function VerfuegbarkeitContent() {
       const vorher: Record<string, DayState> = {};
       const entries: BatchEintrag[] = tage.map((datum) => {
         vorher[datum] = {
-          ...(availRef.current[datum] ?? { vm: false, nm: false }),
+          ...(availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] }),
         };
         return { datum, vm: true, nm: true };
       });
 
       const map = { ...availRef.current };
-      for (const e of entries) map[e.datum] = { vm: true, nm: true };
+      for (const e of entries) {
+        map[e.datum] = {
+          ...(availRef.current[e.datum] ?? { vm: false, nm: false, zeitfenster: [] }),
+          vm: true,
+          nm: true,
+        };
+      }
       setAvail(map);
       availRef.current = map;
 
@@ -1768,12 +1915,20 @@ function VerfuegbarkeitContent() {
     const vorher: Record<string, DayState> = {};
     const entries: BatchEintrag[] = werktage.map((d) => {
       const ds = toDateStr(d);
-      vorher[ds] = { ...(availRef.current[ds] ?? { vm: false, nm: false }) };
+      vorher[ds] = {
+        ...(availRef.current[ds] ?? { vm: false, nm: false, zeitfenster: [] }),
+      };
       return { datum: ds, vm: !aktuellFrei, nm: !aktuellFrei };
     });
 
     const map = { ...availRef.current };
-    for (const e of entries) map[e.datum] = { vm: e.vm, nm: e.nm };
+    for (const e of entries) {
+      map[e.datum] = {
+        ...(availRef.current[e.datum] ?? { vm: false, nm: false, zeitfenster: [] }),
+        vm: e.vm,
+        nm: e.nm,
+      };
+    }
     setAvail(map);
     availRef.current = map;
 
@@ -1786,11 +1941,12 @@ function VerfuegbarkeitContent() {
   };
 
   /** Klickbare Tageszelle einer Wochenzeile: Ganztags-Toggle + VM/NM + Kurs-Slots.
-   *  montag = Montag der Woche, um Tage eines neuen Monats (Monatswechsel
-   *  innerhalb der Woche) mit einem Monatskürzel hervorzuheben. */
-  const renderWochenTag = (datum: Date, montag: Date) => {
+   *  Tage, die NICHT zum aktuell ausgewählten Ansichts-Monat (aktiverMonat)
+   *  gehören – also Überhangtage aus Vor- oder Folgemonat –, werden mit einem
+   *  Monatskürzel hervorgehoben. */
+  const renderWochenTag = (datum: Date) => {
     const datumStr = toDateStr(datum);
-    const zustand = avail[datumStr] ?? { vm: false, nm: false };
+    const zustand = avail[datumStr] ?? { vm: false, nm: false, zeitfenster: [] };
     const tagesKurse = kurse[datumStr] ?? [];
     const tagesReservierungen = reservierungen[datumStr] ?? [];
     // Standard-Slots für Reservierungen: Slot 1 = 09:00–13:00, Slot 2 = 13:00–17:00.
@@ -1874,7 +2030,7 @@ function VerfuegbarkeitContent() {
               : 'Klicken: ganzen Tag verfügbar/nicht verfügbar'
           }
           aria-pressed={frei}
-          className={`flex items-center justify-between gap-1 rounded px-1 py-0.5 text-[10px] sm:text-xs font-semibold transition ${
+          className={`relative flex items-center justify-between gap-1 rounded px-1 py-0.5 text-[10px] sm:text-xs font-semibold transition ${
             feiertag
               ? 'text-purple-700 hover:bg-purple-100'
               : frei
@@ -1886,10 +2042,12 @@ function VerfuegbarkeitContent() {
         >
           <span className="leading-none whitespace-nowrap shrink-0">
             {formatTageskopf(datum)}
-            {datum.getMonth() !== montag.getMonth() && (
+            {/* Monatskürzel NUR für Tage, die NICHT zum ausgewählten
+                Ansichts-Monat gehören (Überhangtage aus Vor-/Folgemonat). */}
+            {monatsId(datum) !== aktiverMonat && (
               <span
                 title={`${MONATSNAMEN[datum.getMonth()]} ${datum.getFullYear()}`}
-                className="text-[8px] sm:text-[9px] font-bold text-blue-700 ml-0.5"
+                className="absolute left-1/2 -translate-x-1/2 text-[8px] sm:text-[9px] font-bold text-blue-700"
               >
                 {MONATSNAMEN[datum.getMonth()].slice(0, 3)}
               </span>
@@ -1973,6 +2131,86 @@ function VerfuegbarkeitContent() {
           </button>
         </div>
 
+        {/* Zeitfenster (stundengenau): Labels + Eingabe – ergänzt die
+            VM/NM-Block-Buttons (HT/K1/K2/K3/K4) um individuelle Zeitspannen.
+            slot_code 'z_HHMM_HHMM' garantiert die Eindeutigkeit über den
+            bestehenden Constraint (trainer_id, datum, slot_code). */}
+        {zustand.zeitfenster.length > 0 && (
+          <div className="mt-0.5 flex flex-col gap-0.5 min-w-0">
+            {zustand.zeitfenster.map((zf) => (
+              <div
+                key={zf.slot_code}
+                className={`flex items-center justify-between gap-0.5 rounded px-1 py-0.5 text-[8px] sm:text-[9px] leading-none font-medium ${
+                  zf.is_booked
+                    ? 'bg-red-100 text-red-800'
+                    : 'bg-teal-100 text-teal-900'
+                }`}
+              >
+                <span className="min-w-0 truncate">
+                  {zf.start}–{zf.end}
+                  {zf.is_booked ? ' (gebucht)' : ''}
+                </span>
+                {!zf.is_booked && (
+                  <button
+                    type="button"
+                    title="Zeitfenster entfernen"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      entferneZeitfenster(datumStr, zf.slot_code);
+                    }}
+                    className="shrink-0 rounded px-0.5 text-teal-700 hover:bg-teal-200"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="mt-0.5 flex items-center gap-0.5">
+          <input
+            type="time"
+            aria-label={`Startzeit ${datumStr}`}
+            value={zeitfensterInputs[datumStr]?.start ?? ''}
+            onChange={(e) =>
+              setZeitfensterInputs((prev) => ({
+                ...prev,
+                [datumStr]: {
+                  start: e.target.value,
+                  end: prev[datumStr]?.end ?? '',
+                },
+              }))
+            }
+            className="w-full min-w-0 rounded border border-slate-300 px-0.5 py-0.5 text-[8px] sm:text-[10px] focus:border-sky-400 focus:outline-none"
+          />
+          <input
+            type="time"
+            aria-label={`Endzeit ${datumStr}`}
+            value={zeitfensterInputs[datumStr]?.end ?? ''}
+            onChange={(e) =>
+              setZeitfensterInputs((prev) => ({
+                ...prev,
+                [datumStr]: {
+                  start: prev[datumStr]?.start ?? '',
+                  end: e.target.value,
+                },
+              }))
+            }
+            className="w-full min-w-0 rounded border border-slate-300 px-0.5 py-0.5 text-[8px] sm:text-[10px] focus:border-sky-400 focus:outline-none"
+          />
+          <button
+            type="button"
+            title="Zeitfenster hinzufügen"
+            onClick={(e) => {
+              e.stopPropagation();
+              hinzufuegenZeitfenster(datumStr);
+            }}
+            className="shrink-0 rounded border border-teal-300 bg-teal-50 px-1 py-0.5 text-[8px] sm:text-[10px] font-semibold text-teal-800 hover:bg-teal-100"
+          >
+            +
+          </button>
+        </div>
+
         {/* Kurs-Liste: [HH:MM – HH:MM] [Kurstitel], farbcodiert nach Status.
             Vertikal gestapelt (flex-direction: column) und auf maximal drei Kurse
             pro Tageskachel begrenzt. Überzählige Kurse erscheinen als dezenter
@@ -1982,24 +2220,29 @@ function VerfuegbarkeitContent() {
             const uhrzeit = `${formatUhrzeit(kurs.start_time)}-${formatUhrzeit(
               kurs.end_time
             )}`;
-            // Anzeige-Titel: alles ab dem ersten Doppelpunkt entfällt; der
-            // Button-Tooltip (vollerText) zeigt weiterhin den vollständigen Titel.
-            const vollerTitel = kurs.kursname ?? 'Kurs';
+            // Anzeige-Titel: alles ab dem ersten Doppelpunkt entfällt.
             const titel = kuerzeAngebotstitel(kurs.kursname) || 'Kurs';
-            const vollerText = `${uhrzeit} ${vollerTitel}`;
 
             return (
               <div key={`${datumStr}:kurs:${index}`} className="min-w-0">
                 <button
                   type="button"
-                  title={vollerText}
+                  title={kurs.kursnr ?? 'Ohne Nr.'}
                   className={`w-full min-w-0 rounded border px-1 py-1 text-left text-[8px] sm:text-[10px] leading-tight font-medium transition flex items-center ${statusSlotClasses(
                     kurs.zuweisung_status
                   )}`}
                 >
                   <span className="flex items-center gap-1 min-w-0 w-full leading-none">
                     <span className="font-semibold shrink-0">{uhrzeit}</span>
-                    <span className="truncate flex-1 min-w-0">{titel}</span>
+                    <span
+                      className="truncate flex-1 min-w-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void kopiereInZwischenablage(kurs.kursnr ?? '');
+                      }}
+                    >
+                      {titel}
+                    </span>
                     {zeigeTeilnehmerAnzahl(
                       kurs.teilnehmer,
                       kurs.zuweisung_status
@@ -2156,8 +2399,8 @@ function VerfuegbarkeitContent() {
     const montag = tage[0];
     const kw = kalenderwoche(montag);
     const moFrFrei = wocheMoFrFrei(tage);
-    // Wochenenden ausblenden: nur Mo–Fr rendern (5 Spalten statt 7).
-    const sichtbareTage = wochenendenAnzeigen ? tage : tage.slice(0, 5);
+    // Wochenenden ausblenden (aktiv): nur Mo–Fr rendern (5 Spalten statt 7).
+    const sichtbareTage = wochenendenAusblenden ? tage.slice(0, 5) : tage;
     // Exakte Übereinstimmung von Jahr + Kalenderwoche mit dem heutigen Tag.
     const heute = new Date();
     const istAktuelleWoche =
@@ -2207,10 +2450,12 @@ function VerfuegbarkeitContent() {
         </div>
         <div
           className={`mt-2 grid ${
-            wochenendenAnzeigen ? 'grid-cols-7' : 'grid-cols-5'
+            wochenendenAusblenden
+              ? 'grid-cols-5 min-w-[450px] md:min-w-0'
+              : 'grid-cols-7 min-w-[630px] md:min-w-0'
           } gap-1`}
         >
-          {sichtbareTage.map((d) => renderWochenTag(d, montag))}
+          {sichtbareTage.map((d) => renderWochenTag(d))}
         </div>
       </div>
       </React.Fragment>
@@ -2225,7 +2470,7 @@ function VerfuegbarkeitContent() {
    *  Reservierungen / Hinweis. Jeder Kalendertag ist aufgeführt – auch ohne Daten. */
   const renderTagesZeile = (datum: Date, index: number) => {
     const datumStr = toDateStr(datum);
-    const zustand = avail[datumStr] ?? { vm: false, nm: false };
+    const zustand = avail[datumStr] ?? { vm: false, nm: false, zeitfenster: [] };
     const tagesKurse = kurse[datumStr] ?? [];
     const tagesReservierungen = reservierungen[datumStr] ?? [];
     const meta = tagesMeta[index] ?? {
@@ -2372,6 +2617,77 @@ function VerfuegbarkeitContent() {
               NM
             </button>
           </div>
+          {/* Zeitfenster (stundengenau): Labels + Eingabe des Tages */}
+          {zustand.zeitfenster.length > 0 && (
+            <div className="mt-1 flex flex-col gap-0.5">
+              {zustand.zeitfenster.map((zf) => (
+                <div
+                  key={zf.slot_code}
+                  className={`flex items-center justify-between gap-1 rounded px-1.5 py-0.5 text-[9px] leading-tight whitespace-nowrap ${
+                    zf.is_booked
+                      ? 'bg-red-100 text-red-800'
+                      : 'bg-teal-50 text-teal-900'
+                  }`}
+                >
+                  <span>
+                    {zf.start}–{zf.end}
+                    {zf.is_booked ? ' (gebucht)' : ''}
+                  </span>
+                  {!zf.is_booked && (
+                    <button
+                      type="button"
+                      title="Zeitfenster entfernen"
+                      onClick={() => entferneZeitfenster(datumStr, zf.slot_code)}
+                      className="rounded px-0.5 text-teal-700 hover:bg-teal-200"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-1 flex items-center justify-center gap-1">
+            <input
+              type="time"
+              aria-label={`Startzeit ${datumStr}`}
+              value={zeitfensterInputs[datumStr]?.start ?? ''}
+              onChange={(e) =>
+                setZeitfensterInputs((prev) => ({
+                  ...prev,
+                  [datumStr]: {
+                    start: e.target.value,
+                    end: prev[datumStr]?.end ?? '',
+                  },
+                }))
+              }
+              className="w-20 rounded border border-slate-300 px-1 py-0.5 text-[10px] focus:border-sky-400 focus:outline-none"
+            />
+            <span className="text-[10px] text-slate-400">–</span>
+            <input
+              type="time"
+              aria-label={`Endzeit ${datumStr}`}
+              value={zeitfensterInputs[datumStr]?.end ?? ''}
+              onChange={(e) =>
+                setZeitfensterInputs((prev) => ({
+                  ...prev,
+                  [datumStr]: {
+                    start: prev[datumStr]?.start ?? '',
+                    end: e.target.value,
+                  },
+                }))
+              }
+              className="w-20 rounded border border-slate-300 px-1 py-0.5 text-[10px] focus:border-sky-400 focus:outline-none"
+            />
+            <button
+              type="button"
+              title="Zeitfenster hinzufügen"
+              onClick={() => hinzufuegenZeitfenster(datumStr)}
+              className="rounded border border-teal-300 bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-800 hover:bg-teal-100"
+            >
+              +
+            </button>
+          </div>
         </td>
 
         {/* Spalte 5: Kurstermine (Uhrzeit, Titel, Status-Badge) */}
@@ -2394,9 +2710,15 @@ function VerfuegbarkeitContent() {
                     className={`flex flex-1 min-w-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] leading-tight ${statusBadgeClasses(
                       kurs.zuweisung_status
                     )}`}
-                    title={kurs.kursname ?? 'Kurs'}
+                    title={`${kurs.kursnr ?? 'Ohne Nr.'}`}
                   >
-                    <span className="truncate min-w-0">
+                    <span
+                      className="truncate min-w-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void kopiereInZwischenablage(kurs.kursnr ?? '');
+                      }}
+                    >
                       {kuerzeAngebotstitel(kurs.kursname) || 'Kurs'}
                     </span>
                     {zeigeTeilnehmerAnzahl(
@@ -2622,32 +2944,17 @@ function VerfuegbarkeitContent() {
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-800">
-      <div className="w-full max-w-[85%] mx-auto px-4 lg:px-6">
-        {/* Kopfzeile */}
-        <header className="mb-4 pt-2 flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-bold flex items-center gap-2">
-              <CalendarRange className="w-5 h-5 text-cd-blue" />
-              Verfügbarkeit pflegen
-            </h1>
-            <p className="text-xs text-slate-500 mt-1">
-              Stufenlose Wochenliste mit Vormittag / Nachmittag – Änderungen werden automatisch gespeichert.
-            </p>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            {/* Zur Kursplanung: nur für Admins (webinarcenter.de / localhost) sichtbar. */}
-            {istAdmin && (
-              <Link
-                href="/"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-              >
-                <LayoutDashboard className="w-4 h-4 text-cd-blue" />
-                Kursplanung
-              </Link>
-            )}
-            <HeaderLogo />
-          </div>
-        </header>
+      {/* Volle Browser-Breite statt fester 85 %: gleicht das Layout an die
+          Hauptseiten (Kursmanagement, Kalender usw.) an, die ohne
+          max-w-Einschränkung rendern. Auf großen Monitoren entsteht dadurch
+          kein Umbruch der globalen Navigation mehr, auf Smartphones bleibt
+          die Seite über die Padding-Werte sauber gefüllt. */}
+      <div className="w-full max-w-none px-4 pt-4 lg:px-6 lg:pt-6">
+        {/* Einheitlicher Seiten-Header (Titel + identische Menüleiste). */}
+        <AppHeader />
+        <p className="mb-4 text-xs text-slate-500">
+          Stufenlose Wochenliste mit Vormittag / Nachmittag – Änderungen werden automatisch gespeichert.
+        </p>
 
         {/* Toolbar: Dozent + Ansichts-Umschalter + Speicher-Status.
             Der Umschalter sitzt fest direkt neben dem Dozenten-Filter, damit
@@ -2836,6 +3143,33 @@ function VerfuegbarkeitContent() {
           >
             Verfügbare Zeiträume erfassen
           </button>
+
+          {/* Wochenenden ausblenden: nur in der Wochenansicht relevant – direkt
+              neben der primären Datenerfassung platziert. Die Einstellung wird
+              sofort in localStorage gespeichert und nach einem Refresh wieder
+              hergestellt. */}
+          {ansicht !== 'liste' && (
+            <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs text-slate-600 ml-2">
+              <input
+                type="checkbox"
+                checked={wochenendenAusblenden}
+                onChange={(e) => {
+                  const wert = e.target.checked;
+                  setWochenendenAusblenden(wert);
+                  try {
+                    window.localStorage.setItem(
+                      'verfuegbarkeit:wochenendenAusblenden',
+                      String(wert)
+                    );
+                  } catch {
+                    // Persistenz fehlgeschlagen – gilt nur für diese Sitzung.
+                  }
+                }}
+                className="w-4 h-4 accent-blue-600"
+              />
+              Wochenenden ausblenden
+            </label>
+          )}
         </div>
 
         {/* Lade-/Fehlerzustand */}
@@ -2858,22 +3192,6 @@ function VerfuegbarkeitContent() {
           </div>
         ) : (
           <>
-            {/* Wochenend-Filter: rechtsbündig direkt oberhalb der Tabelle
-                (nur in der Wochenansicht relevant). */}
-            {ansicht !== 'liste' && (
-              <div className="mb-2 flex justify-end">
-                <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={wochenendenAnzeigen}
-                    onChange={(e) => setWochenendenAnzeigen(e.target.checked)}
-                    className="w-4 h-4 accent-blue-600"
-                  />
-                  Wochenenden anzeigen
-                </label>
-              </div>
-            )}
-
             {/* ------------------------------------------------------------
              * Stufenlose Wochenliste / Tagesliste mit bidirektionalem
              * Infinite Scrolling (gemeinsamer Scroll-Container + Sentinels)
@@ -2918,8 +3236,11 @@ function VerfuegbarkeitContent() {
               )}
             </div>
 
-            {/* Legende */}
-            <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500">
+            {/* Legende: zwei logische Gruppen – Trainer-Status (links) und
+                Kurs-/Termin-Status (rechts), getrennt durch einen vertikalen
+                Trennstrich. */}
+            <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-500">
+              {/* Gruppe 1: Trainer-Status */}
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block w-3.5 h-3.5 rounded bg-teal-50/70 border border-teal-300" />
                 Verfügbar
@@ -2936,6 +3257,11 @@ function VerfuegbarkeitContent() {
                 <span className="inline-block w-3.5 h-3.5 rounded bg-slate-50/70 border border-slate-200" />
                 Wochenende
               </span>
+
+              {/* Vertikaler Trennstrich zwischen den beiden Gruppen */}
+              <div className="w-px h-4 bg-slate-300 mx-4" aria-hidden="true" />
+
+              {/* Gruppe 2: Kurs-/Termin-Status */}
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block w-3.5 h-3.5 rounded bg-blue-50 border border-blue-300" />
                 Kurs ausgeschrieben

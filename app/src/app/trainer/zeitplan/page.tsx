@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  CalendarRange,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
@@ -16,7 +15,7 @@ import {
   Wand2,
   AlertTriangle,
 } from 'lucide-react';
-import Navigation from '../../components/Navigation';
+import AppHeader from '../../components/AppHeader';
 import { slotZeit } from '@/lib/umwandlung';
 
 // ---------------------------------------------------------------------------
@@ -943,18 +942,12 @@ export default function ZeitplanPage() {
   return (
     <main className="h-screen flex flex-col overflow-hidden bg-slate-50 text-slate-800">
       <div className="max-w-[1500px] w-full mx-auto px-4 pt-4 flex flex-col flex-1 min-h-0">
-        {/* Kopfzeile */}
-        <header className="mb-4 shrink-0 flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <h1 className="text-xl font-bold flex items-center gap-2">
-              <CalendarRange className="w-5 h-5 text-cd-blue" />
-              Dozenten-Planung
-            </h1>
-            <p className="text-xs text-slate-500">
-              Chronologische Kalender- und Planungsansicht (eine Zeile pro Tag).
-            </p>
-          </div>
-
+        {/* Einheitlicher Seiten-Header (Titel + identische Menüleiste). */}
+        <AppHeader />
+        <div className="mb-4 shrink-0 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-slate-500">
+            Chronologische Kalender- und Planungsansicht (eine Zeile pro Tag).
+          </p>
           <button
             type="button"
             onClick={() => {
@@ -966,7 +959,7 @@ export default function ZeitplanPage() {
           >
             ⚠️ Entwickler-Funktion: Test-Termine bereinigen
           </button>
-        </header>
+        </div>
 
         {/* Toolbar: Dozent + Zeitraum */}
         <div className="mb-4 shrink-0 grid grid-cols-1 gap-3 lg:grid-cols-12 items-end">

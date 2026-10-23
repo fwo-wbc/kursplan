@@ -10,8 +10,9 @@
  * ersetzen (bzw. die WBC-Originaldatei erneut dorthin zu kopieren). Eine
  * clientseitige onError-Fallback-Kette ist bewusst nicht mehr vorhanden.
  *
- * Die Höhe ist mit `h-12` (48 px) an die Kopfzeile angepasst; das
- * Seitenverhältnis bleibt über `object-contain` erhalten.
+ * Die Höhe ist mit `h-10` (40 px) so gewählt, dass das Logo harmonisch zur
+ * vergrößerten Titel-Schrift (text-2xl) danebensteht; das Seitenverhältnis
+ * bleibt über `object-contain` erhalten.
  */
 export default function HeaderLogo() {
   return (
@@ -23,7 +24,7 @@ export default function HeaderLogo() {
       alt="Logo"
       width={240}
       height={60}
-      className="h-12 w-auto object-contain"
+      className="h-10 w-auto object-contain"
     />
   );
 }

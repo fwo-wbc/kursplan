@@ -1,7 +1,7 @@
 # Projektstand — Kursplan-App
 
 **Dokumenttyp:** Projektstand-Dokumentation (laufend gepflegt)
-**Stand:** 13. Oktober 2026
+**Stand:** 21. Oktober 2026
 **Basis:** [`Statusbericht Datenbank und Trainer-Zuweisung.md`](Statusbericht Datenbank und Trainer-Zuweisung.md), [`Spezifikation produktive n8n-Workflows P90-P05.md`](Spezifikation produktive n8n-Workflows P90-P05.md), [`Abgleichbericht P01-P05.md`](Abgleichbericht P01-P05.md), [`End-to-End-Abgleichbericht.md`](End-to-End-Abgleichbericht.md), [`Lastenheft Kursplan v1.6.md`](Lastenheft Kursplan v1.6.md)
 
 ---
@@ -140,6 +140,8 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | Route | Zweck |
 | --- | --- |
 | `/` | Startseite |
+| `/kalender` | Kalender-Monatsübersicht: Kursliste je Tag, gesetzliche Feiertage, Faschings-/Zeitumstellungshinweise, Überhang-Tage mit Monatskürzel (z. B. „31. Okt“), Wochenenden- & Abgesagt-Filter |
+| `/reservierungen` | Reservierungen: Listenansicht (Datum, Thema, Trainer, Status) plus eigene Monatsübersicht mit Überhang-Tages-Kürzeln |
 | `/trainer` | Trainerübersicht |
 | `/trainer/verfuegbarkeit` | Verfügbarkeitsverwaltung |
 | `/trainer/zeitplan` | Zeitplan |
@@ -149,11 +151,21 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | Route | Zweck |
 | --- | --- |
 | `/api/admin/clean-test-data` | Testdaten-Bereinigung |
+| `/api/cleanup-assignments` | Bereinigung verwaister Zuweisungen |
+| `/api/edoobox/basis` | edoobox-Basisdaten |
 | `/api/edoobox/vorlagen` | edoobox-Vorlagen |
+| `/api/kurs-lock` | Kurstransfer-Sperrlogik (Lock) |
+| `/api/kurs-status` | Kurs-/Terminstatus-Abfrage |
+| `/api/kurstransfer/check` | Kurstransfer-Prüfung (Checkbox-Durchreichung) |
 | `/api/reservierung` (+ `/umwandeln`) | Reservierungen und Umwandlung |
+| `/api/sync/cleanup-deleted-courses` | Bereinigung soft-gelöschter Kurse |
 | `/api/sync/p90` | P90-Sync-Anbindung |
+| `/api/termine` (+ `/optionen`) | Terminliste/-Gruppierung und Terminoptionen |
 | `/api/trainer` | Trainer-Stammdaten |
+| `/api/trainer/reservierung` | Trainer-Reservierungen (Status) |
+| `/api/trainer/verfuegbarkeit` (+ `/batch`) | Trainer-Verfügbarkeiten (einzeln & Batch) |
 | `/api/trainer/zeitplan` (+ `/status`) | Zeitplan und Status |
+| `/api/trainer-zuweisung` | Trainer-Zuweisungen (Trainer-Sicht) |
 | `/api/verfuegbarkeit` | Verfügbarkeiten |
 | `/api/zuweisung` | Trainer-Zuweisungen |
 

@@ -6,6 +6,8 @@ import {
   parseTrainerId,
   toErrorMessage,
   persistiereTag,
+  validiereZeitfenster,
+  parsenZeitfenster,
   TageEintrag,
 } from '@/lib/verfuegbarkeit';
 
@@ -13,12 +15,19 @@ interface VerfuegbarkeitRow {
   datum: string;
   slot_code: string;
   status: string;
+  /** Beginn des Zeitfensters (HH:MM) – nur bei Zeitfenster-Slots gefüllt. */
+  start_time: string | null;
+  /** Ende des Zeitfensters (HH:MM) – nur bei Zeitfenster-Slots gefüllt. */
+  end_time: string | null;
+  /** true = fester, gebuchter Zeitfenster-Slot (nicht mehr löschbar). */
+  is_booked: boolean;
 }
 
 interface KursRow {
   datum: string;
   date_id: string | null;
   kursname: string | null;
+  kursnr: string | null;
   offer_status: string | null;
   zuweisung_status: string | null;
   teilnehmer: number;
@@ -85,9 +94,15 @@ export async function GET(request: Request) {
   }
 
   try {
-    // 1) Verfügbarkeiten des gewählten Zeitraums.
+    // 1) Verfügbarkeiten des gewählten Zeitraums – inkl. der Zeitfenster-
+    //    Metadaten (start_time/end_time/is_booked, nur bei z-Slots gefüllt).
     const verfResult = await query(
-      `SELECT to_char(datum, 'YYYY-MM-DD') AS datum, slot_code, status
+      `SELECT to_char(datum, 'YYYY-MM-DD') AS datum,
+              slot_code,
+              status,
+              to_char(start_time, 'HH24:MI') AS start_time,
+              to_char(end_time, 'HH24:MI') AS end_time,
+              is_booked
        FROM public.trainer_verfuegbarkeit
        WHERE trainer_id = $1 AND datum >= $2::date AND datum <= $3::date
        ORDER BY datum, slot_code`,
@@ -99,6 +114,12 @@ export async function GET(request: Request) {
         datum: String(row.datum),
         slot_code: String(row.slot_code),
         status: row.status == null ? '' : String(row.status),
+        start_time: row.start_time == null ? null : String(row.start_time),
+        end_time: row.end_time == null ? null : String(row.end_time),
+        is_booked:
+          row.is_booked === true ||
+          row.is_booked === 'true' ||
+          row.is_booked === 1,
       })
     );
 
@@ -115,9 +136,14 @@ export async function GET(request: Request) {
          to_char((od.date_start AT TIME ZONE 'Europe/Berlin')::date, 'YYYY-MM-DD') AS datum,
          od.date_id,
          o.name AS kursname,
+         o.offer_number AS kursnr,
          o.status AS offer_status,
          -- Status-Ableitung (konsistent zur Kursabfrage /api/trainer/zeitplan):
-         -- 1) Abgesagt: edoobox-Status '5'/'0' sowie '3' ohne Teilnehmer.
+         -- 1) Abgesagt: edoobox-Status '5'/'0' sowie '3' ohne Einnahmen UND
+         --    ohne Teilnehmer (erfolglos geschlossen). Ein erfolgreich
+         --    geschlossener Kurs (Einnahmen > 0 oder Teilnehmer > 0,
+         --    z. B. Anmeldeschluss) bleibt unangetastet und wird manuell
+         --    gesteuert.
          -- 2) Schutz-Bedingung (Exklusivität): Die Automatik ändert den Status
          --    NUR, wenn er exakt 'ausgeschrieben' ist (bzw. null/leer). Ist bereits
          --    ein anderer Status vergeben (manuell gesetzt, 'bestätigt',
@@ -127,7 +153,9 @@ export async function GET(request: Request) {
          CASE
            WHEN o.status = '5'
              OR o.status = '0'
-             OR (o.status = '3' AND COALESCE(tn.teilnehmer, 0) = 0)
+             OR (o.status = '3'
+                 AND COALESCE(tn.teilnehmer, 0) = 0
+                 AND COALESCE(tn.einnahmen, 0) = 0)
            THEN 'abgesagt'
            WHEN tz.status IS NOT NULL
              AND tz.status <> 'ausgeschrieben'
@@ -139,6 +167,7 @@ export async function GET(request: Request) {
            ELSE COALESCE(tz.status, 'ausgeschrieben')
          END AS zuweisung_status,
          COALESCE(tn.teilnehmer, 0) AS teilnehmer,
+         COALESCE(tn.einnahmen, 0) AS einnahmen,
          to_char(od.date_start AT TIME ZONE 'Europe/Berlin', 'HH24:MI') AS start_time,
          to_char(od.date_end AT TIME ZONE 'Europe/Berlin', 'HH24:MI') AS end_time
        FROM edoobox_raw.offer_date od
@@ -148,10 +177,12 @@ export async function GET(request: Request) {
        -- mit Status 'gebucht' zählen.
        LEFT JOIN LATERAL (
               SELECT COALESCE(SUM(quantity)
-                FILTER (WHERE ist_teilnehmer), 0)::int AS teilnehmer
+                FILTER (WHERE ist_teilnehmer), 0)::int AS teilnehmer,
+                     COALESCE(SUM(amount_net * quantity)
+                FILTER (WHERE ist_erloes), 0)::numeric AS einnahmen
               FROM (
                 SELECT DISTINCT ON (b.booking_id, st.quelle, p.amount_net)
-                       p.quantity, st.ist_teilnehmer
+                       p.quantity, p.amount_net, st.ist_erloes, st.ist_teilnehmer
                 FROM edoobox_raw.booking b
                 JOIN edoobox_raw.booking_position p ON p.booking_id = b.booking_id
                 CROSS JOIN LATERAL kursplan.einstufung(p.pricecategory_name, p.amount_net)
@@ -208,6 +239,7 @@ export async function GET(request: Request) {
         datum: String(row.datum),
         date_id: row.date_id == null ? null : String(row.date_id),
         kursname: row.kursname == null ? null : String(row.kursname),
+        kursnr: row.kursnr == null ? null : String(row.kursnr),
         offer_status: row.offer_status == null ? null : String(row.offer_status),
         zuweisung_status:
           row.zuweisung_status == null ? null : String(row.zuweisung_status),
@@ -283,6 +315,7 @@ async function speichereVerfuegbarkeiten(request: Request) {
     vm?: unknown;
     nm?: unknown;
     entries?: unknown;
+    zeitfenster?: unknown;
   };
 
   try {
@@ -311,11 +344,13 @@ async function speichereVerfuegbarkeiten(request: Request) {
         datum?: unknown;
         vm?: unknown;
         nm?: unknown;
+        zeitfenster?: unknown;
       };
       return {
         datum: String(entry.datum ?? ''),
         vm: Boolean(entry.vm),
         nm: Boolean(entry.nm),
+        zeitfenster: parsenZeitfenster(entry.zeitfenster),
       };
     });
   } else {
@@ -324,6 +359,7 @@ async function speichereVerfuegbarkeiten(request: Request) {
         datum: String(body.datum ?? ''),
         vm: Boolean(body.vm),
         nm: Boolean(body.nm),
+        zeitfenster: parsenZeitfenster(body.zeitfenster),
       },
     ];
   }
@@ -342,11 +378,26 @@ async function speichereVerfuegbarkeiten(request: Request) {
         { status: 400 }
       );
     }
+    if ((eintrag.zeitfenster?.length ?? 0) > 0) {
+      const fehler = validiereZeitfenster(eintrag.zeitfenster ?? []);
+      if (fehler) {
+        return NextResponse.json(
+          { error: `Zeitfenster am ${eintrag.datum}: ${fehler}` },
+          { status: 400 }
+        );
+      }
+    }
   }
 
   try {
     for (const eintrag of eintraege) {
-      await persistiereTag(trainerId, eintrag.datum, eintrag.vm, eintrag.nm);
+      await persistiereTag(
+        trainerId,
+        eintrag.datum,
+        eintrag.vm,
+        eintrag.nm,
+        eintrag.zeitfenster
+      );
     }
   } catch (err: unknown) {
     console.error('Fehler beim Speichern der Verfügbarkeiten:', err);

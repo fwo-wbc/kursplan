@@ -4,6 +4,8 @@ import {
   parseTrainerId,
   toErrorMessage,
   persistiereTag,
+  parsenZeitfenster,
+  validiereZeitfenster,
   TageEintrag,
 } from '@/lib/verfuegbarkeit';
 
@@ -11,10 +13,13 @@ import {
 // POST: Verfügbarkeiten mehrerer Tage in einem Request speichern (Batch).
 //
 // Body: { trainerId: number, entries: [{ datum: 'YYYY-MM-DD', vm: boolean,
-//        nm: boolean }, ...] }
+//        nm: boolean, zeitfenster?: [{ start_time: 'HH:MM', end_time: 'HH:MM' }]
+//        }, ...] }
 //
 // Die Persistenz je Tag übernimmt persistiereTag() aus der gemeinsamen Lib
 // (identische Slot-Auflösung und Transaktionslogik wie /api/verfuegbarkeit).
+// Zeitfenster werden als 'z_HHMM_HHMM'-Slots gespeichert (status 'frei',
+// start_time/end_time TIME, is_booked false).
 // ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
@@ -52,11 +57,13 @@ export async function POST(request: Request) {
       datum?: unknown;
       vm?: unknown;
       nm?: unknown;
+      zeitfenster?: unknown;
     };
     return {
       datum: String(entry.datum ?? ''),
       vm: Boolean(entry.vm),
       nm: Boolean(entry.nm),
+      zeitfenster: parsenZeitfenster(entry.zeitfenster),
     };
   });
 
@@ -67,11 +74,26 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+    if ((eintrag.zeitfenster?.length ?? 0) > 0) {
+      const fehler = validiereZeitfenster(eintrag.zeitfenster ?? []);
+      if (fehler) {
+        return NextResponse.json(
+          { error: `Zeitfenster am ${eintrag.datum}: ${fehler}` },
+          { status: 400 }
+        );
+      }
+    }
   }
 
   try {
     for (const eintrag of eintraege) {
-      await persistiereTag(trainerId, eintrag.datum, eintrag.vm, eintrag.nm);
+      await persistiereTag(
+        trainerId,
+        eintrag.datum,
+        eintrag.vm,
+        eintrag.nm,
+        eintrag.zeitfenster
+      );
     }
   } catch (err: unknown) {
     console.error('Fehler beim Batch-Speichern der Verfügbarkeiten:', err);

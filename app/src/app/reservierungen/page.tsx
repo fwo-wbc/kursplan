@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import React from 'react';
 import {
-  Bookmark,
   LayoutGrid,
   List,
   Loader2,
@@ -13,8 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import Navigation from '../components/Navigation';
-import HeaderLogo from '../components/HeaderLogo';
+import AppHeader from '../components/AppHeader';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit (Teilmenge der Felder aus GET /api/termine)
@@ -104,6 +102,22 @@ const MONATSNAMEN = [
   'Oktober',
   'November',
   'Dezember',
+];
+
+/** Deutsche Monatskürzel für Überhang-Tage (z. B. „31. Okt“ / „1. Dez“). */
+const MONATSKUERZEL = [
+  'Jan',
+  'Feb',
+  'Mär',
+  'Apr',
+  'Mai',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Okt',
+  'Nov',
+  'Dez',
 ];
 
 /** Maximale Anzahl sichtbarer Einträge pro Tageszelle in der Monatsübersicht. */
@@ -350,22 +364,11 @@ export default function ReservierungenPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-800 sm:p-6">
-      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <Bookmark className="w-5 h-5 text-cd-blue" />
-            Reservierungen
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Alle angefragten Firmenkurse und Trainer-Reservierungen im Status
-            „Reservierung“ – als Liste oder in der eigenen Monatsübersicht.
-          </p>
-        </div>
-        <div className="flex items-center gap-4 shrink-0">
-          <Navigation />
-          <HeaderLogo />
-        </div>
-      </header>
+      <AppHeader />
+      <p className="mb-6 text-xs text-slate-500">
+        Alle angefragten Firmenkurse und Trainer-Reservierungen im Status
+        „Reservierung“ – als Liste oder in der eigenen Monatsübersicht.
+      </p>
 
       {/* Ansicht-Toggle: Listenansicht / Monatsübersicht */}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
@@ -611,8 +614,19 @@ export default function ReservierungenPage() {
                           role="gridcell"
                           className={zellenKlassen}
                         >
-                          <div className="monats-tag-nummer">
-                            {tag.datum.getDate()}
+                          {/* Kopf-Container für Datum (+ optionalem Feiertag):
+                              Flex ohne Wrap – ein Feiertag würde direkt hinter
+                              der Tageszahl beginnen und sein Text bei langen
+                              Namen INNERHALB des Badges umbrechen, statt als
+                              kompakter Block in eine zweite Zeile zu rutschen.
+                              Überhang-Tage erhalten das Monatskürzel,
+                              z. B. „31. Okt“ oder „1. Dez“. */}
+                          <div className="flex items-start gap-1">
+                            <div className="monats-tag-nummer">
+                              {tag.imMonat
+                                ? tag.datum.getDate()
+                                : `${tag.datum.getDate()}.${'\u00A0'}${MONATSKUERZEL[tag.datum.getMonth()]}`}
+                            </div>
                           </div>
                           <ul className="monats-kurs-liste">
                             {sichtbare.map((eintrag, i) => (
@@ -744,6 +758,8 @@ export default function ReservierungenPage() {
           line-height: 1;
           align-self: flex-start;
           padding: 0 0.25rem;
+          white-space: nowrap; /* „31. Okt“ bleibt als Einheit – nur das
+                                  Feiertags-Badge darf umbrechen */
         }
 
         .monats-kurs-liste {

@@ -126,8 +126,16 @@ const N8N_SYNC_SECRET = process.env.N8N_SYNC_SECRET?.trim() || '';
  * der edoobox-IDs (offer_id, date_ids) sowie der Trainer-Stammdaten
  * (edoobox_admin_id, Kürzel) erfolgt hier; Fehler werden bewusst nur geloggt,
  * damit die lokale Speicherung in der App davon unberührt bleibt.
+ *
+ * @param alteKuerzelZuDateIds Vorher-Zustand: das bisherige Trainerkürzel je
+ *   date_id, ermittelt VOR dem Upsert. n8n ersetzt damit veraltete Kürzel am
+ *   Ende der edoobox-Modultitel (Regex inkl. bereits geklammerter Kürzel).
  */
-async function notifyTrainerSync(trainerId: number, dateIds: string[]): Promise<void> {
+async function notifyTrainerSync(
+  trainerId: number,
+  dateIds: string[],
+  alteKuerzelZuDateIds: Record<string, string>
+): Promise<void> {
   if (dateIds.length === 0) return;
 
   try {
@@ -150,33 +158,50 @@ async function notifyTrainerSync(trainerId: number, dateIds: string[]): Promise<
       return;
     }
 
-    // Zugehörige edoobox-IDs: je betroffenem Offer die offer_id sowie dessen
-    // sämtliche date_ids (nicht nur die übergebenen).
+    // Zugehörige edoobox-IDs: je betroffenem Offer die offer_id, dessen aktuelle
+    // Modultitel (o.name) sowie sämtliche date_ids (nicht nur die übergebenen).
     const offerResult = await query(
       `SELECT
-         offer_id::text AS offer_id,
-         array_agg(DISTINCT date_id::text ORDER BY date_id::text) AS date_ids
-       FROM edoobox_raw.offer_date
-       WHERE offer_id IN (
-         SELECT DISTINCT offer_id
-         FROM edoobox_raw.offer_date
-         WHERE date_id::text = ANY($1::text[])
-       )
-       GROUP BY offer_id`,
+         o.offer_id::text AS offer_id,
+         o.name AS titel,
+         array_agg(DISTINCT d.date_id::text ORDER BY d.date_id::text) AS date_ids
+       FROM edoobox_raw.offer o
+       INNER JOIN edoobox_raw.offer_date d ON d.offer_id = o.offer_id
+       WHERE d.is_deleted IS NOT TRUE
+         AND o.offer_id IN (
+           SELECT DISTINCT offer_id
+           FROM edoobox_raw.offer_date
+           WHERE date_id::text = ANY($1::text[])
+         )
+       GROUP BY o.offer_id, o.name`,
       [dateIds]
     );
 
     const offers = offerResult.rows as Array<{
       offer_id: string;
       date_ids: string[];
+      titel: string | null;
     }>;
 
     for (const offer of offers) {
+      // Bisheriges Trainerkürzel dieser offer_id: je Termin das Kürzel des
+      // alten Trainers; dedupliziert, leere Werte verworfen.
+      const alteKuerzel =
+        [
+          ...new Set(
+            offer.date_ids
+              .map((dateId) => alteKuerzelZuDateIds[dateId]?.trim())
+              .filter((k): k is string => Boolean(k))
+          ),
+        ][0] ?? null;
+
       const payload = {
         offer_id: offer.offer_id,
         date_ids: offer.date_ids,
+        titel: offer.titel,
         trainer_id: trainerId,
         trainer_kuerzel: trainer.kuerzel,
+        altes_kuerzel: alteKuerzel,
         edoobox_admin_id: trainer.edoobox_admin_id,
       };
 
@@ -336,6 +361,27 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Vorher-Zustand ermitteln: bisheriges Trainerkürzel je date_id, BEVOR die
+    // alte Zuweisung ersetzt bzw. entfernt wird. Nur Trainer, die sich vom
+    // neuen unterscheiden (= echter Wechsel), sind relevant. Das alte Kürzel
+    // wird an n8n übermittelt, damit veraltete Kürzel aus den edoobox-Modultiteln
+    // entfernt werden können.
+    const alteZuweisungen = await query(
+      `SELECT tz.date_id::text AS date_id, t.kuerzel
+       FROM public.trainer_zuweisung tz
+       INNER JOIN public.trainer t ON t.id = tz.trainer_id
+       WHERE tz.date_id = ANY($1::text[])
+         AND tz.trainer_id IS DISTINCT FROM $2::int`,
+      [dateIds, trainerIdValue as number]
+    );
+    const alteKuerzelZuDateIds: Record<string, string> = {};
+    for (const row of alteZuweisungen.rows as Array<{
+      date_id: string;
+      kuerzel: string | null;
+    }>) {
+      if (row.kuerzel) alteKuerzelZuDateIds[row.date_id] = row.kuerzel;
+    }
+
     // Zuerst ggf. vorhandene ANDERE Trainer-Zuweisungen derselben date_ids
     // entfernen. Der bisherige UPSERT hat nur Paare (date_id, trainer_id)
     // aktualisiert und ließ beim Trainerwechsel die alte Zeile stehen
@@ -387,7 +433,7 @@ export async function POST(request: Request) {
     // damit der Workflow den Trainersync nicht erneut anstößt.
     // Der Request wird nicht blockiert; Fehler werden intern geloggt.
     if (statusValue !== 'keine Zuordnung') {
-      void notifyTrainerSync(trainerIdValue as number, dateIds);
+      void notifyTrainerSync(trainerIdValue as number, dateIds, alteKuerzelZuDateIds);
     }
 
     return NextResponse.json(
