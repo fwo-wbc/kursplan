@@ -5,8 +5,6 @@ import { usePathname } from 'next/navigation';
 import {
   CalendarDays,
   CalendarRange,
-  CalendarPlus,
-  CalendarClock,
   Users,
   ArrowRightLeft,
   LayoutDashboard,
@@ -41,19 +39,8 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Kurse',
     items: [
       { href: '/', label: 'Kursmanagement', icon: LayoutDashboard },
-      { href: '/kursplan', label: 'Kursplanung', icon: CalendarRange },
       { href: '/kalender', label: 'Monatsübersicht', icon: CalendarDays },
       { href: '/reservierungen', label: 'Reservierungen', icon: Bookmark },
-      {
-        href: '/planung/extern/neu',
-        label: 'Serienplanung',
-        icon: CalendarPlus,
-      },
-      {
-        href: '/planung/sandbox',
-        label: 'Zwischenplanung',
-        icon: CalendarClock,
-      },
       {
         href: '/kursthemen',
         label: 'Kursthemen',
