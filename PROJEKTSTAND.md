@@ -76,6 +76,8 @@ flowchart LR
 | `trainer_verfuegbarkeit` | Kalender-/Slot-Verfügbarkeiten (FK → `trainer(id)` ON DELETE CASCADE) |
 | `trainer_zuweisung` | Zuweisung Trainer ↔ Termin (`date_id` text, `status`, `notiz`; `UNIQUE (date_id, trainer_id)`) |
 | `termin_optionen`, `termin_reservierung` | Optionen und Reservierungen |
+| `course_topics` | Kursthemen-Stamm: deduplizierte Themen aus `edoobox_raw.offer` (automatisch) plus manuelle Planungsfelder `kurs_code`, `kategorie_id`, `kategorie_name`, `vorlage_offer_id`, `prioritaet`, `rhythmus_wochen`, `planungsbereich` |
+| `kursplan_termin` | Gemeinsame Planungstabelle (Ablösung der Excel-Planungstabellen): eine Zeile je Kurstermin, `planungsbereich`-Attribut, max. 3-Fach-Belegung pro Tag (`UNIQUE (planungsbereich, datum, prio)`), `freigabe`, `sync_status`, `edoobox_offer_id`, `kurs_key` |
 
 ### 3.3 Auswertungssichten
 
@@ -142,6 +144,7 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | `/` | Startseite |
 | `/kalender` | Kalender-Monatsübersicht: Kursliste je Tag, gesetzliche Feiertage, Faschings-/Zeitumstellungshinweise, Überhang-Tage mit Monatskürzel (z. B. „31. Okt“), Wochenenden- & Abgesagt-Filter |
 | `/reservierungen` | Reservierungen: Listenansicht (Datum, Thema, Trainer, Status) plus eigene Monatsübersicht mit Überhang-Tages-Kürzeln |
+| `/kursplan` | Kursplanung: Planungsansicht je Bereich mit Terminanlage/-bearbeitung, 3-Fach-Belegung und Batch-Transfer an B01 |
 | `/trainer` | Trainerübersicht |
 | `/trainer/verfuegbarkeit` | Verfügbarkeitsverwaltung |
 | `/trainer/zeitplan` | Zeitplan |
@@ -156,6 +159,8 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | `/api/edoobox/vorlagen` | edoobox-Vorlagen |
 | `/api/kurs-lock` | Kurstransfer-Sperrlogik (Lock) |
 | `/api/kurs-status` | Kurs-/Terminstatus-Abfrage |
+| `/api/kursplan` (+ `/[id]`) | Planungstabelle: Termine je Bereich/Zeitraum, Anlegen/Bearbeiten/Löschen |
+| `/api/kursplan/batch-transfer` | Batch-Transfer markierter Termine an B01 (Kurstransfer edoobox) |
 | `/api/kurstransfer/check` | Kurstransfer-Prüfung (Checkbox-Durchreichung) |
 | `/api/reservierung` (+ `/umwandeln`) | Reservierungen und Umwandlung |
 | `/api/sync/cleanup-deleted-courses` | Bereinigung soft-gelöschter Kurse |
@@ -181,8 +186,8 @@ Statische Import-/Planungshilfen (Excel-Import, Kategorien, Python-Skripte) für
 
 ## 6. Skripte und Migrationen (`scripts/`, Projektstamm)
 
-- **Migrationen (SQL):** `trainer_zuweisung_*`, `trainer_saetze`, `trainer_kosten`, `trainer_halbtagessatz_reduziert`, `termin_reservierung_*`, `trainer_honorar_90min_migration.sql`
-- **Pflege-/Verifikationsskripte (CJS):** `import_trainer_kosten.cjs`, `check_trainer.cjs`, `cleanup_ghost_trainer.cjs`, `cleanup_trainer_zuweisung_alt.cjs`, `diagnose_*.cjs`, `verify_*.cjs` (Verfügbarkeit, Schließung, Last-Minute, Hervorhebung, Status)
+- **Migrationen (SQL):** `trainer_zuweisung_*`, `trainer_saetze`, `trainer_kosten`, `trainer_halbtagessatz_reduziert`, `termin_reservierung_*`, `trainer_honorar_90min_migration.sql`, `kursplan_themen_migration.sql` (Kursthemen-Stamm + Sicht `v_course_topics_edoobox` + UNIQUE-Indexe), `kursplan_planung_migration.sql` (Planungstabelle + Sichten `v_kursplan_*`), `kursplan_seed_ms_office.sql` (20 MS-Office-Kursdefinitionen als Startbestand)
+- **Pflege-/Verifikationsskripte (CJS):** `import_trainer_kosten.cjs`, `check_trainer.cjs`, `cleanup_ghost_trainer.cjs`, `cleanup_trainer_zuweisung_alt.cjs`, `diagnose_*.cjs`, `verify_*.cjs` (Verfügbarkeit, Schließung, Last-Minute, Hervorhebung, Status), `apply_kursplan_migrationen.cjs` (wendet die drei Kursplan-Migrationen an), `sync_course_topics.cjs` (automatische Themen-Ableitung aus `edoobox_raw.offer`)
 - **n8n-Referenzdateien:** `p90_node_konfig.js`, `p90_node_holen.js`, `p90_node_fehlertext.js`, `p90_node_zaehlwerte.js`, `P90_Ressourcen_Konfiguration.sql`, `p90_build.ps1`, `p90_verify.ps1`
 - **Workflow-Exporte:** `n8n/P96_Create_edoobox_Offer_from_Reservation.json`, `n8n/P06_trainer_adhoc_sync.json`
 

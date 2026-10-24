@@ -37,12 +37,6 @@ interface VerfuegbarkeitRow {
   datum: string;
   slot_code: string;
   status: string;
-  /** Beginn des Zeitfensters (HH:MM) – nur bei Zeitfenster-Slots gefüllt. */
-  start_time: string | null;
-  /** Ende des Zeitfensters (HH:MM) – nur bei Zeitfenster-Slots gefüllt. */
-  end_time: string | null;
-  /** true = fester, gebuchter Zeitfenster-Slot (nicht mehr löschbar). */
-  is_booked: boolean;
 }
 
 /** Ein bereits eingeteilter Kurstermin (Kurs-Slot in der Wochenansicht). */
@@ -80,24 +74,10 @@ interface ResTerminZeile {
   ende: string;
 }
 
-/** Ein stundengenaues Zeitfenster (slot_code 'z_HHMM_HHMM') eines Tages. */
-interface Zeitfenster {
-  /** Eindeutiger Slot-Code, z. B. 'z_0900_1100'. */
-  slot_code: string;
-  /** Beginn (HH:MM). */
-  start: string;
-  /** Ende (HH:MM). */
-  end: string;
-  /** true = fester, gebuchter Slot (Löschung gesperrt). */
-  is_booked: boolean;
-}
-
-/** Aggregierter VM/NM-Zustand eines Tages inkl. stundengenauer Zeitfenster. */
+/** Aggregierter VM/NM-Zustand eines Tages. */
 interface DayState {
   vm: boolean;
   nm: boolean;
-  /** Stundengenaue Zeitfenster des Tages (slot_code 'z_HHMM_HHMM'). */
-  zeitfenster: Zeitfenster[];
 }
 
 /** Ein Eintrag für den Batch-Endpunkt POST /api/trainer/verfuegbarkeit/batch. */
@@ -105,7 +85,6 @@ interface BatchEintrag {
   datum: string;
   vm: boolean;
   nm: boolean;
-  zeitfenster?: Zeitfenster[];
 }
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -594,11 +573,6 @@ function VerfuegbarkeitContent() {
   const availRef = useRef<Record<string, DayState>>(avail);
   availRef.current = avail;
 
-  // Stundengenaue Zeitfenster-Eingaben je Tag (Start-/Endzeit, HH:MM).
-  const [zeitfensterInputs, setZeitfensterInputs] = useState<
-    Record<string, { start: string; end: string }>
-  >({});
-
   // Scroll-Container und Sentinels für das bidirektionale Infinite Scrolling.
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const topSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -761,35 +735,8 @@ function VerfuegbarkeitContent() {
           ? { ...availRef.current }
           : {};
         for (const row of data.verfuegbarkeiten ?? []) {
-          if (row.slot_code.startsWith('z_')) {
-            // Stundengenaues Zeitfenster: merge-sicher mit Slot-Code-
-            // Eindeutigkeit aktualisieren (nie ins bestehende Array pushen),
-            // damit gelöschte Slots nach einem Reload zuverlässig verschwinden.
-            const basis =
-              map[row.datum] ?? { vm: false, nm: false, zeitfenster: [] };
-            const ohne = basis.zeitfenster.filter(
-              (z) => z.slot_code !== row.slot_code
-            );
-            const nochFrei =
-              row.status === 'frei' && !!row.start_time && !!row.end_time;
-            map[row.datum] = {
-              ...basis,
-              zeitfenster: nochFrei
-                ? [
-                    ...ohne,
-                    {
-                      slot_code: row.slot_code,
-                      start: row.start_time!.slice(0, 5),
-                      end: row.end_time!.slice(0, 5),
-                      is_booked: row.is_booked,
-                    },
-                  ]
-                : ohne,
-            };
-            continue;
-          }
           if (!map[row.datum]) {
-            map[row.datum] = { vm: false, nm: false, zeitfenster: [] };
+            map[row.datum] = { vm: false, nm: false };
           }
           if (row.status === 'frei' && VM_SLOTS.includes(row.slot_code)) {
             map[row.datum].vm = true;
@@ -975,10 +922,6 @@ function VerfuegbarkeitContent() {
             datum,
             vm: naechster.vm,
             nm: naechster.nm,
-            zeitfenster: naechster.zeitfenster.map((z) => ({
-              start_time: z.start,
-              end_time: z.end,
-            })),
           }),
         });
         if (!res.ok) {
@@ -1042,8 +985,7 @@ function VerfuegbarkeitContent() {
 
   const applyDay = useCallback(
     (datum: string, patch: Partial<DayState>) => {
-      const aktuell =
-        availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
+      const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
       const naechster: DayState = { ...aktuell, ...patch };
       setAvail((prev) => ({ ...prev, [datum]: naechster }));
       void saveDay(datum, naechster, aktuell);
@@ -1051,61 +993,8 @@ function VerfuegbarkeitContent() {
     [saveDay]
   );
 
-  /** Fügt ein stundengenaues Zeitfenster (Start/Ende) für einen Tag hinzu. */
-  const hinzufuegenZeitfenster = (datum: string) => {
-    const input = zeitfensterInputs[datum];
-    const start = input?.start;
-    const end = input?.end;
-    if (!start || !end) {
-      window.alert('Bitte Start- und Endzeit eingeben.');
-      return;
-    }
-    if (end <= start) {
-      window.alert('Die Endzeit muss nach der Startzeit liegen.');
-      return;
-    }
-    const aktuell =
-      availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
-    // Überlappung mit bereits eingetragenen Zeitfenstern dieses Tages vermeiden.
-    if (aktuell.zeitfenster.some((z) => z.start < end && z.end > start)) {
-      window.alert(
-        'Das Zeitfenster überschneidet sich mit einem bestehenden Zeitfenster dieses Tages.'
-      );
-      return;
-    }
-    const neuesZf: Zeitfenster = {
-      slot_code: `z_${start.replace(':', '')}_${end.replace(':', '')}`,
-      start,
-      end,
-      is_booked: false,
-    };
-    setZeitfensterInputs((prev) => {
-      const next = { ...prev };
-      delete next[datum];
-      return next;
-    });
-    applyDay(datum, { zeitfenster: [...aktuell.zeitfenster, neuesZf] });
-  };
-
-  /** Entfernt ein stundengenaues Zeitfenster – gebuchte Slots sind gesperrt. */
-  const entferneZeitfenster = (datum: string, slot_code: string) => {
-    const aktuell =
-      availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
-    const ziel = aktuell.zeitfenster.find((z) => z.slot_code === slot_code);
-    if (ziel?.is_booked) {
-      window.alert('Gebuchte Zeitfenster können nicht entfernt werden.');
-      return;
-    }
-    applyDay(datum, {
-      zeitfenster: aktuell.zeitfenster.filter(
-        (z) => z.slot_code !== slot_code
-      ),
-    });
-  };
-
   const toggleVm = (datum: string) => {
-    const aktuell =
-      availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
+    const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
     // Rücknahme sperren, wenn im VM-Slot (09:00–13:00) bereits Kurse liegen.
     if (
       aktuell.vm &&
@@ -1117,8 +1006,7 @@ function VerfuegbarkeitContent() {
   };
 
   const toggleNm = (datum: string) => {
-    const aktuell =
-      availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
+    const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
     // Rücknahme sperren, wenn im NM-Slot (13:00–17:00) bereits Kurse liegen.
     if (
       aktuell.nm &&
@@ -1130,8 +1018,7 @@ function VerfuegbarkeitContent() {
   };
 
   const toggleGanzerTag = (datum: string) => {
-    const aktuell =
-      availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] };
+    const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
     const istGanztags = aktuell.vm && aktuell.nm;
     // Ganztags-Rücknahme nur erlauben, wenn kein Slot durch Kurse belegt ist.
     if (istGanztags) {
@@ -1431,7 +1318,7 @@ function VerfuegbarkeitContent() {
       const vorher: Record<string, DayState> = {};
       const entries: BatchEintrag[] = tage.map((datum) => {
         vorher[datum] = {
-          ...(availRef.current[datum] ?? { vm: false, nm: false, zeitfenster: [] }),
+          ...(availRef.current[datum] ?? { vm: false, nm: false }),
         };
         return { datum, vm: true, nm: true };
       });
@@ -1439,7 +1326,7 @@ function VerfuegbarkeitContent() {
       const map = { ...availRef.current };
       for (const e of entries) {
         map[e.datum] = {
-          ...(availRef.current[e.datum] ?? { vm: false, nm: false, zeitfenster: [] }),
+          ...(availRef.current[e.datum] ?? { vm: false, nm: false }),
           vm: true,
           nm: true,
         };
@@ -1916,7 +1803,7 @@ function VerfuegbarkeitContent() {
     const entries: BatchEintrag[] = werktage.map((d) => {
       const ds = toDateStr(d);
       vorher[ds] = {
-        ...(availRef.current[ds] ?? { vm: false, nm: false, zeitfenster: [] }),
+        ...(availRef.current[ds] ?? { vm: false, nm: false }),
       };
       return { datum: ds, vm: !aktuellFrei, nm: !aktuellFrei };
     });
@@ -1924,7 +1811,7 @@ function VerfuegbarkeitContent() {
     const map = { ...availRef.current };
     for (const e of entries) {
       map[e.datum] = {
-        ...(availRef.current[e.datum] ?? { vm: false, nm: false, zeitfenster: [] }),
+        ...(availRef.current[e.datum] ?? { vm: false, nm: false }),
         vm: e.vm,
         nm: e.nm,
       };
@@ -1946,7 +1833,7 @@ function VerfuegbarkeitContent() {
    *  Monatskürzel hervorgehoben. */
   const renderWochenTag = (datum: Date) => {
     const datumStr = toDateStr(datum);
-    const zustand = avail[datumStr] ?? { vm: false, nm: false, zeitfenster: [] };
+    const zustand = avail[datumStr] ?? { vm: false, nm: false };
     const tagesKurse = kurse[datumStr] ?? [];
     const tagesReservierungen = reservierungen[datumStr] ?? [];
     // Standard-Slots für Reservierungen: Slot 1 = 09:00–13:00, Slot 2 = 13:00–17:00.
@@ -2128,86 +2015,6 @@ function VerfuegbarkeitContent() {
             } ${nmGesperrt && zustand.nm ? 'opacity-60' : ''}`}
           >
             NM
-          </button>
-        </div>
-
-        {/* Zeitfenster (stundengenau): Labels + Eingabe – ergänzt die
-            VM/NM-Block-Buttons (HT/K1/K2/K3/K4) um individuelle Zeitspannen.
-            slot_code 'z_HHMM_HHMM' garantiert die Eindeutigkeit über den
-            bestehenden Constraint (trainer_id, datum, slot_code). */}
-        {zustand.zeitfenster.length > 0 && (
-          <div className="mt-0.5 flex flex-col gap-0.5 min-w-0">
-            {zustand.zeitfenster.map((zf) => (
-              <div
-                key={zf.slot_code}
-                className={`flex items-center justify-between gap-0.5 rounded px-1 py-0.5 text-[8px] sm:text-[9px] leading-none font-medium ${
-                  zf.is_booked
-                    ? 'bg-red-100 text-red-800'
-                    : 'bg-teal-100 text-teal-900'
-                }`}
-              >
-                <span className="min-w-0 truncate">
-                  {zf.start}–{zf.end}
-                  {zf.is_booked ? ' (gebucht)' : ''}
-                </span>
-                {!zf.is_booked && (
-                  <button
-                    type="button"
-                    title="Zeitfenster entfernen"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      entferneZeitfenster(datumStr, zf.slot_code);
-                    }}
-                    className="shrink-0 rounded px-0.5 text-teal-700 hover:bg-teal-200"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="mt-0.5 flex items-center gap-0.5">
-          <input
-            type="time"
-            aria-label={`Startzeit ${datumStr}`}
-            value={zeitfensterInputs[datumStr]?.start ?? ''}
-            onChange={(e) =>
-              setZeitfensterInputs((prev) => ({
-                ...prev,
-                [datumStr]: {
-                  start: e.target.value,
-                  end: prev[datumStr]?.end ?? '',
-                },
-              }))
-            }
-            className="w-full min-w-0 rounded border border-slate-300 px-0.5 py-0.5 text-[8px] sm:text-[10px] focus:border-sky-400 focus:outline-none"
-          />
-          <input
-            type="time"
-            aria-label={`Endzeit ${datumStr}`}
-            value={zeitfensterInputs[datumStr]?.end ?? ''}
-            onChange={(e) =>
-              setZeitfensterInputs((prev) => ({
-                ...prev,
-                [datumStr]: {
-                  start: prev[datumStr]?.start ?? '',
-                  end: e.target.value,
-                },
-              }))
-            }
-            className="w-full min-w-0 rounded border border-slate-300 px-0.5 py-0.5 text-[8px] sm:text-[10px] focus:border-sky-400 focus:outline-none"
-          />
-          <button
-            type="button"
-            title="Zeitfenster hinzufügen"
-            onClick={(e) => {
-              e.stopPropagation();
-              hinzufuegenZeitfenster(datumStr);
-            }}
-            className="shrink-0 rounded border border-teal-300 bg-teal-50 px-1 py-0.5 text-[8px] sm:text-[10px] font-semibold text-teal-800 hover:bg-teal-100"
-          >
-            +
           </button>
         </div>
 
@@ -2470,7 +2277,7 @@ function VerfuegbarkeitContent() {
    *  Reservierungen / Hinweis. Jeder Kalendertag ist aufgeführt – auch ohne Daten. */
   const renderTagesZeile = (datum: Date, index: number) => {
     const datumStr = toDateStr(datum);
-    const zustand = avail[datumStr] ?? { vm: false, nm: false, zeitfenster: [] };
+    const zustand = avail[datumStr] ?? { vm: false, nm: false };
     const tagesKurse = kurse[datumStr] ?? [];
     const tagesReservierungen = reservierungen[datumStr] ?? [];
     const meta = tagesMeta[index] ?? {
@@ -2615,77 +2422,6 @@ function VerfuegbarkeitContent() {
               }`}
             >
               NM
-            </button>
-          </div>
-          {/* Zeitfenster (stundengenau): Labels + Eingabe des Tages */}
-          {zustand.zeitfenster.length > 0 && (
-            <div className="mt-1 flex flex-col gap-0.5">
-              {zustand.zeitfenster.map((zf) => (
-                <div
-                  key={zf.slot_code}
-                  className={`flex items-center justify-between gap-1 rounded px-1.5 py-0.5 text-[9px] leading-tight whitespace-nowrap ${
-                    zf.is_booked
-                      ? 'bg-red-100 text-red-800'
-                      : 'bg-teal-50 text-teal-900'
-                  }`}
-                >
-                  <span>
-                    {zf.start}–{zf.end}
-                    {zf.is_booked ? ' (gebucht)' : ''}
-                  </span>
-                  {!zf.is_booked && (
-                    <button
-                      type="button"
-                      title="Zeitfenster entfernen"
-                      onClick={() => entferneZeitfenster(datumStr, zf.slot_code)}
-                      className="rounded px-0.5 text-teal-700 hover:bg-teal-200"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="mt-1 flex items-center justify-center gap-1">
-            <input
-              type="time"
-              aria-label={`Startzeit ${datumStr}`}
-              value={zeitfensterInputs[datumStr]?.start ?? ''}
-              onChange={(e) =>
-                setZeitfensterInputs((prev) => ({
-                  ...prev,
-                  [datumStr]: {
-                    start: e.target.value,
-                    end: prev[datumStr]?.end ?? '',
-                  },
-                }))
-              }
-              className="w-20 rounded border border-slate-300 px-1 py-0.5 text-[10px] focus:border-sky-400 focus:outline-none"
-            />
-            <span className="text-[10px] text-slate-400">–</span>
-            <input
-              type="time"
-              aria-label={`Endzeit ${datumStr}`}
-              value={zeitfensterInputs[datumStr]?.end ?? ''}
-              onChange={(e) =>
-                setZeitfensterInputs((prev) => ({
-                  ...prev,
-                  [datumStr]: {
-                    start: prev[datumStr]?.start ?? '',
-                    end: e.target.value,
-                  },
-                }))
-              }
-              className="w-20 rounded border border-slate-300 px-1 py-0.5 text-[10px] focus:border-sky-400 focus:outline-none"
-            />
-            <button
-              type="button"
-              title="Zeitfenster hinzufügen"
-              onClick={() => hinzufuegenZeitfenster(datumStr)}
-              className="rounded border border-teal-300 bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-800 hover:bg-teal-100"
-            >
-              +
             </button>
           </div>
         </td>

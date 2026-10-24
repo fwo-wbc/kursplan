@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import {
   CalendarDays,
   ChevronLeft,
@@ -8,8 +8,10 @@ import {
   Loader2,
   AlertTriangle,
   RefreshCw,
+  X,
 } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   feiertageFuerJahr as zentraleFeiertageFuerJahr,
   feiertagLabel,
@@ -81,6 +83,43 @@ interface TagKurs {
   endMinuten: number | null;
   /** true, wenn der Trainer an diesem Tag eine Doppelbuchung hat. */
   hasConflict?: boolean;
+}
+
+
+// ---------------------------------------------------------------------------
+// Erfolgsmeldung nach einer Serienplanung (Szenario 2)
+// Wird über /kalender?erfolg=serie aufgerufen und zeigt nach der
+// Weiterleitung aus der Planungsmaske einen grünen Hinweis an.
+// ---------------------------------------------------------------------------
+function SerienErfolgHinweis() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const [sichtbar, setSichtbar] = useState(true);
+
+  if (!sichtbar) return null;
+  if (searchParams.get('erfolg') !== 'serie') return null;
+
+  return (
+    <div
+      role="status"
+      className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700"
+    >
+      <span>
+        Die Serienplanung wurde erfolgreich erstellt. Die neuen Termine sind jetzt im Kalender sichtbar.
+      </span>
+      <button
+        type="button"
+        aria-label="Hinweis schließen"
+        onClick={() => {
+          setSichtbar(false);
+          router.replace('/kalender', { scroll: false });
+        }}
+        className="shrink-0 rounded p-0.5 text-green-600 hover:bg-green-100"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
 }
 
 
@@ -774,6 +813,9 @@ export default function KalenderPage() {
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-800 sm:p-6">
       <AppHeader />
+      <Suspense fallback={null}>
+        <SerienErfolgHinweis />
+      </Suspense>
       <p className="mb-6 text-xs text-slate-500">
         Alle Kurse im Monatsraster – Uhrzeit, Kurztitel und Trainerkürzel je Tag.
       </p>

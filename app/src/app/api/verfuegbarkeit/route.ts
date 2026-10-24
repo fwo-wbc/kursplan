@@ -6,8 +6,6 @@ import {
   parseTrainerId,
   toErrorMessage,
   persistiereTag,
-  validiereZeitfenster,
-  parsenZeitfenster,
   TageEintrag,
 } from '@/lib/verfuegbarkeit';
 
@@ -15,12 +13,6 @@ interface VerfuegbarkeitRow {
   datum: string;
   slot_code: string;
   status: string;
-  /** Beginn des Zeitfensters (HH:MM) – nur bei Zeitfenster-Slots gefüllt. */
-  start_time: string | null;
-  /** Ende des Zeitfensters (HH:MM) – nur bei Zeitfenster-Slots gefüllt. */
-  end_time: string | null;
-  /** true = fester, gebuchter Zeitfenster-Slot (nicht mehr löschbar). */
-  is_booked: boolean;
 }
 
 interface KursRow {
@@ -94,15 +86,11 @@ export async function GET(request: Request) {
   }
 
   try {
-    // 1) Verfügbarkeiten des gewählten Zeitraums – inkl. der Zeitfenster-
-    //    Metadaten (start_time/end_time/is_booked, nur bei z-Slots gefüllt).
+    // 1) Verfügbarkeiten des gewählten Zeitraums.
     const verfResult = await query(
       `SELECT to_char(datum, 'YYYY-MM-DD') AS datum,
               slot_code,
-              status,
-              to_char(start_time, 'HH24:MI') AS start_time,
-              to_char(end_time, 'HH24:MI') AS end_time,
-              is_booked
+              status
        FROM public.trainer_verfuegbarkeit
        WHERE trainer_id = $1 AND datum >= $2::date AND datum <= $3::date
        ORDER BY datum, slot_code`,
@@ -114,12 +102,6 @@ export async function GET(request: Request) {
         datum: String(row.datum),
         slot_code: String(row.slot_code),
         status: row.status == null ? '' : String(row.status),
-        start_time: row.start_time == null ? null : String(row.start_time),
-        end_time: row.end_time == null ? null : String(row.end_time),
-        is_booked:
-          row.is_booked === true ||
-          row.is_booked === 'true' ||
-          row.is_booked === 1,
       })
     );
 
@@ -315,7 +297,6 @@ async function speichereVerfuegbarkeiten(request: Request) {
     vm?: unknown;
     nm?: unknown;
     entries?: unknown;
-    zeitfenster?: unknown;
   };
 
   try {
@@ -344,13 +325,11 @@ async function speichereVerfuegbarkeiten(request: Request) {
         datum?: unknown;
         vm?: unknown;
         nm?: unknown;
-        zeitfenster?: unknown;
       };
       return {
         datum: String(entry.datum ?? ''),
         vm: Boolean(entry.vm),
         nm: Boolean(entry.nm),
-        zeitfenster: parsenZeitfenster(entry.zeitfenster),
       };
     });
   } else {
@@ -359,7 +338,6 @@ async function speichereVerfuegbarkeiten(request: Request) {
         datum: String(body.datum ?? ''),
         vm: Boolean(body.vm),
         nm: Boolean(body.nm),
-        zeitfenster: parsenZeitfenster(body.zeitfenster),
       },
     ];
   }
@@ -378,26 +356,11 @@ async function speichereVerfuegbarkeiten(request: Request) {
         { status: 400 }
       );
     }
-    if ((eintrag.zeitfenster?.length ?? 0) > 0) {
-      const fehler = validiereZeitfenster(eintrag.zeitfenster ?? []);
-      if (fehler) {
-        return NextResponse.json(
-          { error: `Zeitfenster am ${eintrag.datum}: ${fehler}` },
-          { status: 400 }
-        );
-      }
-    }
   }
 
   try {
     for (const eintrag of eintraege) {
-      await persistiereTag(
-        trainerId,
-        eintrag.datum,
-        eintrag.vm,
-        eintrag.nm,
-        eintrag.zeitfenster
-      );
+      await persistiereTag(trainerId, eintrag.datum, eintrag.vm, eintrag.nm);
     }
   } catch (err: unknown) {
     console.error('Fehler beim Speichern der Verfügbarkeiten:', err);
