@@ -19,6 +19,7 @@ import {
 } from '@/lib/feiertage';
 import AppHeader from '../../components/AppHeader';
 import { kopiereInZwischenablage } from '@/lib/clipboard';
+import ReservierungsGruppeDialog from '../../../components/ReservierungsGruppeDialog';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -60,18 +61,15 @@ interface ReservierungRow {
   start_time: string;
   end_time: string;
   kunde: string;
+  /** Optionales Thema der Firmenanfrage (freier Text). */
+  thema: string | null;
+  /** Optionale Kundennummer (z. B. 'KD-10482'). */
+  kd_nr: string | null;
   bemerkung: string | null;
   /** Reservierungsfrist (Ablaufdatum), analog zur Dozenten-Planung. */
   frist_ende: string | null;
   /** Kompakter Gruppencode (z. B. "RES-7K2PQ"); beim Duplizieren identisch. */
   gruppe_code: string | null;
-}
-
-/** Eine Terminzeile im Reservierungs-Dialog (Datum + Uhrzeitfenster). */
-interface ResTerminZeile {
-  datum: string;
-  start: string;
-  ende: string;
 }
 
 /** Aggregierter VM/NM-Zustand eines Tages. */
@@ -483,23 +481,28 @@ function VerfuegbarkeitContent() {
   const [modalHinweis, setModalHinweis] = useState<string>('');
   const [modalInfo, setModalInfo] = useState<string>('');
 
-  // Modal „Reservierung anlegen“ (unverbindliche Firmenanfrage).
-  const [resModalOffen, setResModalOffen] = useState<boolean>(false);
-  // Dynamische Terminliste: jede Zeile = Datum + Uhrzeitfenster. Alle Termine
-  // werden mit demselben gruppe_code angelegt (Multi-Termin-Erfassung).
-  const [resTermine, setResTermine] = useState<ResTerminZeile[]>([
-    { datum: toDateStr(new Date()), start: '09:00', ende: '13:00' },
-  ]);
-  const [resKunde, setResKunde] = useState<string>('');
-  const [resBemerkung, setResBemerkung] = useState<string>('');
-  const [resFrist, setResFrist] = useState<string>('');
-  // Gruppencode: leer = Server erzeugt neuen Code; gesetzt (Duplizieren) =
-  // Code der Original-Reservierung, damit die Gruppe erkennbar bleibt.
-  const [resGruppeCode, setResGruppeCode] = useState<string>('');
-  // ID der zu bearbeitenden Reservierung (null = neuer Eintrag / Duplikat).
-  const [resBearbeitenId, setResBearbeitenId] = useState<number | null>(null);
-  const [resFehler, setResFehler] = useState<string>('');
-  const [resSpeichert, setResSpeichert] = useState<boolean>(false);
+  // Reservierungs-Dialog (gemeinsame Komponente ReservierungsGruppeDialog).
+  // gruppeCode = null → Neuanlage; gesetzt → Gruppen-Bearbeitung (alle Termine
+  // des Codes laden und editieren). Für die Neuanlage werden Start-Trainer,
+  // Start-Datum und Slot-Zeiten mitgegeben; für Einzeltermine ohne Gruppencode
+  // wird der komplette Datensatz als editRes übergeben.
+  const [resDialog, setResDialog] = useState<{
+    offen: boolean;
+    gruppeCode: string | null;
+    editRes: ReservierungRow | null;
+    initialTrainerId: string;
+    initialDatum: string;
+    initialStart: string;
+    initialEnde: string;
+  }>({
+    offen: false,
+    gruppeCode: null,
+    editRes: null,
+    initialTrainerId: '',
+    initialDatum: '',
+    initialStart: '',
+    initialEnde: '',
+  });
 
   // Ziel-Wochen-ID (woche-YYYY-MM-DD) für den einheitlichen Sprung-Scroll.
   const [scrollZielWocheId, setScrollZielWocheId] = useState<string>('');
@@ -1031,11 +1034,15 @@ function VerfuegbarkeitContent() {
   };
 
   // -------------------------------------------------------------------------
-  // Reservierungen (Firmenanfragen): anlegen & löschen
+  // Reservierungen (Firmenanfragen): Dialog öffnen & Einzeltermine löschen
   // -------------------------------------------------------------------------
+  // Die gesamte Dialoglogik (Neuanlage, Gruppen-Bearbeitung, Speichern,
+  // Gruppe löschen) liegt in der gemeinsamen Komponente ReservierungsGruppeDialog.
+  // Diese Seite steuert den Dialog nur noch über den resDialog-State.
 
-  /** Öffnet das Reservierungs-Modal für einen konkreten Tag mit intelligenter
-   *  Slot-Vorauswahl: Slot 1 (09:00–13:00) bevorzugt, sonst Slot 2 (13:00–17:00). */
+  /** Öffnet das Reservierungs-Modal (Neuanlage) für einen konkreten Tag mit
+   *  intelligenter Slot-Vorauswahl: Slot 1 (09:00–13:00) bevorzugt, sonst
+   *  Slot 2 (13:00–17:00). */
   const oeffneReservierungsModal = (datum: string) => {
     const tagesRes = reservierungen[datum] ?? [];
     const slot1Belegt = slotBelegt(tagesRes, '09:00', '13:00');
@@ -1046,169 +1053,45 @@ function VerfuegbarkeitContent() {
       start = '13:00';
       ende = '17:00';
     }
-    setResTermine([{ datum, start, ende }]);
-    setResKunde('');
-    setResBemerkung('');
-    setResFrist('');
-    setResGruppeCode('');
-    setResBearbeitenId(null);
-    setResFehler('');
-    setResModalOffen(true);
-  };
-
-  /** Öffnet das Reservierungs-Modal im Bearbeitungsmodus: Alle Felder der
-   *  bestehenden Reservierung werden übernommen; beim Speichern wird der
-   *  Datensatz per PUT aktualisiert (gruppe_code bleibt erhalten). */
-  const oeffneReservierungBearbeiten = (res: ReservierungRow) => {
-    setResBearbeitenId(res.id);
-    setResTermine([
-      { datum: res.datum, start: res.start_time, ende: res.end_time },
-    ]);
-    setResKunde(res.kunde);
-    setResBemerkung(res.bemerkung ?? '');
-    setResFrist(res.frist_ende ?? '');
-    setResGruppeCode(res.gruppe_code ?? '');
-    setResFehler('');
-    setResModalOffen(true);
-  };
-
-  /** Legt eine Reservierung an (POST) bzw. aktualisiert eine bestehende (PUT,
-   *  wenn resBearbeitenId gesetzt ist). Beim Bearbeiten bleibt der bestehende
-   *  gruppe_code erhalten – der Server ändert ihn nicht.
-   *
-   *  Multi-Termin-Erfassung: Im Anlage-Modus werden ALLE Zeilen der dynamischen
-   *  Terminliste in einem POST (termine-Array) angelegt – der Server vergibt
-   *  einen gemeinsamen gruppe_code für die gesamte Gruppe. */
-  const erstelleReservierung = useCallback(async () => {
-    if (!selectedTrainerId) return;
-    setResSpeichert(true);
-    setResFehler('');
-    try {
-      const istBearbeiten = resBearbeitenId !== null;
-      const url = istBearbeiten
-        ? `/api/trainer/reservierung?id=${encodeURIComponent(String(resBearbeitenId))}`
-        : '/api/trainer/reservierung';
-      const res = await fetch(url, {
-        method: istBearbeiten ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          istBearbeiten
-            ? {
-                trainer_id: Number(selectedTrainerId),
-                datum: resTermine[0]?.datum,
-                start_time: resTermine[0]?.start,
-                end_time: resTermine[0]?.ende,
-                kunde: resKunde,
-                bemerkung: resBemerkung || null,
-                frist_ende: resFrist || null,
-              }
-            : {
-                trainer_id: Number(selectedTrainerId),
-                kunde: resKunde,
-                bemerkung: resBemerkung || null,
-                frist_ende: resFrist || null,
-                gruppe_code: resGruppeCode || null,
-                termine: resTermine.map((t) => ({
-                  datum: t.datum,
-                  start_time: t.start,
-                  end_time: t.ende,
-                })),
-              }
-        ),
-      });
-      const data = (await res.json().catch(() => null)) as {
-        reservierung?: ReservierungRow;
-        reservierungen?: ReservierungRow[];
-        error?: unknown;
-      } | null;
-
-      if (!res.ok) {
-        // Fehlermeldung der API sauber im Dialog anzeigen (z. B. 409-Kollision).
-        const msg = data?.error
-          ? String(data.error)
-          : res.statusText || 'Unbekannter Fehler';
-        setResFehler(msg);
-        return;
-      }
-
-      // Einzeltermin antwortet mit { reservierung }, Multi-Termin mit
-      // { reservierungen: [...] } – beide Formen in den State übernehmen.
-      const neue = data?.reservierung
-        ? [data.reservierung]
-        : (data?.reservierungen ?? []);
-      if (neue.length > 0) {
-        setReservierungen((prev) => {
-          const next = { ...prev };
-          for (const neu of neue) {
-            // Bei Bearbeitung den bisherigen Eintrag (ggf. unter altem Datum)
-            // entfernen, damit er nicht doppelt erscheint.
-            for (const [ds, liste] of Object.entries(next)) {
-              next[ds] = liste.filter((r) => r.id !== neu.id);
-            }
-            if (!next[neu.datum]) next[neu.datum] = [];
-            next[neu.datum] = [...next[neu.datum], neu].sort((a, b) =>
-              a.start_time.localeCompare(b.start_time)
-            );
-          }
-          return next;
-        });
-        setResBearbeitenId(null);
-        setResModalOffen(false);
-      }
-    } catch (err: unknown) {
-      console.error('Fehler beim Speichern der Reservierung:', err);
-      setResFehler(
-        err instanceof Error ? err.message : 'Unbekannter Fehler beim Speichern.'
-      );
-    } finally {
-      setResSpeichert(false);
-    }
-  }, [
-    selectedTrainerId,
-    resBearbeitenId,
-    resTermine,
-    resKunde,
-    resBemerkung,
-    resFrist,
-    resGruppeCode,
-  ]);
-
-  /** Fügt eine weitere Terminzeile hinzu – vorausgefüllt mit den Werten der
-   *  letzten Zeile, damit nur das Datum angepasst werden muss. Im
-   *  Bearbeitungsmodus wird dadurch in den Anlage-Modus gewechselt: Alle
-   *  Termine werden mit demselben gruppe_code neu angelegt. */
-  const fuegeTerminZeileHinzu = () => {
-    setResTermine((prev) => {
-      const letzte = prev[prev.length - 1];
-      return [
-        ...prev,
-        {
-          datum: letzte?.datum ?? toDateStr(new Date()),
-          start: letzte?.start ?? '09:00',
-          ende: letzte?.ende ?? '13:00',
-        },
-      ];
+    setResDialog({
+      offen: true,
+      gruppeCode: null,
+      editRes: null,
+      initialTrainerId: selectedTrainerId,
+      initialDatum: datum,
+      initialStart: start,
+      initialEnde: ende,
     });
-    setResBearbeitenId(null);
-    setResFehler('');
   };
 
-  /** Entfernt eine Terminzeile; mindestens eine Zeile bleibt immer erhalten. */
-  const entferneTerminZeile = (index: number) => {
-    setResTermine((prev) =>
-      prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)
-    );
+  /** Öffnet das Reservierungs-Modal im Bearbeitungsmodus: Existiert ein
+   *  Gruppencode, lädt die Komponente ALLE Termine dieser Gruppe über die
+   *  gemeinsame Dialog-Komponente (GET /api/trainer/reservierung?gruppe_code=…).
+   *  Bei Einzelterminen ohne Gruppencode wird der komplette Datensatz als
+   *  editRes übergeben (vorbefüllt, PUT per id). */
+  const oeffneReservierungBearbeiten = (res: ReservierungRow) => {
+    setResDialog({
+      offen: true,
+      gruppeCode: res.gruppe_code ?? null,
+      editRes: res.gruppe_code ? null : res,
+      initialTrainerId: String(res.trainer_id),
+      initialDatum: res.datum,
+      initialStart: res.start_time,
+      initialEnde: res.end_time,
+    });
   };
 
-  /** Aktualisiert ein Feld einer Terminzeile (Datum, Start oder Ende). */
-  const aktualisiereTerminZeile = (
-    index: number,
-    patch: Partial<ResTerminZeile>
-  ) => {
-    setResTermine((prev) =>
-      prev.map((t, i) => (i === index ? { ...t, ...patch } : t))
-    );
-  };
+  /** Schließt den Reservierungs-Dialog. */
+  const schliesseResDialog = useCallback(() => {
+    setResDialog((prev) => ({ ...prev, offen: false }));
+  }, []);
+
+  /** Nach erfolgreichem Speichern/Löschen im Dialog: still neu laden
+   *  (loadGrid(false, true)) und den Dialog schließen – ohne Reload. */
+  const nachResDialogErfolg = useCallback(() => {
+    setResDialog((prev) => ({ ...prev, offen: false }));
+    void loadGrid(false, true);
+  }, [loadGrid]);
 
   /** Löscht eine Reservierung nach Bestätigung über DELETE /api/trainer/reservierung. */
   const loescheReservierung = useCallback(
@@ -1251,6 +1134,7 @@ function VerfuegbarkeitContent() {
     },
     []
   );
+
 
   // -------------------------------------------------------------------------
   // Werktage (Mo–Fr) zwischen zwei ISO-Daten, ohne gesetzliche Feiertage
@@ -1733,16 +1617,6 @@ function VerfuegbarkeitContent() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [modalOffen]);
-
-  // Reservierungs-Modal barrierefrei schließen: ESC-Taste.
-  useEffect(() => {
-    if (!resModalOffen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setResModalOffen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [resModalOffen]);
 
 
   const trainerLabel = useCallback(
@@ -3116,256 +2990,20 @@ function VerfuegbarkeitContent() {
         </div>
       )}
 
-      {/* Modal: Reservierung anlegen (unverbindliche Firmenanfrage) */}
-      {resModalOffen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-reservierung-titel"
-          onClick={() => setResModalOffen(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2
-              id="modal-reservierung-titel"
-              className="text-lg font-bold text-slate-800"
-            >
-              {resBearbeitenId !== null
-                ? 'Reservierung bearbeiten'
-                : resGruppeCode
-                  ? 'Weiteren Termin hinzufügen'
-                  : 'Reservierung anlegen'}
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              {resBearbeitenId !== null
-                ? 'Alle Felder sind editierbar – der Gruppencode bleibt beim Speichern erhalten.'
-                : resGruppeCode
-                  ? 'Folgetermin mit denselben Daten (Kunde, Notiz, Frist, Gruppencode) – noch kein Kurs in edoobox.'
-                  : 'Unverbindliche Reservierung für eine Firmenanfrage – noch kein Kurs in edoobox.'}
-            </p>
-
-            <div className="mt-4 space-y-3">
-              <div>
-                <label
-                  htmlFor="res-trainer"
-                  className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-1"
-                >
-                  Trainer
-                </label>
-                <select
-                  id="res-trainer"
-                  value={selectedTrainerId}
-                  disabled
-                  className="w-full text-sm font-medium border border-slate-300 rounded px-2.5 py-1.5 bg-slate-50 text-slate-600"
-                >
-                  {trainers
-                    .filter((t) => String(t.id) === selectedTrainerId)
-                    .map((t) => (
-                      <option key={t.id} value={String(t.id)}>
-                        {trainerLabel(t)}
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              {/* Dynamische Terminliste: jede Zeile = Datum + Uhrzeitfenster.
-                  Alle Zeilen werden mit demselben gruppe_code angelegt. */}
-              <div>
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-1">
-                  Termine
-                </span>
-                <div className="space-y-2">
-                  {resTermine.map((termin, index) => (
-                    <div
-                      key={index}
-                      className="rounded-lg border border-slate-200 bg-slate-50 p-2"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                          Termin {index + 1}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => entferneTerminZeile(index)}
-                          disabled={resTermine.length <= 1}
-                          title={
-                            resTermine.length <= 1
-                              ? 'Mindestens ein Termin muss verbleiben'
-                              : 'Termin entfernen'
-                          }
-                          aria-label="Termin entfernen"
-                          className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded border border-slate-300 bg-white text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          ×
-                        </button>
-                      </div>
-                      <div className="mt-1.5 grid grid-cols-3 gap-2">
-                        <div>
-                          <label
-                            htmlFor={`res-datum-${index}`}
-                            className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-0.5"
-                          >
-                            Datum
-                          </label>
-                          <input
-                            id={`res-datum-${index}`}
-                            type="date"
-                            value={termin.datum}
-                            onChange={(e) =>
-                              aktualisiereTerminZeile(index, {
-                                datum: e.target.value,
-                              })
-                            }
-                            className="w-full text-sm border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                          />
-                        </div>
-                        <div>
-                          <label
-                            htmlFor={`res-start-${index}`}
-                            className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-0.5"
-                          >
-                            Uhrzeit von
-                          </label>
-                          <input
-                            id={`res-start-${index}`}
-                            type="time"
-                            value={termin.start}
-                            onChange={(e) =>
-                              aktualisiereTerminZeile(index, {
-                                start: e.target.value,
-                              })
-                            }
-                            className="w-full text-sm border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                          />
-                        </div>
-                        <div>
-                          <label
-                            htmlFor={`res-ende-${index}`}
-                            className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-0.5"
-                          >
-                            Uhrzeit bis
-                          </label>
-                          <input
-                            id={`res-ende-${index}`}
-                            type="time"
-                            value={termin.ende}
-                            onChange={(e) =>
-                              aktualisiereTerminZeile(index, {
-                                ende: e.target.value,
-                              })
-                            }
-                            className="w-full text-sm border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={fuegeTerminZeileHinzu}
-                  title="Weiteren Termin mit denselben Zeiten hinzufügen"
-                  className="mt-2 inline-flex items-center gap-1 rounded-md border border-dashed border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:border-slate-400 transition"
-                >
-                  + Weiteren Termin hinzufügen
-                </button>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="res-kunde"
-                  className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-1"
-                >
-                  Kunde (Pflichtfeld)
-                </label>
-                <input
-                  id="res-kunde"
-                  type="text"
-                  value={resKunde}
-                  onChange={(e) => setResKunde(e.target.value)}
-                  placeholder="z. B. Firma XYZ"
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor="res-frist"
-                  className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-1"
-                >
-                  Reservierungsfrist (optional)
-                </label>
-                <input
-                  id="res-frist"
-                  type="date"
-                  value={resFrist}
-                  onChange={(e) => setResFrist(e.target.value)}
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                />
-                <p className="mt-1 text-[10px] text-slate-400">
-                  Ablaufdatum der Reservierung (analog zur Dozenten-Planung).
-                </p>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="res-bemerkung"
-                  className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-1"
-                >
-                  Bemerkung (optional)
-                </label>
-                <textarea
-                  id="res-bemerkung"
-                  value={resBemerkung}
-                  onChange={(e) => setResBemerkung(e.target.value)}
-                  rows={2}
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                />
-              </div>
-            </div>
-
-            {/* Gruppencode-Hinweis: beim Duplizieren bleibt die Gruppe erhalten */}
-            {resGruppeCode && (
-              <p className="mt-3 text-[11px] text-slate-500">
-                Teil der Reservierungsgruppe{' '}
-                <span className="font-mono font-semibold text-slate-700">
-                  {resGruppeCode}
-                </span>{' '}
-                – der Code bleibt beim Speichern identisch.
-              </p>
-            )}
-
-            {resFehler && (
-              <p className="mt-3 text-xs text-red-600">{resFehler}</p>
-            )}
-
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setResModalOffen(false)}
-                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium hover:bg-slate-100 transition"
-              >
-                Abbrechen
-              </button>
-              <button
-                type="button"
-                onClick={() => void erstelleReservierung()}
-                disabled={resSpeichert}
-                className="px-3 py-2 rounded-lg bg-orange-600 text-white text-sm font-medium hover:bg-orange-700 transition disabled:opacity-60"
-              >
-                {resSpeichert
-                  ? 'Speichere…'
-                  : resBearbeitenId !== null
-                    ? 'Änderungen speichern'
-                    : 'Reservierung anlegen'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Reservierungs-Dialog (zentrale, wiederverwendbare Komponente):
+          öffnet Neuanlage (gruppeCode=null) oder Bearbeiten (Gruppencode /
+          Einzeltermin). Warte auf Erfolg → stiller Re-Fetch des Grids. */}
+      <ReservierungsGruppeDialog
+        isOpen={resDialog.offen}
+        gruppeCode={resDialog.gruppeCode}
+        editRes={resDialog.editRes}
+        initialTrainerId={resDialog.initialTrainerId}
+        initialDatum={resDialog.initialDatum}
+        initialStart={resDialog.initialStart}
+        initialEnde={resDialog.initialEnde}
+        onClose={schliesseResDialog}
+        onSuccess={nachResDialogErfolg}
+      />
     </main>
   );
 }

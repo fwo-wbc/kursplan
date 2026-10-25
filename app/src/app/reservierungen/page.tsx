@@ -11,8 +11,12 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  Filter,
+  Pencil,
+  X,
 } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
+import ReservierungsGruppeDialog from '../../components/ReservierungsGruppeDialog';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit (Teilmenge der Felder aus GET /api/termine)
@@ -47,6 +51,14 @@ interface Kurs {
   zuweisungen: Zuweisung[];
   /** Aktuelles Trainerkürzel der ersten Zuweisung ('n. v.' wenn keiner). */
   trainer_kuerzel?: string | null;
+  /** Reservierungscode (Welt A: reservation_code, Welt B: gruppe_code). */
+  reservation_code?: string | null;
+  /** Thema der Reservierung (Welt A: termin_reservierung.thema). */
+  thema?: string | null;
+  /** Kundenbezug (Welt A: kd_nr, Welt B: kunde). */
+  kunde?: string | null;
+  /** Reservierungsfrist als ISO-Datum (YYYY-MM-DD). */
+  frist_ende?: string | null;
 }
 
 /** Ein Datensatz der Reservierungen-Seite (eine Zeile je Termin). */
@@ -78,12 +90,22 @@ interface TagEintrag {
 /** Verfügbare Ansichtsmodi der Seite. */
 type Ansicht = 'liste' | 'monat';
 
+/** Ein aktiver Klick-Filter der Listenansicht. */
+interface AktiverFilter {
+  label: string;
+  wert: string;
+  entfernen: () => void;
+}
+
 // ---------------------------------------------------------------------------
 // Konstanten & Formatierung
 // ---------------------------------------------------------------------------
 
 /** Fallback-Text, wenn kein Trainer zugewiesen ist. */
 const KEIN_TRAINER = 'n.v.';
+
+/** Fallback-Text für leere Zellen. */
+const KEIN_WERT = '–';
 
 /** Spaltenköpfe: Montag bis Sonntag (ISO 8601, Wochenbeginn Montag). */
 const WOCHENTAGE = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
@@ -152,6 +174,18 @@ function toIsoDate(date: Date): string {
   const monat = String(date.getMonth() + 1).padStart(2, '0');
   const tag = String(date.getDate()).padStart(2, '0');
   return `${jahr}-${monat}-${tag}`;
+}
+
+/**
+ * Formatiert ein reines ISO-Datum (YYYY-MM-DD) als "TT.MM.JJJJ".
+ * Bewusst zeitzonenunabhängig (kein new Date()), damit die Frist nie durch
+ * UTC/Berlin-Verschiebungen auf den Folgetag kippt. Leere Werte → '–'.
+ */
+function formatDatumIso(iso: string | null | undefined): string {
+  if (typeof iso !== 'string' || iso.trim() === '') return KEIN_WERT;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
+  if (!match) return KEIN_WERT;
+  return `${match[3]}.${match[2]}.${match[1]}`;
 }
 
 /** Ermittelt die ISO-8601-Kalenderwoche eines Datums (1–53). */
@@ -238,6 +272,35 @@ function trainerKuerzel(kurs: Kurs): string {
   return KEIN_TRAINER;
 }
 
+/** Liefert den Reservierungscode einer Zeile (Fallback '–'). */
+function reservierungsCode(kurs: Kurs): string {
+  const code = kurs.reservation_code?.trim();
+  return code ? code : KEIN_WERT;
+}
+
+/** Liefert den Kundenbezug einer Zeile (Welt A: kd_nr, Welt B: kunde). */
+function kundenAnzeige(kurs: Kurs): string {
+  const kunde = kurs.kunde?.trim();
+  return kunde ? kunde : KEIN_WERT;
+}
+
+/** Liefert die Kundennummer einer Zeile (kursnr = kd_nr; Fallback '–'). */
+function kdNrAnzeige(kurs: Kurs): string {
+  const kdnr = kurs.kursnr?.trim();
+  return kdnr ? kdnr : KEIN_WERT;
+}
+
+/** Liefert das Thema einer Reservierung (Fallback '–' wenn leer). */
+function themaAnzeige(kurs: Kurs): string {
+  const thema = kurs.thema?.trim();
+  return thema ? thema : KEIN_WERT;
+}
+
+/** Liefert die Reservierungsfrist als "TT.MM.JJJJ" (Fallback '–'). */
+function fristAnzeige(kurs: Kurs): string {
+  return formatDatumIso(kurs.frist_ende);
+}
+
 /** Liefert den frühesten Termin-Start eines Kurses als Zeitstempel (Sortierung). */
 function ersterTerminStart(kurs: Kurs): number {
   const start = toDate(kurs.termine[0]?.date_start);
@@ -263,6 +326,15 @@ export default function ReservierungenPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [fehler, setFehler] = useState<string | null>(null);
+
+  // Aktive Klick-Filter der Listenansicht (Kunde / Trainer / Reservierungscode).
+  const [filterKunde, setFilterKunde] = useState<string | null>(null);
+  const [filterTrainer, setFilterTrainer] = useState<string | null>(null);
+  const [filterCode, setFilterCode] = useState<string | null>(null);
+
+  // Reservierungscode (bzw. gruppe_code der Welt B) der Zeile, deren
+  // Bearbeiten-Dialog gerade geöffnet ist (null = Dialog geschlossen).
+  const [bearbeitungsCode, setBearbeitungsCode] = useState<string | null>(null);
 
   // Angezeigter Monat (0-basiert) der Monatsübersicht – initial der aktuelle Monat.
   const jetzt = new Date();
@@ -359,6 +431,97 @@ export default function ReservierungenPage() {
     void ladeReservierungen();
   }, [ladeReservierungen]);
 
+  // -------------------------------------------------------------------------
+  // Bearbeiten-Dialog (Stift-Icon je Zeile)
+  // -------------------------------------------------------------------------
+
+  /** Öffnet den Reservierungs-Bearbeiten-Dialog für den Code einer Zeile. */
+  const oeffneBearbeiten = useCallback((code: string) => {
+    setBearbeitungsCode(code);
+  }, []);
+
+  /** Schließt den Dialog ohne Aktion. */
+  const schliesseBearbeiten = useCallback(() => {
+    setBearbeitungsCode(null);
+  }, []);
+
+  /** Nach erfolgreichem Speichern/Löschen: Dialog schließen und die Liste
+   *  im Hintergrund neu laden (ohne Browser-Reload). */
+  const nachBearbeitenGespeichert = useCallback(() => {
+    setBearbeitungsCode(null);
+    void ladeReservierungen();
+  }, [ladeReservierungen]);
+
+  // -------------------------------------------------------------------------
+  // Klick-Filter der Listenansicht
+  // -------------------------------------------------------------------------
+
+  /** Setzt den Kunde-Filter auf den angeklickten Kundenbezug. */
+  const setzeKundeFilter = useCallback((kunde: string) => {
+    setFilterKunde(kunde);
+  }, []);
+
+  /** Setzt den Trainer-Filter auf den angeklickten Trainernamen. */
+  const setzeTrainerFilter = useCallback((trainer: string) => {
+    setFilterTrainer(trainer);
+  }, []);
+
+  /** Setzt den Code-Filter auf den angeklickten Reservierungscode. */
+  const setzeCodeFilter = useCallback((code: string) => {
+    setFilterCode(code);
+  }, []);
+
+  /** Entfernt alle aktiven Filter. */
+  const filterZuruecksetzen = useCallback(() => {
+    setFilterKunde(null);
+    setFilterTrainer(null);
+    setFilterCode(null);
+  }, []);
+
+  /** Liste der aktiven Filter für die Filterleiste. */
+  const aktiveFilter: AktiverFilter[] = [];
+  if (filterKunde) {
+    aktiveFilter.push({
+      label: 'Kunde',
+      wert: filterKunde,
+      entfernen: () => setFilterKunde(null),
+    });
+  }
+  if (filterTrainer) {
+    aktiveFilter.push({
+      label: 'Trainer',
+      wert: filterTrainer,
+      entfernen: () => setFilterTrainer(null),
+    });
+  }
+  if (filterCode) {
+    aktiveFilter.push({
+      label: 'Reservierungscode',
+      wert: filterCode,
+      entfernen: () => setFilterCode(null),
+    });
+  }
+
+  /**
+   * Gefilterte Zeilen der Listenansicht. Die Monatsübersicht arbeitet
+   * weiterhin mit der ungefilterten Liste (reservierungen).
+   */
+  const gefilterteReservierungen = useMemo(() => {
+    if (!filterKunde && !filterTrainer && !filterCode) return reservierungen;
+    return reservierungen.filter((zeile) => {
+      if (filterKunde && kundenAnzeige(zeile.kurs) !== filterKunde) {
+        return false;
+      }
+      if (filterTrainer && trainerAnzeige(zeile.kurs) !== filterTrainer) {
+        return false;
+      }
+      if (filterCode && reservierungsCode(zeile.kurs) !== filterCode) {
+        return false;
+      }
+      return true;
+    });
+  }, [reservierungen, filterKunde, filterTrainer, filterCode]);
+
   const heuteIso = toIsoDate(new Date());
   const monatsTitel = `${MONATSNAMEN[monat]} ${jahr}`;
 
@@ -377,10 +540,9 @@ export default function ReservierungenPage() {
             type="button"
             onClick={() => setAnsicht('liste')}
             aria-pressed={ansicht === 'liste'}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
-              ansicht === 'liste'
-                ? 'bg-cd-blue text-white shadow-sm'
-                : 'text-slate-600 hover:bg-slate-100'
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${ansicht === 'liste'
+              ? 'bg-cd-blue text-white shadow-sm'
+              : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
             <List className="w-4 h-4" />
@@ -390,10 +552,9 @@ export default function ReservierungenPage() {
             type="button"
             onClick={() => setAnsicht('monat')}
             aria-pressed={ansicht === 'monat'}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
-              ansicht === 'monat'
-                ? 'bg-cd-blue text-white shadow-sm'
-                : 'text-slate-600 hover:bg-slate-100'
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${ansicht === 'monat'
+              ? 'bg-cd-blue text-white shadow-sm'
+              : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
             <LayoutGrid className="w-4 h-4" />
@@ -452,59 +613,159 @@ export default function ReservierungenPage() {
         <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-slate-200">
             <p className="text-sm font-medium text-slate-700">
-              {reservierungen.length === 1
+              {gefilterteReservierungen.length === 1
                 ? '1 Reservierung'
-                : `${reservierungen.length} Reservierungen`}
+                : `${gefilterteReservierungen.length} Reservierungen`}
+              {aktiveFilter.length > 0 && (
+                <span className="ml-2 text-xs text-slate-500">
+                  (gefiltert von {reservierungen.length})
+                </span>
+              )}
             </p>
           </div>
 
-          {reservierungen.length === 0 ? (
+          {/* Leiste der aktiven Filter inkl. „Filter zurücksetzen“ */}
+          {aktiveFilter.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-200 bg-blue-50/50">
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600">
+                <Filter className="w-3.5 h-3.5 text-cd-blue" />
+                Aktive Filter:
+              </span>
+              {aktiveFilter.map((filter) => (
+                <span
+                  key={filter.label}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-cd-blue/10 px-2.5 py-0.5 text-xs font-medium text-cd-blue"
+                >
+                  {filter.label}: {filter.wert}
+                  <button
+                    type="button"
+                    onClick={filter.entfernen}
+                    aria-label={`Filter ${filter.label} entfernen`}
+                    title={`Filter ${filter.label} entfernen`}
+                    className="inline-flex items-center justify-center w-4 h-4 rounded-full text-cd-blue hover:bg-cd-blue/20 hover:text-cd-blue/80"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+              <button
+                type="button"
+                onClick={filterZuruecksetzen}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-800"
+              >
+                <X className="w-3 h-3" />
+                Filter zurücksetzen
+              </button>
+            </div>
+          )}
+
+          {gefilterteReservierungen.length === 0 ? (
             <p className="px-4 py-12 text-center text-sm text-slate-500">
-              Aktuell sind keine Reservierungen vorhanden.
+              {aktiveFilter.length > 0
+                ? 'Keine Reservierungen entsprechen den aktiven Filtern.'
+                : 'Aktuell sind keine Reservierungen vorhanden.'}
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
+                    <th className="px-4 py-2.5 font-semibold">Reservierungscode</th>
                     <th className="px-4 py-2.5 font-semibold">Datum & Uhrzeit</th>
-                    <th className="px-4 py-2.5 font-semibold">Thema & Kurstitel</th>
+                    <th className="px-4 py-2.5 font-semibold">Thema</th>
+                    <th className="px-4 py-2.5 font-semibold">KD-Nr.</th>
+                    <th className="px-4 py-2.5 font-semibold">Kunde</th>
                     <th className="px-4 py-2.5 font-semibold">Trainer</th>
-                    <th className="px-4 py-2.5 font-semibold">Status</th>
+                    <th className="px-4 py-2.5 font-semibold">Frist</th>
+                    <th className="px-4 py-2.5 font-semibold text-right">Aktionen</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {reservierungen.map((zeile, index) => {
+                  {gefilterteReservierungen.map((zeile, index) => {
                     const { kurs, termin } = zeile;
+                    const code = reservierungsCode(kurs);
+                    const kunde = kundenAnzeige(kurs);
+                    const trainer = trainerAnzeige(kurs);
                     return (
                       <tr
                         key={`${kurs.offer_id ?? 'kurs'}-${termin.date_id}`}
-                        className={`border-b border-slate-100 ${
-                          index % 2 === 1 ? 'bg-slate-50/60' : ''
-                        }`}
+                        className={`border-b border-slate-100 ${index % 2 === 1 ? 'bg-slate-50/60' : ''}`}
                       >
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {code !== KEIN_WERT ? (
+                            <button
+                              type="button"
+                              onClick={() => setzeCodeFilter(code)}
+                              title={`Nach Reservierungscode ${code} filtern`}
+                              className="inline-flex items-center gap-1 cursor-pointer font-medium text-cd-blue hover:text-cd-blue hover:underline"
+                            >
+                              {code}
+                            </button>
+                          ) : (
+                            <span className="text-slate-400">{KEIN_WERT}</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 whitespace-nowrap text-slate-700">
                           {formatTermin(termin)}
                         </td>
                         <td className="px-4 py-3 font-medium text-slate-900">
-                          {kurs.offer_name || 'Reservierung'}
-                          {kurs.kursnr ? (
-                            <span className="ml-2 text-xs text-slate-400">
-                              ({kurs.kursnr})
-                            </span>
-                          ) : null}
+                          {themaAnzeige(kurs)}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                          {trainerAnzeige(kurs)}
+                          {kdNrAnzeige(kurs)}
                         </td>
-                        <td className="px-4 py-3">
-                          {kurs.date_status ? (
-                            <span className="inline-flex items-center rounded-full bg-cd-blue/10 px-2.5 py-0.5 text-xs font-medium text-cd-blue">
-                              {kurs.date_status}
-                            </span>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {kunde !== KEIN_WERT ? (
+                            <button
+                              type="button"
+                              onClick={() => setzeKundeFilter(kunde)}
+                              title={`Nach Kunde ${kunde} filtern`}
+                              className="inline-flex items-center gap-1 cursor-pointer font-medium text-slate-700 hover:text-cd-blue hover:underline"
+                            >
+                              {kunde}
+                            </button>
                           ) : (
-                            <span className="text-slate-400">–</span>
+                            <span className="text-slate-400">{KEIN_WERT}</span>
                           )}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {trainer !== KEIN_TRAINER ? (
+                            <button
+                              type="button"
+                              onClick={() => setzeTrainerFilter(trainer)}
+                              title={`Nach Trainer ${trainer} filtern`}
+                              className="inline-flex items-center gap-1 cursor-pointer font-medium text-slate-700 hover:text-cd-blue hover:underline"
+                            >
+                              {trainer}
+                            </button>
+                          ) : (
+                            <span className="text-slate-400">{trainer}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                          {fristAnzeige(kurs)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (code !== KEIN_WERT) oeffneBearbeiten(code);
+                            }}
+                            disabled={code === KEIN_WERT}
+                            title={
+                              code !== KEIN_WERT
+                                ? `Reservierung ${code} bearbeiten`
+                                : 'Kein Reservierungscode vorhanden'
+                            }
+                            aria-label={
+                              code !== KEIN_WERT
+                                ? `Reservierung ${code} bearbeiten`
+                                : 'Nicht bearbeitbar'
+                            }
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-400 cursor-pointer hover:text-cd-blue hover:bg-blue-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
                         </td>
                       </tr>
                     );
@@ -584,9 +845,7 @@ export default function ReservierungenPage() {
                     key={`${woche.kw}-${toIsoDate(woche.tage[0].datum)}`}
                   >
                     <div
-                      className={`monats-kw ${
-                        index % 2 === 0 ? 'monats-kw-gerade' : 'monats-kw-ungerade'
-                      }`}
+                      className={`monats-kw ${index % 2 === 0 ? 'monats-kw-gerade' : 'monats-kw-ungerade'}`}
                       role="rowheader"
                       aria-label={`Kalenderwoche ${woche.kw}`}
                     >
@@ -828,6 +1087,16 @@ export default function ReservierungenPage() {
           padding: 0.125rem 0.25rem;
         }
       `}</style>
+
+      {/* Bearbeiten-Dialog (zentrale Komponente): öffnet je Zeile über den
+          Reservierungscode der Zeile (Welt B: gruppe_code). Nach
+          Speichern/Löschen triggert onSuccess den Re-Fetch der Liste. */}
+      <ReservierungsGruppeDialog
+        isOpen={bearbeitungsCode !== null}
+        gruppeCode={bearbeitungsCode}
+        onClose={schliesseBearbeiten}
+        onSuccess={nachBearbeitenGespeichert}
+      />
     </main>
   );
 }

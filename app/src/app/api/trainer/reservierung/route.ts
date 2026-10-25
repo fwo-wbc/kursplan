@@ -16,6 +16,10 @@ interface TrainerReservierung {
   end_time: string;
   kunde: string;
   bemerkung: string | null;
+  /** Optionales Thema der Firmenanfrage (freier Text). */
+  thema: string | null;
+  /** Optionale Kundennummer (z. B. 'KD-10482'). */
+  kd_nr: string | null;
   frist_ende: string | null;
   gruppe_code: string | null;
   created_at: string;
@@ -29,6 +33,10 @@ interface ReservierungBody {
   end_time?: unknown;
   kunde?: unknown;
   bemerkung?: unknown;
+  /** Optionales Thema (freier Text). */
+  thema?: unknown;
+  /** Optionale Kundennummer (z. B. 'KD-10482'). */
+  kd_nr?: unknown;
   frist_ende?: unknown;
   gruppe_code?: unknown;
   /** Optionale Liste für Multi-Termin-Erfassung: [{ datum, start_time, end_time }]. */
@@ -212,6 +220,8 @@ const RESERVIERUNG_SPALTEN = `
   to_char(end_time, 'HH24:MI') AS end_time,
   kunde,
   bemerkung,
+  thema,
+  kd_nr,
   to_char(frist_ende, 'YYYY-MM-DD') AS frist_ende,
   gruppe_code,
   created_at`;
@@ -226,6 +236,8 @@ function mapZeile(row: Record<string, unknown>): TrainerReservierung {
     end_time: String(row.end_time),
     kunde: String(row.kunde),
     bemerkung: row.bemerkung == null ? null : String(row.bemerkung),
+    thema: row.thema == null ? null : String(row.thema),
+    kd_nr: row.kd_nr == null ? null : String(row.kd_nr),
     frist_ende: row.frist_ende == null ? null : String(row.frist_ende),
     gruppe_code: row.gruppe_code == null ? null : String(row.gruppe_code),
     created_at: String(row.created_at),
@@ -241,6 +253,39 @@ export async function GET(request: Request) {
   const trainerId = parseTrainerId(searchParams.get('trainer_id'));
   const von = searchParams.get('von');
   const bis = searchParams.get('bis');
+  const gruppeCode = normalizeString(searchParams.get('gruppe_code'));
+
+  // Sammelabruf: ALLE Termine eines Gruppencodes (unabhängig vom Zeitraum).
+  // Dies ist die maßgebliche Datenquelle des Dialogs „Reservierung bearbeiten“
+  // der Verfügbarkeits-Seite – public.trainer_reservierung.gruppe_code.
+  if (gruppeCode) {
+    try {
+      const result = await query(
+        `SELECT ${RESERVIERUNG_SPALTEN}
+         FROM public.trainer_reservierung
+         WHERE gruppe_code = $1::text
+         ORDER BY datum, start_time, id`,
+        [gruppeCode]
+      );
+
+      const reservierungen: TrainerReservierung[] = result.rows.map(
+        (row: Record<string, unknown>) => mapZeile(row)
+      );
+
+      // Bewusst immer 200 (auch bei leerer Liste): Der Dialog entscheidet
+      // selbst über die Darstellung – es wird kein 404 mehr toleriert.
+      return NextResponse.json(
+        { reservierungen, gruppe_code: gruppeCode },
+        { status: 200 }
+      );
+    } catch (err: unknown) {
+      console.error('Fehler beim Laden der Reservierungsgruppe:', err);
+      return NextResponse.json(
+        { error: 'Datenbankfehler beim Laden der Reservierungsgruppe.' },
+        { status: 500 }
+      );
+    }
+  }
 
   if (!trainerId) {
     return NextResponse.json(
@@ -324,6 +369,8 @@ export async function POST(request: Request) {
   const endTime = normalizeString(body.end_time);
   const kunde = normalizeString(body.kunde);
   const bemerkung = normalizeString(body.bemerkung);
+  const thema = normalizeString(body.thema);
+  const kdNr = normalizeString(body.kd_nr);
   const fristEnde = normalizeString(body.frist_ende);
   const gruppeCode = normalizeString(body.gruppe_code);
 
@@ -414,8 +461,10 @@ export async function POST(request: Request) {
 
         const result = await client.query(
           `INSERT INTO public.trainer_reservierung
-             (trainer_id, datum, start_time, end_time, kunde, bemerkung, frist_ende, gruppe_code)
-           VALUES ($1::int, $2::date, $3::time, $4::time, $5::text, $6::text, $7::date, $8::text)
+             (trainer_id, datum, start_time, end_time, kunde, bemerkung,
+              thema, kd_nr, frist_ende, gruppe_code)
+           VALUES ($1::int, $2::date, $3::time, $4::time, $5::text, $6::text,
+                   $7::text, $8::text, $9::date, $10::text)
            RETURNING ${RESERVIERUNG_SPALTEN}`,
           [
             trainerId,
@@ -424,6 +473,8 @@ export async function POST(request: Request) {
             termin.end_time,
             kunde,
             bemerkung,
+            thema,
+            kdNr,
             fristEnde,
             effektiverGruppeCode,
           ]
@@ -478,14 +529,6 @@ export async function PUT(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const idValue = searchParams.get('id');
-  if (!idValue || !/^\d+$/.test(idValue)) {
-    return NextResponse.json(
-      { error: 'id muss eine positive Ganzzahl sein.' },
-      { status: 400 }
-    );
-  }
-  const id = Number(idValue);
 
   let body: ReservierungBody;
   try {
@@ -497,12 +540,126 @@ export async function PUT(request: Request) {
     );
   }
 
+  // Sammel-Update: Stammfelder (kunde, bemerkung, frist_ende) für ALLE
+  // Datensätze eines Gruppencodes – public.trainer_reservierung. Wird vom
+  // Dialog „Reservierung bearbeiten“ der Verfügbarkeits-Seite verwendet,
+  // wenn eine gesamte Reservierungsgruppe geändert wird (keine id nötig).
+  const gruppeCodeSammel = normalizeString(body.gruppe_code);
+  if (gruppeCodeSammel) {
+    const kundeSammel = normalizeString(body.kunde);
+    const bemerkungSammel = normalizeString(body.bemerkung);
+    const fristSammel = normalizeString(body.frist_ende);
+    // Nur aktiv setzen, wenn der Client die Werte mitliefert – alte Aufrufe
+    // (z. B. Verfügbarkeitsansicht ohne thema/kd_nr) lassen bestehende Werte
+    // unangetastet.
+    const themaSammel =
+      body.thema === undefined ? undefined : normalizeString(body.thema);
+    const kdNrSammel =
+      body.kd_nr === undefined ? undefined : normalizeString(body.kd_nr);
+    // Trainerwechsel: nur aktiv setzen, wenn der Client trainer_id mitliefert –
+    // alte Aufrufe ohne trainer_id lassen den bestehenden Trainer unangetastet.
+    const trainerIdSammel =
+      body.trainer_id === undefined
+        ? undefined
+        : parseTrainerId(body.trainer_id);
+
+    if (!kundeSammel) {
+      return NextResponse.json(
+        { error: 'kunde ist ein Pflichtfeld.' },
+        { status: 400 }
+      );
+    }
+    if (fristSammel && !isIsoDatum(fristSammel)) {
+      return NextResponse.json(
+        { error: 'frist_ende muss als YYYY-MM-DD übergeben werden.' },
+        { status: 400 }
+      );
+    }
+    if (trainerIdSammel !== undefined && !trainerIdSammel) {
+      return NextResponse.json(
+        { error: 'trainer_id muss eine positive Ganzzahl sein.' },
+        { status: 400 }
+      );
+    }
+
+    try {
+      const setKlauseln = [
+        'kunde = $2::text',
+        'bemerkung = $3::text',
+        'frist_ende = $4::date',
+      ];
+      const params: unknown[] = [
+        gruppeCodeSammel,
+        kundeSammel,
+        bemerkungSammel,
+        fristSammel,
+      ];
+      if (themaSammel !== undefined) {
+        setKlauseln.push(`thema = $${params.length + 1}::text`);
+        params.push(themaSammel);
+      }
+      if (kdNrSammel !== undefined) {
+        setKlauseln.push(`kd_nr = $${params.length + 1}::text`);
+        params.push(kdNrSammel);
+      }
+      if (trainerIdSammel !== undefined) {
+        setKlauseln.push(`trainer_id = $${params.length + 1}::int`);
+        params.push(trainerIdSammel);
+      }
+      const result = await query(
+        `UPDATE public.trainer_reservierung
+         SET ${setKlauseln.join(', ')}
+         WHERE gruppe_code = $1::text
+         RETURNING ${RESERVIERUNG_SPALTEN}`,
+        params
+      );
+
+      if ((result.rows.length ?? 0) === 0) {
+        return NextResponse.json(
+          { error: 'Keine Reservierungen mit diesem Gruppencode gefunden.' },
+          { status: 404 }
+        );
+      }
+
+      const reservierungen: TrainerReservierung[] = result.rows.map(
+        (row: Record<string, unknown>) => mapZeile(row)
+      );
+
+      return NextResponse.json(
+        { ok: true, gruppe_code: gruppeCodeSammel, reservierungen },
+        { status: 200 }
+      );
+    } catch (err: unknown) {
+      console.error('Fehler beim Sammel-Update der Trainer-Reservierung:', err);
+      return NextResponse.json(
+        { error: 'Datenbankfehler beim Sammel-Update der Reservierung.' },
+        { status: 500 }
+      );
+    }
+  }
+
+  // Einzeltermin-Bearbeitung: Die id-Pflichtprüfung greift erst NACH dem
+  // Sammel-Code-Zweig, damit PUT ohne id (nur gruppe_code) funktioniert.
+  const idValue = searchParams.get('id');
+  if (!idValue || !/^\d+$/.test(idValue)) {
+    return NextResponse.json(
+      { error: 'id muss eine positive Ganzzahl sein.' },
+      { status: 400 }
+    );
+  }
+  const id = Number(idValue);
+
   const trainerId = parseTrainerId(body.trainer_id);
   const datum = normalizeString(body.datum);
   const startTime = normalizeString(body.start_time);
   const endTime = normalizeString(body.end_time);
   const kunde = normalizeString(body.kunde);
   const bemerkung = normalizeString(body.bemerkung);
+  // Nur aktiv setzen, wenn der Client die Werte mitliefert – alte Aufrufe
+  // (z. B. Verfügbarkeitsansicht ohne thema/kd_nr) lassen bestehende Werte
+  // unangetastet.
+  const thema = body.thema === undefined ? undefined : normalizeString(body.thema);
+  const kdNr = body.kd_nr === undefined ? undefined : normalizeString(body.kd_nr);
   const fristEnde = normalizeString(body.frist_ende);
 
   // Pflichtfelder validieren (identisch zu POST).
@@ -586,27 +743,41 @@ export async function PUT(request: Request) {
       );
     }
 
+    // SET-Klausel dynamisch aufbauen – thema/kd_nr nur setzen, wenn geliefert.
+    const setKlauseln = [
+      'trainer_id = $2::int',
+      'datum = $3::date',
+      'start_time = $4::time',
+      'end_time = $5::time',
+      'kunde = $6::text',
+      'bemerkung = $7::text',
+      'frist_ende = $8::date',
+    ];
+    const params: unknown[] = [
+      id,
+      trainerId,
+      datum,
+      startTime,
+      endTime,
+      kunde,
+      bemerkung,
+      fristEnde,
+    ];
+    if (thema !== undefined) {
+      setKlauseln.push(`thema = $${params.length + 1}::text`);
+      params.push(thema);
+    }
+    if (kdNr !== undefined) {
+      setKlauseln.push(`kd_nr = $${params.length + 1}::text`);
+      params.push(kdNr);
+    }
+
     const result = await query(
       `UPDATE public.trainer_reservierung
-       SET trainer_id = $2::int,
-           datum = $3::date,
-           start_time = $4::time,
-           end_time = $5::time,
-           kunde = $6::text,
-           bemerkung = $7::text,
-           frist_ende = $8::date
+       SET ${setKlauseln.join(', ')}
        WHERE id = $1::int
        RETURNING ${RESERVIERUNG_SPALTEN}`,
-      [
-        id,
-        trainerId,
-        datum,
-        startTime,
-        endTime,
-        kunde,
-        bemerkung,
-        fristEnde,
-      ]
+      params
     );
 
     if ((result.rows.length ?? 0) === 0) {
@@ -646,6 +817,44 @@ export async function DELETE(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
+  const gruppeCode = normalizeString(searchParams.get('gruppe_code'));
+
+  // Sammel-Löschung: unwiderruflich ALLE Datensätze eines Gruppencodes aus
+  // public.trainer_reservierung entfernen. Ein fehlender Code wird als
+  // Fehler gemeldet (kein stilles 404-Tolerieren im Dialog).
+  if (gruppeCode) {
+    try {
+      const result = await query(
+        `DELETE FROM public.trainer_reservierung
+         WHERE gruppe_code = $1::text
+         RETURNING id`,
+        [gruppeCode]
+      );
+
+      if ((result.rows.length ?? 0) === 0) {
+        return NextResponse.json(
+          { error: 'Keine Reservierungen mit diesem Gruppencode gefunden.' },
+          { status: 404 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          success: true,
+          gruppe_code: gruppeCode,
+          geloescht: result.rows.length,
+        },
+        { status: 200 }
+      );
+    } catch (err: unknown) {
+      console.error('Fehler beim Sammel-Löschen der Trainer-Reservierung:', err);
+      return NextResponse.json(
+        { error: 'Datenbankfehler beim Löschen der Reservierungsgruppe.' },
+        { status: 500 }
+      );
+    }
+  }
+
   const idValue = searchParams.get('id');
 
   if (!idValue || !/^\d+$/.test(idValue)) {

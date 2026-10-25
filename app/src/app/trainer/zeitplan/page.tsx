@@ -10,13 +10,13 @@ import {
   Plus,
   X,
   Lock,
-  Pencil,
   Copy,
   Wand2,
   AlertTriangle,
 } from 'lucide-react';
 import AppHeader from '../../components/AppHeader';
 import { slotZeit } from '@/lib/umwandlung';
+import ReservationDialog from './ReservationDialog';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit (Spiegel der API-Antworten)
@@ -49,6 +49,8 @@ interface KursEintrag {
 /** Vor-Reservierung innerhalb eines Tages. */
 interface ReservierungEintrag {
   id: number;
+  /** Gemeinsamer Sammel-Code (alle Termine derselben Sammel-Reservierung). */
+  reservation_code: string | null;
   slot_code: string;
   kd_nr: string;
   thema: string;
@@ -97,22 +99,15 @@ interface ZeitplanAntwort {
   tage: TagEintrag[];
 }
 
-/** Eine Terminzeile der dynamischen Reservierungsliste. */
-interface TerminZeile {
-  datum: string;
-  slot_code: string;
-}
-
-/** Zustand des Reservierungs-Dialogs. */
+/** Zustand des Reservierungs-Dialogs (Sammel-Reservierung). */
 interface DialogState {
   open: boolean;
-  editing: ReservierungEintrag | null;
-  termine: TerminZeile[];
-  kd_nr: string;
-  thema: string;
-  frist_ende: string;
-  status: string;
-  notiz: string;
+  /** Die angeklickte Reservierung (null = Neuanlage). */
+  editingRes: ReservierungEintrag | null;
+  /** Ausgangsdatum der geöffneten Zelle. */
+  datum: string;
+  /** Ausgangs-Slot der geöffneten Zelle. */
+  slot: string;
 }
 
 /** Kurstemplate aus GET /api/edoobox/vorlagen. */
@@ -157,18 +152,6 @@ const SLOT_CONFIG: { code: SlotCode; sub: string }[] = [
   { code: 'KT1', sub: 'VM' },
   { code: 'KT2', sub: 'NM' },
   { code: 'KT3', sub: 'Abend' },
-];
-
-const SLOT_OPTIONEN = [
-  { value: 'KT1', label: 'KT1 – Vormittag' },
-  { value: 'KT2', label: 'KT2 – Nachmittag' },
-  { value: 'KT3', label: 'KT3 – Abend' },
-  { value: 'ganztags', label: 'Ganztags' },
-];
-
-const STATUS_OPTIONEN = [
-  { value: 'angeboten', label: 'angeboten' },
-  { value: 'bestaetigt', label: 'bestätigt' },
 ];
 
 /** CSS-Klassen je Kurs-Status (Farbkodierung). */
@@ -329,18 +312,15 @@ export default function ZeitplanPage() {
   const [loadError, setLoadError] = useState<boolean>(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // Zustand des Sammel-Reservierungs-Dialogs. Der komplette Dialog-State
+  // (Terminliste, gemeinsame Felder, Audit-Log, Bestätigungsdialoge) wird in
+  // der eigenen Komponente ReservationDialog verwaltet.
   const [dialog, setDialog] = useState<DialogState>({
     open: false,
-    editing: null,
-    termine: [],
-    kd_nr: '',
-    thema: '',
-    frist_ende: '',
-    status: 'angeboten',
-    notiz: '',
+    editingRes: null,
+    datum: '',
+    slot: 'KT1',
   });
-  const [dialogSaving, setDialogSaving] = useState<boolean>(false);
-  const [dialogError, setDialogError] = useState<string | null>(null);
 
   const [umwandlung, setUmwandlung] = useState<UmwandlungState>({
     open: false,
@@ -495,181 +475,35 @@ export default function ZeitplanPage() {
   // -------------------------------------------------------------------------
   // Reservierungs-Dialog
   // -------------------------------------------------------------------------
-  function nextTerminDatum(datum: string): string {
-    const d = new Date(`${datum}T00:00:00`);
-    d.setDate(d.getDate() + 1);
-    return toDateStr(d);
-  }
-
+  /** Öffnet den Dialog für eine neue Reservierung (ein Starttermin). */
   function openNewReservation(datum: string, slotCode: string) {
-    setDialog({
-      open: true,
-      editing: null,
-      termine: [{ datum, slot_code: slotCode }],
-      kd_nr: '',
-      thema: '',
-      frist_ende: '',
-      status: 'angeboten',
-      notiz: '',
-    });
-    setDialogError(null);
+    setDialog({ open: true, editingRes: null, datum, slot: slotCode });
   }
 
+  /** Öffnet den Dialog für eine bestehende Reservierung. Die Komponente lädt
+   *  beim Öffnen automatisch ALLE Termine mit demselben reservation_code. */
   function openEditReservation(res: ReservierungEintrag, datum: string) {
-    // Status aus dem Altbestand normalisieren: Nur Werte der Frontend-Whitelist
-    // (STATUS_OPTIONEN) werden übernommen, alles andere fällt auf den gültigen
-    // Initial-Status 'angeboten' zurück – so kann der nachfolgende PUT nie an
-    // der Status-Validierung scheitern.
-    const normalisierterStatus = STATUS_OPTIONEN.some(
-      (o) => o.value === res.status
-    )
-      ? res.status
-      : 'angeboten';
     setDialog({
       open: true,
-      editing: res,
-      termine: [{ datum, slot_code: res.slot_code }],
-      kd_nr: res.kd_nr,
-      thema: res.thema,
-      frist_ende: res.frist_ende,
-      status: normalisierterStatus,
-      notiz: res.notiz ?? '',
+      editingRes: res,
+      datum,
+      slot: res.slot_code,
     });
-    setDialogError(null);
   }
 
+  /** Kopieren/Mehrfach-Termine: öffnet denselben Sammel-Dialog wie Bearbeiten,
+   *  damit die komplette Gruppe sichtbar ist und erweitert werden kann. */
   function openCopyReservation(res: ReservierungEintrag, datum: string) {
     setDialog({
       open: true,
-      editing: null,
-      termine: [{ datum, slot_code: res.slot_code }],
-      kd_nr: res.kd_nr,
-      thema: res.thema,
-      frist_ende: res.frist_ende,
-      status: res.status,
-      notiz: res.notiz ?? '',
+      editingRes: res,
+      datum,
+      slot: res.slot_code,
     });
-    setDialogError(null);
   }
 
   function closeDialog() {
     setDialog((prev) => ({ ...prev, open: false }));
-    setDialogError(null);
-  }
-
-  function addTermin() {
-    setDialog((prev) => {
-      const letzter = prev.termine[prev.termine.length - 1];
-      const datum = letzter ? nextTerminDatum(letzter.datum) : von;
-      const slot_code = letzter ? letzter.slot_code : 'KT1';
-      return { ...prev, termine: [...prev.termine, { datum, slot_code }] };
-    });
-  }
-
-  function updateTermin(index: number, patch: Partial<TerminZeile>) {
-    setDialog((prev) => ({
-      ...prev,
-      termine: prev.termine.map((t, i) => (i === index ? { ...t, ...patch } : t)),
-    }));
-  }
-
-  function removeTermin(index: number) {
-    setDialog((prev) => ({
-      ...prev,
-      termine: prev.termine.filter((_, i) => i !== index),
-    }));
-  }
-
-  async function saveReservation() {
-    if (!dialog.kd_nr.trim() || !dialog.thema.trim() || !dialog.frist_ende) {
-      setDialogError('Bitte KD-Nr., Thema und Fristende ausfüllen.');
-      return;
-    }
-    if (dialog.termine.length === 0) {
-      setDialogError('Bitte mindestens einen Termin angeben.');
-      return;
-    }
-    if (dialog.termine.some((t) => !t.datum || !t.slot_code)) {
-      setDialogError('Bitte für jeden Termin Datum und Slot ausfüllen.');
-      return;
-    }
-
-    setDialogSaving(true);
-    setDialogError(null);
-
-    const stamm = {
-      trainer_id: Number(selectedTrainerId),
-      kd_nr: dialog.kd_nr.trim(),
-      thema: dialog.thema.trim(),
-      frist_ende: dialog.frist_ende,
-      status: dialog.status,
-      notiz: dialog.notiz.trim() || null,
-    };
-
-    try {
-      let res: Response;
-      if (dialog.editing) {
-        // Bestehende Reservierung bleibt ein Einzeldatensatz (PUT).
-        res = await fetch('/api/reservierung', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...stamm,
-            id: dialog.editing.id,
-            datum: dialog.termine[0].datum,
-            slot_code: dialog.termine[0].slot_code,
-          }),
-        });
-      } else if (dialog.termine.length === 1) {
-        res = await fetch('/api/reservierung', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...stamm,
-            datum: dialog.termine[0].datum,
-            slot_code: dialog.termine[0].slot_code,
-          }),
-        });
-      } else {
-        res = await fetch('/api/reservierung', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...stamm, termine: dialog.termine }),
-        });
-      }
-
-      if (!res.ok) {
-        const errData = (await res.json().catch(() => null)) as {
-          error?: unknown;
-        } | null;
-        throw new Error(errData?.error ? String(errData.error) : 'Speichern fehlgeschlagen.');
-      }
-      closeDialog();
-      loadZeitplan();
-    } catch (err: unknown) {
-      console.error('Fehler beim Speichern der Reservierung:', err);
-      setDialogError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen.');
-    } finally {
-      setDialogSaving(false);
-    }
-  }
-
-  async function deleteReservation(id: number) {
-    setDialogSaving(true);
-    setDialogError(null);
-    try {
-      const res = await fetch(`/api/reservierung?id=${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('Löschen fehlgeschlagen.');
-      closeDialog();
-      loadZeitplan();
-    } catch (err: unknown) {
-      console.error('Fehler beim Löschen der Reservierung:', err);
-      setDialogError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen.');
-    } finally {
-      setDialogSaving(false);
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -1457,206 +1291,22 @@ export default function ZeitplanPage() {
         </div>
       </div>
 
-      {/* Reservierungs-Dialog */}
-      {dialog.open && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Reservierung bearbeiten"
-        >
-          <div className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-slate-200 p-5">
-            <div className="flex items-start justify-between mb-4">
-              <h2 className="text-base font-bold flex items-center gap-2">
-                <Pencil className="w-4 h-4 text-cd-blue" />
-                {dialog.editing ? 'Reservierung bearbeiten' : 'Neue Reservierung'}
-              </h2>
-              <button
-                type="button"
-                onClick={closeDialog}
-                aria-label="Schließen"
-                className="rounded-lg p-1 hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Kopfbereich: gilt für alle hinzugefügten Termine identisch */}
-            <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-500 block mb-1">KD-Nr.</label>
-                <input
-                  value={dialog.kd_nr}
-                  onChange={(e) => setDialog((p) => ({ ...p, kd_nr: e.target.value }))}
-                  placeholder="KD-10482"
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-500 block mb-1">Dozent</label>
-                <div className="w-full text-sm font-medium text-slate-700 px-2.5 py-2">
-                  {trainer
-                    ? `${trainer.vorname} ${trainer.nachname}${
-                        trainer.kuerzel ? ` (${trainer.kuerzel})` : ''
-                      }`.trim()
-                    : '–'}
-                </div>
-              </div>
-
-              <div className="col-span-2">
-                <label className="text-xs font-semibold text-slate-500 block mb-1">Thema</label>
-                <input
-                  value={dialog.thema}
-                  onChange={(e) => setDialog((p) => ({ ...p, thema: e.target.value }))}
-                  placeholder="Excel Grundlagen"
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-500 block mb-1">Fristende</label>
-                <input
-                  type="date"
-                  value={dialog.frist_ende}
-                  onChange={(e) => setDialog((p) => ({ ...p, frist_ende: e.target.value }))}
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-500 block mb-1">Status</label>
-                <select
-                  value={dialog.status}
-                  onChange={(e) => setDialog((p) => ({ ...p, status: e.target.value }))}
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                >
-                  {STATUS_OPTIONEN.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="col-span-2">
-                <label className="text-xs font-semibold text-slate-500 block mb-1">Notiz</label>
-                <input
-                  value={dialog.notiz}
-                  onChange={(e) => setDialog((p) => ({ ...p, notiz: e.target.value }))}
-                  placeholder="optional"
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                />
-              </div>
-            </div>
-
-            {/* Dynamische Terminliste */}
-            <div>
-              <div className="mb-1 flex items-center justify-between">
-                <label className="text-xs font-semibold text-slate-500">Termine</label>
-                {!dialog.editing && (
-                  <button
-                    type="button"
-                    onClick={addTermin}
-                    className="inline-flex items-center gap-1 rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 transition"
-                  >
-                    <Plus className="w-3 h-3" />
-                    Weiteren Termin hinzufügen
-                  </button>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2">
-                {dialog.termine.map((termin, index) => (
-                  <div
-                    key={index}
-                    className="flex items-end gap-2 rounded-lg border border-slate-200 bg-white p-2"
-                  >
-                    <div className="flex-1">
-                      <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
-                        Datum
-                      </label>
-                      <input
-                        type="date"
-                        value={termin.datum}
-                        onChange={(e) =>
-                          updateTermin(index, { datum: e.target.value })
-                        }
-                        className="w-full text-sm border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
-                        Slot
-                      </label>
-                      <select
-                        value={termin.slot_code}
-                        onChange={(e) =>
-                          updateTermin(index, { slot_code: e.target.value })
-                        }
-                        className="w-full text-sm border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        {SLOT_OPTIONEN.map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    {dialog.termine.length > 1 && !dialog.editing && (
-                      <button
-                        type="button"
-                        onClick={() => removeTermin(index)}
-                        title="Termin entfernen"
-                        aria-label="Termin entfernen"
-                        className="shrink-0 rounded-md border border-slate-300 px-1.5 py-1.5 text-slate-400 hover:border-red-300 hover:text-red-600 transition"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {dialogError && (
-              <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-                <AlertCircle className="w-4 h-4" />
-                {dialogError}
-              </div>
-            )}
-
-            <div className="mt-5 flex items-center justify-end gap-2">
-              {dialog.editing && (
-                <button
-                  type="button"
-                  onClick={() => deleteReservation(dialog.editing!.id)}
-                  disabled={dialogSaving}
-                  className="mr-auto px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 text-sm font-medium hover:bg-red-100 transition disabled:opacity-60"
-                >
-                  Löschen
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={closeDialog}
-                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium hover:bg-slate-50 transition"
-              >
-                Abbrechen
-              </button>
-              <button
-                type="button"
-                onClick={saveReservation}
-                disabled={dialogSaving}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition disabled:opacity-60"
-              >
-                {dialogSaving && <Loader2 className="w-4 h-4 animate-spin" />}
-                Speichern
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Reservierungs-Dialog (Sammel-Reservierung) – State-Management liegt in
+          der eigenen Komponente ReservationDialog. */}
+      <ReservationDialog
+        open={dialog.open}
+        editingRes={dialog.editingRes}
+        datum={dialog.datum}
+        slot={dialog.slot}
+        trainerId={selectedTrainerId}
+        trainerLabel={trainer
+          ? `${trainer.vorname} ${trainer.nachname}${
+              trainer.kuerzel ? ` (${trainer.kuerzel})` : ''
+            }`.trim()
+          : '–'}
+        onClose={closeDialog}
+        onSaved={() => void loadZeitplan()}
+      />
 
       {/* Umwandlungs-Dialog */}
       {umwandlung.open && umwandlung.reservierung && (

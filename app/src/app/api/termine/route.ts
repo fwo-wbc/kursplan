@@ -114,6 +114,14 @@ interface Kurs {
   trainer_kuerzel?: string | null;
   /** true, wenn der Kurs eine aktive Trainer-Zuweisung besitzt. */
   hat_trainer?: boolean;
+  /** Reservierungscode (Welt A: reservation_code, Welt B: gruppe_code). */
+  reservation_code?: string | null;
+  /** Thema der Reservierung (Welt A: termin_reservierung.thema). */
+  thema?: string | null;
+  /** Kundenbezug (Welt A: kd_nr, Welt B: kunde). */
+  kunde?: string | null;
+  /** Reservierungsfrist als ISO-Datum (YYYY-MM-DD). */
+  frist_ende?: string | null;
 }
 
 /**
@@ -164,6 +172,8 @@ async function ladeReservierungen(fromDatum: string | null): Promise<Kurs[]> {
        tr.datum,
        tr.slot_code,
        tr.status              AS reservierung_status,
+       tr.reservation_code,
+       to_char(tr.frist_ende, 'YYYY-MM-DD') AS frist_ende,
        t.id                   AS trainer_id,
        t.vorname              AS trainer_vorname,
        t.nachname             AS trainer_nachname,
@@ -210,6 +220,10 @@ async function ladeReservierungen(fromDatum: string | null): Promise<Kurs[]> {
        tr.id::text            AS reservierung_id,
        tr.trainer_id,
        tr.kunde,
+       tr.thema,
+       tr.kd_nr               AS kd_nr,
+       tr.gruppe_code         AS reservation_code,
+       to_char(tr.frist_ende, 'YYYY-MM-DD') AS frist_ende,
        t.vorname              AS trainer_vorname,
        t.nachname             AS trainer_nachname,
        t.kuerzel              AS trainer_kuerzel,
@@ -295,6 +309,22 @@ async function ladeReservierungen(fromDatum: string | null): Promise<Kurs[]> {
       },
       trainer_kuerzel: kuerzel !== '' ? kuerzel : 'n. v.',
       hat_trainer: trainerId !== null,
+      // Hinweis: `!= null` statt `!== null`, weil fehlende Spalten einer
+      // anderen Welt (z. B. thema bei trainer_reservierung) als `undefined`
+      // ankommen – `String(undefined)` würde sonst den String "undefined"
+      // erzeugen. `!= null` deckt null UND undefined ab.
+      reservation_code:
+        row.reservation_code != null ? String(row.reservation_code) : null,
+      thema: row.thema != null ? String(row.thema) : null,
+      // Kundenbezug: Welt B liefert 'kunde' (Klartext), Welt A 'kd_nr'
+      // (Kundennummer) – beides wird unter 'kunde' durchgereicht.
+      kunde:
+        row.kunde != null
+          ? String(row.kunde)
+          : row.kd_nr != null
+            ? String(row.kd_nr)
+            : null,
+      frist_ende: row.frist_ende != null ? String(row.frist_ende) : null,
     } as Kurs;
   };
 

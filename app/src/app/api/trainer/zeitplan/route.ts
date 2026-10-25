@@ -27,6 +27,8 @@ interface KursEintrag {
 /** Vor-Reservierung innerhalb eines Tages. */
 interface ReservierungEintrag {
   id: number;
+  /** Gemeinsamer Sammel-Code (alle Termine derselben Sammel-Reservierung). */
+  reservation_code: string | null;
   slot_code: string;
   kd_nr: string;
   thema: string;
@@ -381,6 +383,7 @@ export async function GET(request: Request) {
     const reservierungResult = await query(
       `SELECT
          id,
+         reservation_code,
          to_char(datum, 'YYYY-MM-DD')      AS datum,
          slot_code,
          kd_nr,
@@ -420,6 +423,8 @@ export async function GET(request: Request) {
 
       const eintrag: ReservierungEintrag = {
         id: Number(row.id),
+        reservation_code:
+          row.reservation_code == null ? null : String(row.reservation_code),
         slot_code: slotCode,
         kd_nr: String(row.kd_nr),
         thema: String(row.thema),

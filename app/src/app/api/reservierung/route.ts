@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { query, transaction } from '@/lib/db';
 import { logEvent } from '@/lib/logger';
+import { logReservationEvent } from '@/lib/reservations';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -18,6 +19,8 @@ const STATUS_WERTE: ReservierungStatus[] = ['angeboten', 'bestaetigt'];
 /** Reservierungs-Datensatz in der API-Antwort. */
 interface Reservierung {
   id: number;
+  /** Gemeinsamer Sammel-Code; wird beim Anlegen von Mehrfach-Reservierungen generiert. */
+  reservation_code: string | null;
   trainer_id: number;
   datum: string;
   slot_code: string;
@@ -39,6 +42,8 @@ interface ReservierungBody {
   frist_ende?: unknown;
   status?: unknown;
   notiz?: unknown;
+  /** Optionaler Sammel-Code (40 Zeichen); wird generiert, wenn nicht angegeben. */
+  reservation_code?: unknown;
   /** Optionale Liste für Mehrfach-Reservierungen: [{ datum, slot_code }]. */
   termine?: unknown;
 }
@@ -100,6 +105,8 @@ function normalizeString(value: unknown): string | null {
 function mapReservierung(row: Record<string, unknown>): Reservierung {
   return {
     id: Number(row.id),
+    reservation_code:
+      row.reservation_code == null ? null : String(row.reservation_code),
     trainer_id: Number(row.trainer_id),
     datum: String(row.datum),
     slot_code: String(row.slot_code),
@@ -109,6 +116,30 @@ function mapReservierung(row: Record<string, unknown>): Reservierung {
     status: String(row.status),
     notiz: row.notiz == null ? null : String(row.notiz),
   };
+}
+
+/**
+ * Erzeugt einen eindeutigen Sammel-Code (max. 40 Zeichen). Format:
+ * "RSV-" + Base36-Zeitstempel (8) + "-" + Zufalls-Hex (8).
+ */
+function generiereReservationCode(): string {
+  const ts = Date.now().toString(36).toUpperCase().padStart(8, '0');
+  const zufall = Math.random().toString(16).slice(2, 10).toUpperCase();
+  return `RSV-${ts}-${zufall}`;
+}
+
+/**
+ * Normalisiert einen übergebenen reservation_code aus dem Body. Liefert null,
+ * wenn nicht angegeben; wirft bei ungültigen Werten.
+ */
+function validiereReservationCode(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const code = normalizeString(value);
+  if (!code) return null;
+  if (code.length > 40) {
+    throw new Error('reservation_code darf höchstens 40 Zeichen lang sein.');
+  }
+  return code;
 }
 
 /** Termin-unabhängige Stammdaten einer Reservierungs-Serie. */
@@ -274,6 +305,7 @@ export async function GET(request: Request) {
     const result = await query(
       `SELECT
          id,
+         reservation_code,
          trainer_id,
          to_char(datum, 'YYYY-MM-DD')      AS datum,
          slot_code,
@@ -350,12 +382,24 @@ export async function POST(request: Request) {
     }
   }
 
+  // Sammel-Code: übergebenen Wert verwenden, sonst neu generieren. Dadurch
+  // gehört JEDE neu angelegte Reservierung (auch Einzeltermine) einer
+  // Sammel-Gruppe an und kann im Dialog um weitere Termine erweitert werden.
+  let reservationCode: string | null;
+  try {
+    reservationCode = validiereReservationCode(body.reservation_code);
+  } catch (err: unknown) {
+    return NextResponse.json({ error: toErrorMessage(err) }, { status: 400 });
+  }
+  const effektiverCode = reservationCode ?? generiereReservationCode();
+
   const insertSql = `INSERT INTO public.termin_reservierung
-     (trainer_id, datum, slot_code, kd_nr, thema, frist_ende, status, notiz)
+     (trainer_id, datum, slot_code, kd_nr, thema, frist_ende, status, notiz, reservation_code)
    VALUES
-     ($1, $2::date, $3, $4, $5, $6::date, $7, $8)
+     ($1, $2::date, $3, $4, $5, $6::date, $7, $8, $9)
    RETURNING
      id,
+     reservation_code,
      trainer_id,
      to_char(datum, 'YYYY-MM-DD')      AS datum,
      slot_code,
@@ -378,16 +422,44 @@ export async function POST(request: Request) {
           stamm.frist_ende,
           stamm.status,
           stamm.notiz,
+          effektiverCode,
         ]);
-        ergebnisse.push(mapReservierung(res.rows[0]));
+        const neu = mapReservierung(res.rows[0]);
+        ergebnisse.push(neu);
+
+        // Audit-Log: der erste Termin einer neuen Gruppe zählt als CREATED,
+        // alle weiteren als APPOINTMENT_ADDED.
+        await logReservationEvent(
+          (sql, params) => client.query(sql, params),
+          {
+            reservation_code: effektiverCode,
+            reservation_id: neu.id,
+            action: ergebnisse.length === 1 ? 'CREATED' : 'APPOINTMENT_ADDED',
+            changed_fields: {
+              datum: neu.datum,
+              slot_code: neu.slot_code,
+              kd_nr: neu.kd_nr,
+              thema: neu.thema,
+              frist_ende: neu.frist_ende,
+              status: neu.status,
+            },
+            details:
+              ergebnisse.length === 1
+                ? `Sammel-Reservierung ${effektiverCode} mit Termin ${neu.datum} (${neu.slot_code}) angelegt.`
+                : `Weiterer Termin ${neu.datum} (${neu.slot_code}) zur Sammel-Reservierung ${effektiverCode} hinzugefügt.`,
+          }
+        );
       }
       return ergebnisse;
     });
 
     // Einzeltermin antwortet wie bisher mit einem Objekt, Mehrfachtermine mit
-    // einer Liste, damit bestehende Frontends kompatibel bleiben.
+    // einer Liste, damit bestehende Frontends kompatibel bleiben. Zusätzlich
+    // wird bei Mehrfachreservierungen der gemeinsame Code mitgeliefert.
     return NextResponse.json(
-      angelegt.length === 1 ? angelegt[0] : { reservierungen: angelegt },
+      angelegt.length === 1
+        ? angelegt[0]
+        : { reservierungen: angelegt, reservation_code: effektiverCode },
       { status: 201 }
     );
   } catch (err: unknown) {
@@ -446,6 +518,7 @@ export async function PUT(request: Request) {
        WHERE id = $9
        RETURNING
          id,
+         reservation_code,
          trainer_id,
          to_char(datum, 'YYYY-MM-DD')      AS datum,
          slot_code,
