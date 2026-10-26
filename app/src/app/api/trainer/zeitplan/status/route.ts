@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import {
+  ladeTerminKontext,
+  parsiereTerminId,
+  triggerChangeEvent,
+} from '@/lib/notifications';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -59,6 +64,18 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    // Vorher-Zustand der Zuweisung lesen, um vorher/nachher im Event-Payload
+    // sauber abzubilden (Trainer und bisheriger Status vor dem UPDATE).
+    const vorherResult = await query(
+      `SELECT trainer_id, status
+       FROM public.trainer_zuweisung
+       WHERE date_id = $1::text`,
+      [dateId]
+    );
+    const vorher = vorherResult.rows[0] as
+      | { trainer_id: number | null; status: string | null }
+      | undefined;
+
     const result = await query(
       `UPDATE public.trainer_zuweisung
        SET status = $2::text,
@@ -73,6 +90,26 @@ export async function PATCH(request: Request) {
         { error: 'Keine Zuweisung für diese date_id gefunden.' },
         { status: 404 }
       );
+    }
+
+    // Event-Notification an n8n (non-blocking): Terminstatus wurde manuell
+    // geändert ('bestätigt' / 'abgesagt' / 'ausgeschrieben' / …).
+    const terminKontext = await ladeTerminKontext([dateId]);
+    const kontext = terminKontext.get(dateId);
+    const terminId = kontext?.termin_id ?? parsiereTerminId(dateId);
+    if (terminId !== null) {
+      triggerChangeEvent('TERMIN_STATUS_GEAENDERT', {
+        termin_id: terminId,
+        kurs_titel: kontext?.kurs_titel ?? 'Reservierung',
+        vorher: {
+          trainer_id: vorher?.trainer_id ?? null,
+          status: vorher?.status ?? null,
+        },
+        nachher: {
+          trainer_id: vorher?.trainer_id ?? null,
+          status,
+        },
+      });
     }
 
     return NextResponse.json(

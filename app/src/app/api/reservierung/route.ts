@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { query, transaction } from '@/lib/db';
 import { logEvent } from '@/lib/logger';
 import { logReservationEvent } from '@/lib/reservations';
+import { triggerChangeEvent } from '@/lib/notifications';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -504,6 +505,29 @@ export async function PUT(request: Request) {
   }
 
   try {
+    // Vorher-Zustand des Termins lesen, um vorher/nachher im Event-Payload
+    // sauber abzubilden (Trainer, Datum, Slot, Status vor dem UPDATE).
+    const vorherResult = await query(
+      `SELECT
+         trainer_id,
+         to_char(datum, 'YYYY-MM-DD')      AS datum,
+         slot_code,
+         status,
+         thema
+       FROM public.termin_reservierung
+       WHERE id = $1`,
+      [id]
+    );
+    const vorher = vorherResult.rows[0] as
+      | {
+          trainer_id: number | null;
+          datum: string | null;
+          slot_code: string | null;
+          status: string | null;
+          thema: string | null;
+        }
+      | undefined;
+
     const result = await query(
       `UPDATE public.termin_reservierung
        SET trainer_id = $1,
@@ -545,6 +569,47 @@ export async function PUT(request: Request) {
         { error: 'Reservierung nicht gefunden.' },
         { status: 404 }
       );
+    }
+
+    // Event-Notifications an n8n (non-blocking): Für jeden geänderten Aspekt
+    // des Termins wird ein einheitliches Payload gesendet. Der Kurs-Titel ist
+    // das Reservierungs-Thema, die termin_id die numerische Reservierungs-ID.
+    const kursTitel = felder.thema ?? vorher?.thema ?? 'Reservierung';
+    const zeitGeaendert =
+      String(vorher?.datum ?? '') !== felder.datum ||
+      String(vorher?.slot_code ?? '') !== felder.slot_code;
+    const statusGeaendert = String(vorher?.status ?? '') !== felder.status;
+    const trainerGeaendert = vorher?.trainer_id !== felder.trainer_id;
+
+    if (zeitGeaendert) {
+      triggerChangeEvent('TERMIN_ZEIT_GEAENDERT', {
+        termin_id: id,
+        kurs_titel: kursTitel,
+        vorher: {
+          datum: vorher?.datum ?? null,
+          slot_code: vorher?.slot_code ?? null,
+        },
+        nachher: {
+          datum: felder.datum,
+          slot_code: felder.slot_code,
+        },
+      });
+    }
+    if (statusGeaendert) {
+      triggerChangeEvent('TERMIN_STATUS_GEAENDERT', {
+        termin_id: id,
+        kurs_titel: kursTitel,
+        vorher: { status: vorher?.status ?? null },
+        nachher: { status: felder.status },
+      });
+    }
+    if (trainerGeaendert) {
+      triggerChangeEvent('TRAINER_ZUGEWIESEN', {
+        termin_id: id,
+        kurs_titel: kursTitel,
+        vorher: { trainer_id: vorher?.trainer_id ?? null },
+        nachher: { trainer_id: felder.trainer_id },
+      });
     }
 
     return NextResponse.json(mapReservierung(result.rows[0]), { status: 200 });

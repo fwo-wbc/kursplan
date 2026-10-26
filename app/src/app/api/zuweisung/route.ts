@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import {
+  ladeTerminKontext,
+  parsiereTerminId,
+  triggerChangeEvent,
+} from '@/lib/notifications';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -382,6 +387,30 @@ export async function POST(request: Request) {
       if (row.kuerzel) alteKuerzelZuDateIds[row.date_id] = row.kuerzel;
     }
 
+    // Vorher-Zustand ALLER bestehenden Zuweisungen der betroffenen Termine
+    // (unabhängig vom neuen Trainer) für die Event-Notification erfassen.
+    // Leseoperation direkt vor dem Upsert, damit vorher/nachher korrekt sind.
+    const vorherResult = await query(
+      `SELECT tz.date_id::text AS date_id, tz.trainer_id, tz.status
+       FROM public.trainer_zuweisung tz
+       WHERE tz.date_id = ANY($1::text[])`,
+      [dateIds]
+    );
+    const vorherZuweisungen = new Map<
+      string,
+      { trainer_id: number | null; status: string | null }
+    >();
+    for (const row of vorherResult.rows as Array<{
+      date_id: string;
+      trainer_id: number | null;
+      status: string | null;
+    }>) {
+      vorherZuweisungen.set(String(row.date_id), {
+        trainer_id: row.trainer_id,
+        status: row.status,
+      });
+    }
+
     // Zuerst ggf. vorhandene ANDERE Trainer-Zuweisungen derselben date_ids
     // entfernen. Der bisherige UPSERT hat nur Paare (date_id, trainer_id)
     // aktualisiert und ließ beim Trainerwechsel die alte Zeile stehen
@@ -434,6 +463,29 @@ export async function POST(request: Request) {
     // Der Request wird nicht blockiert; Fehler werden intern geloggt.
     if (statusValue !== 'keine Zuordnung') {
       void notifyTrainerSync(trainerIdValue as number, dateIds, alteKuerzelZuDateIds);
+    }
+
+    // Event-Notification an n8n (non-blocking): Trainer-Zuweisung / Wechsel
+    // je Termin melden. Pro date_id wird ein einheitliches Payload gesendet.
+    const terminKontext = await ladeTerminKontext(dateIds);
+    for (const dateId of dateIds) {
+      const kontext = terminKontext.get(dateId);
+      const terminId = kontext?.termin_id ?? parsiereTerminId(dateId);
+      if (terminId === null) continue;
+      const vorher = vorherZuweisungen.get(dateId);
+      triggerChangeEvent('TRAINER_ZUGEWIESEN', {
+        termin_id: terminId,
+        kurs_titel: kontext?.kurs_titel ?? 'Reservierung',
+        vorher: {
+          trainer_id: vorher?.trainer_id ?? null,
+          trainer_kuerzel: alteKuerzelZuDateIds[dateId] ?? null,
+          status: vorher?.status ?? null,
+        },
+        nachher: {
+          trainer_id: trainerIdValue as number,
+          status: statusValue,
+        },
+      });
     }
 
     return NextResponse.json(

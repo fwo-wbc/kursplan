@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { logEvent } from '@/lib/logger';
+import {
+  ladeTerminKontext,
+  parsiereTerminId,
+  triggerChangeEvent,
+} from '@/lib/notifications';
 
 // ---------------------------------------------------------------------------
 // Typsicherheit
@@ -335,6 +340,30 @@ export async function PATCH(request: Request) {
       }
     }
 
+    // Vorher-Zustand ALLER bestehenden Zuweisungen der betroffenen Termine
+    // (unabhängig vom neuen Trainer/Status) für die Event-Notification
+    // erfassen. Leseoperation direkt vor dem Upsert.
+    const vorherResult = await query(
+      `SELECT tz.date_id::text AS date_id, tz.trainer_id, tz.status
+       FROM public.trainer_zuweisung tz
+       WHERE tz.date_id = ANY($1::text[])`,
+      [dateIds]
+    );
+    const vorherZuweisungen = new Map<
+      string,
+      { trainer_id: number | null; status: string | null }
+    >();
+    for (const row of vorherResult.rows as Array<{
+      date_id: string;
+      trainer_id: number | null;
+      status: string | null;
+    }>) {
+      vorherZuweisungen.set(String(row.date_id), {
+        trainer_id: row.trainer_id,
+        status: row.status,
+      });
+    }
+
     if (trainerIdValue !== null) {
       // Trainerwechsel: vorhandene ANDERE Trainer-Zuweisungen derselben
       // date_ids entfernen, damit pro Termin nur eine aktive zuweisung steht.
@@ -391,6 +420,39 @@ export async function PATCH(request: Request) {
     // damit der Workflow den Trainersync nicht erneut anstößt.
     if (trainerIdValue !== null && statusValue !== 'keine Zuordnung') {
       void notifyTrainerSync(trainerIdValue, dateIds, alteKuerzelZuDateIds);
+    }
+
+    // Event-Notification an n8n (non-blocking): Für jeden betroffenen Termin
+    // wird der geänderte Zustand als einheitliches Payload gemeldet. Lag ein
+    // Trainerwechsel vor, erscheint 'TRAINER_ZUGEWIESEN'; andernfalls (nur
+    // Status-Änderung inkl. Aufhebung) 'TERMIN_STATUS_GEAENDERT'.
+    const terminKontext = await ladeTerminKontext(dateIds);
+    for (const dateId of dateIds) {
+      const kontext = terminKontext.get(dateId);
+      const terminId = kontext?.termin_id ?? parsiereTerminId(dateId);
+      if (terminId === null) continue;
+      const vorher = vorherZuweisungen.get(dateId);
+
+      const effektiverTrainerId = trainerIdValue ?? vorher?.trainer_id ?? null;
+      const effektiverStatus = statusValue ?? vorher?.status ?? null;
+      const trainerGeaendert =
+        trainerIdValue !== null && vorher?.trainer_id !== trainerIdValue;
+
+      triggerChangeEvent(
+        trainerGeaendert ? 'TRAINER_ZUGEWIESEN' : 'TERMIN_STATUS_GEAENDERT',
+        {
+          termin_id: terminId,
+          kurs_titel: kontext?.kurs_titel ?? 'Reservierung',
+          vorher: {
+            trainer_id: vorher?.trainer_id ?? null,
+            status: vorher?.status ?? null,
+          },
+          nachher: {
+            trainer_id: effektiverTrainerId,
+            status: effektiverStatus,
+          },
+        }
+      );
     }
 
     return NextResponse.json(

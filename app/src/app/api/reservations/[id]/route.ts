@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { query, transaction } from '@/lib/db';
 import { logEvent } from '@/lib/logger';
+import { triggerChangeEvent } from '@/lib/notifications';
 import {
   RESERVIERUNG_SELECT,
   STATUS_WERTE,
@@ -80,7 +81,7 @@ export async function PUT(
       );
 
       if (bestand.rowCount === 0) {
-        return { status: 404 };
+        return { status: 404, changed: {}, zeile: {}, effektiverStatus: '' };
       }
 
       const zeile = bestand.rows[0];
@@ -156,7 +157,7 @@ export async function PUT(
         );
       }
 
-      return { status: 200 };
+      return { status: 200, changed, zeile, effektiverStatus };
     });
 
     if (ergebnis.status === 404) {
@@ -166,6 +167,8 @@ export async function PUT(
       );
     }
 
+    // NACH dem Update: Termin erneut laden, damit auch der frisch geänderte
+    // Trainer/Kurs-Titel für die Benachrichtigung zur Verfügung steht.
     const res = await query(
       `SELECT ${RESERVIERUNG_SELECT}
        FROM public.termin_reservierung r
@@ -173,6 +176,52 @@ export async function PUT(
        WHERE r.id = $1`,
       [id]
     );
+
+    const reservierung = mapReservierung(res.rows[0]);
+    const changed: Record<string, unknown> = ergebnis.changed ?? {};
+    const zeile: Record<string, unknown> = ergebnis.zeile ?? {};
+    const effektiverStatus = String(ergebnis.effektiverStatus ?? zeile.status ?? '');
+
+    // Event-Notifications an n8n (non-blocking): Für jeden geänderten Aspekt
+    // des Termins wird gemäß dem einheitlichen Payload-Format ein Event mit
+    // vorher/nachher gesendet. termin_id ist die Reservierungs-ID.
+    const kursTitel = reservierung.thema ?? 'Reservierung';
+    const zeitaenderung = changed.datum ?? changed.slot_code;
+    const statusAenderung = changed.status;
+    const trainerAenderung =
+      typeof zeile.trainer_id === 'number' &&
+      reservierung.trainer_id !== Number(zeile.trainer_id);
+
+    if (zeitaenderung) {
+      triggerChangeEvent('TERMIN_ZEIT_GEAENDERT', {
+        termin_id: id,
+        kurs_titel: kursTitel,
+        vorher: {
+          datum: String(zeile.datum),
+          slot_code: String(zeile.slot_code),
+        },
+        nachher: {
+          datum: termin.datum,
+          slot_code: termin.slot_code,
+        },
+      });
+    }
+    if (statusAenderung) {
+      triggerChangeEvent('TERMIN_STATUS_GEAENDERT', {
+        termin_id: id,
+        kurs_titel: kursTitel,
+        vorher: { status: String(zeile.status) },
+        nachher: { status: effektiverStatus },
+      });
+    }
+    if (trainerAenderung) {
+      triggerChangeEvent('TRAINER_ZUGEWIESEN', {
+        termin_id: id,
+        kurs_titel: kursTitel,
+        vorher: { trainer_id: zeile.trainer_id ?? null },
+        nachher: { trainer_id: reservierung.trainer_id },
+      });
+    }
 
     return NextResponse.json(
       { reservierung: mapReservierung(res.rows[0]) },
