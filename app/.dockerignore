@@ -1,0 +1,27 @@
+# ============================================================
+# .dockerignore – verhindert, dass Secrets oder Build-Artefakte
+# in den Docker-Build-Kontext (und damit ins Image) gelangen.
+# ============================================================
+
+# Abhängigkeiten & Build-Artefakte
+node_modules
+.next
+out
+build
+*.tsbuildinfo
+next-env.d.ts
+
+# Umgebungsvariablen: NIEMALS in den Build-Kontext!
+# Enthält .env, .env.local, .env.production, .env.*
+.env*
+
+# Versionierung / Tools
+.git
+.gitignore
+.dockerignore
+
+# Logs & Editor-Artefakte
+*.log
+npm-debug.log*
+.DS_Store
+.vercel

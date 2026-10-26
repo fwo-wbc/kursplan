@@ -2,6 +2,8 @@
 .env
 .env.local
 .env*.local
+.env.production
+.env.development
 
 # Zugangsdaten / Secrets (niemals einchecken)
 edoobox_token.txt
