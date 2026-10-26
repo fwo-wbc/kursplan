@@ -242,6 +242,12 @@ function istAktiverStatus(status: string | null): boolean {
   return s === 'ausgeschrieben' || s === 'unter vorbehalt' || s === 'bestätigt';
 }
 
+/** true, wenn der Zuweisungsstatus „abgesagt“ bedeutet – Grundlage für den
+ *  Filter „Abgesagte Kurse ausblenden“ (Vorbild: Monatsübersicht). */
+function istAbgesagt(status: string | null): boolean {
+  return statusLabel(status).toLowerCase() === 'abgesagt';
+}
+
 /** true, wenn der Zuweisungsstatus einer Bestätigung entspricht. */
 function istBestaetigt(status: string | null): boolean {
   return statusLabel(status).toLowerCase() === 'bestätigt';
@@ -454,6 +460,12 @@ function VerfuegbarkeitContent() {
   const [trainers, setTrainers] = useState<Trainer[]>([]);
   const [selectedTrainerId, setSelectedTrainerId] = useState<string>(urlTrainerId);
 
+  // Standard-Trainer (localStorage): Ist „Auswahl als Standard festlegen“
+  // aktiviert, wird die zuletzt gewählte Dozentenauswahl beim erneuten Aufruf
+  // der Trainerverfügbarkeiten automatisch vorausgewählt.
+  const [standardTrainerAktiv, setStandardTrainerAktiv] = useState<boolean>(false);
+  const [standardTrainerId, setStandardTrainerId] = useState<string>('');
+
   // Wochenanker (Montag der ersten geladenen Woche) für die Wochenliste.
   // Initial: 4 Wochen vor der aktuellen Woche, damit die aktuelle Woche
   // innerhalb des initialen Fensters (WOCHEN_INITIAL) liegt.
@@ -553,14 +565,71 @@ function VerfuegbarkeitContent() {
     }
   }, []);
 
+  // Abgesagte Kurse aus Wochenliste und Tagesliste ausblenden (analog zum
+  // Optionsfeld in der Monatsübersicht). Die Einstellung wird in localStorage
+  // persistiert und nach einem Refresh wieder hergestellt. Der gespeicherte
+  // Wert wird erst NACH dem Mounting übernommen, damit Server- und Client-
+  // Render identisch starten und kein Hydration-Mismatch entsteht (analog
+  // zum „Wochenenden ausblenden“-Muster).
+  const [abgesagteAusblenden, setAbgesagteAusblenden] = useState<boolean>(false);
+
+  // Persistenz: einmalig beim Mount den gespeicherten Wert aus localStorage laden.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const gespeichert = window.localStorage.getItem(
+        'verfuegbarkeit:abgesagteAusblenden'
+      );
+      if (gespeichert !== null) {
+        setAbgesagteAusblenden(gespeichert === 'true');
+      }
+    } catch {
+      // localStorage nicht verfügbar (z. B. private Modi) – Standard bleibt inaktiv.
+    }
+  }, []);
+
+  // Persistenz des Standard-Trainers: einmalig beim Mount die gespeicherten
+  // Werte aus localStorage laden (analog zu „Wochenenden ausblenden“ – erst
+  // NACH dem Mounting, damit Server- und Client-Render identisch starten).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const aktiv = window.localStorage.getItem(
+        'verfuegbarkeit:standardTrainerAktiv'
+      );
+      if (aktiv !== null) {
+        setStandardTrainerAktiv(aktiv === 'true');
+      }
+      const id = window.localStorage.getItem('verfuegbarkeit:standardTrainerId');
+      if (id !== null) {
+        setStandardTrainerId(id);
+      }
+    } catch {
+      // localStorage nicht verfügbar (z. B. private Modi) – Standard bleibt inaktiv.
+    }
+  }, []);
+
   // Ansichts-Steuerung: 'monat' (Wochenliste) oder 'liste' (fortlaufende
   // Tagesliste nach Vorbild der Dozenten-Planung). Die frühere separate
   // Einzel-Tagesansicht ('tag') wurde entfernt – ein Klick auf eine
   // Tageskachel wechselt direkt in die Tagesliste.
   const [ansicht, setAnsicht] = useState<'monat' | 'liste'>('monat');
-
   const [avail, setAvail] = useState<Record<string, DayState>>({});
   const [kurse, setKurse] = useState<Record<string, KursRow[]>>({});
+
+  // Gefilterter Kursbestand für die Anzeige („Abgesagte Kurse ausblenden“):
+  // Abgesagte Kursangebote gelten für Wochenliste UND Tagesliste als nicht
+  // vorhanden. Die Rücknahme-Sperre (slotBelegtDurchKurse) prüft ohnehin
+  // ausschließlich aktive Status und bleibt dadurch unberührt.
+  const sichtbareKurseMap = useMemo<Record<string, KursRow[]>>(() => {
+    if (!abgesagteAusblenden) return kurse;
+    const map: Record<string, KursRow[]> = {};
+    for (const [datum, liste] of Object.entries(kurse)) {
+      map[datum] = liste.filter((k) => !istAbgesagt(k.zuweisung_status));
+    }
+    return map;
+  }, [kurse, abgesagteAusblenden]);
+
   const [reservierungen, setReservierungen] = useState<
     Record<string, ReservierungRow[]>
   >({});
@@ -632,16 +701,51 @@ function VerfuegbarkeitContent() {
         if (!active) return;
         setTrainers(liste);
         if (liste.length > 0) {
-          const urlId = searchParams.get('trainer_id');
-          const existiert = urlId && liste.some((t) => String(t.id) === urlId);
-          if (existiert) {
-            setSelectedTrainerId(urlId);
-          } else if (selectedTrainerId === '') {
-            const erste = String(liste[0].id);
-            setSelectedTrainerId(erste);
+          // Standard-Trainer aus localStorage (falls „Auswahl als Standard
+          // festlegen“ aktiviert ist). Direktes synchrones Lesen, damit keine
+          // Race-Condition mit dem asynchronen State-Laden entsteht.
+          let standardId = '';
+          try {
+            const aktiv = window.localStorage.getItem(
+              'verfuegbarkeit:standardTrainerAktiv'
+            );
+            if (aktiv === 'true') {
+              standardId =
+                window.localStorage.getItem('verfuegbarkeit:standardTrainerId') ??
+                '';
+            }
+          } catch {
+            // localStorage nicht verfügbar – Standard bleibt unberücksichtigt.
+          }
+          const standardExistiert =
+            standardId && liste.some((t) => String(t.id) === standardId);
+
+          if (standardExistiert) {
+            // Der aktive Standard-Dozent hat beim Seitenaufruf (auch bei einem
+            // Refresh/F5) IMMER Vorrang – unabhängig von einem ?trainer_id-
+            // Parameter, den die letzte Session per Dozenten-Wechsel hinterlassen
+            // hat. Die URL wird anschließend zur Konsistenz auf den Standard
+            // ausgerichtet (router.replace statt router.push, kein History-Eintrag).
+            setSelectedTrainerId(standardId);
             const params = new URLSearchParams(searchParams.toString());
-            params.set('trainer_id', erste);
+            params.set('trainer_id', standardId);
             router.replace(`?${params.toString()}`, { scroll: false });
+          } else {
+            // Kein aktiver Standard: Ein expliziter URL-Parameter
+            // (?trainer_id=…) hat dann Vorrang, sonst der erste Dozent als
+            // Fallback.
+            const urlId = searchParams.get('trainer_id');
+            const urlExistiert =
+              urlId && liste.some((t) => String(t.id) === urlId);
+            if (urlExistiert) {
+              setSelectedTrainerId(urlId);
+            } else if (selectedTrainerId === '') {
+              const erste = String(liste[0].id);
+              setSelectedTrainerId(erste);
+              const params = new URLSearchParams(searchParams.toString());
+              params.set('trainer_id', erste);
+              router.replace(`?${params.toString()}`, { scroll: false });
+            }
           }
         }
       } catch {
@@ -998,10 +1102,12 @@ function VerfuegbarkeitContent() {
 
   const toggleVm = (datum: string) => {
     const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
-    // Rücknahme sperren, wenn im VM-Slot (09:00–13:00) bereits Kurse liegen.
+    // Rücknahme sperren, wenn im VM-Slot (09:00–13:00) bereits Kurse ODER
+    // Reservierungen (Firmenanfragen) liegen.
     if (
       aktuell.vm &&
-      slotBelegtDurchKurse(kurse[datum] ?? [], '09:00', '13:00')
+      (slotBelegtDurchKurse(kurse[datum] ?? [], '09:00', '13:00') ||
+        slotBelegt(reservierungen[datum] ?? [], '09:00', '13:00'))
     ) {
       return;
     }
@@ -1010,10 +1116,12 @@ function VerfuegbarkeitContent() {
 
   const toggleNm = (datum: string) => {
     const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
-    // Rücknahme sperren, wenn im NM-Slot (13:00–17:00) bereits Kurse liegen.
+    // Rücknahme sperren, wenn im NM-Slot (13:00–17:00) bereits Kurse ODER
+    // Reservierungen (Firmenanfragen) liegen.
     if (
       aktuell.nm &&
-      slotBelegtDurchKurse(kurse[datum] ?? [], '13:00', '17:00')
+      (slotBelegtDurchKurse(kurse[datum] ?? [], '13:00', '17:00') ||
+        slotBelegt(reservierungen[datum] ?? [], '13:00', '17:00'))
     ) {
       return;
     }
@@ -1023,11 +1131,17 @@ function VerfuegbarkeitContent() {
   const toggleGanzerTag = (datum: string) => {
     const aktuell = availRef.current[datum] ?? { vm: false, nm: false };
     const istGanztags = aktuell.vm && aktuell.nm;
-    // Ganztags-Rücknahme nur erlauben, wenn kein Slot durch Kurse belegt ist.
+    // Ganztags-Rücknahme nur erlauben, wenn kein Slot durch Kurse ODER
+    // Reservierungen (Firmenanfragen) belegt ist.
     if (istGanztags) {
       const tagesKurse = kurse[datum] ?? [];
-      const vmGesperrt = slotBelegtDurchKurse(tagesKurse, '09:00', '13:00');
-      const nmGesperrt = slotBelegtDurchKurse(tagesKurse, '13:00', '17:00');
+      const tagesReservierungen = reservierungen[datum] ?? [];
+      const vmGesperrt =
+        slotBelegtDurchKurse(tagesKurse, '09:00', '13:00') ||
+        slotBelegt(tagesReservierungen, '09:00', '13:00');
+      const nmGesperrt =
+        slotBelegtDurchKurse(tagesKurse, '13:00', '17:00') ||
+        slotBelegt(tagesReservierungen, '13:00', '17:00');
       if (vmGesperrt || nmGesperrt) return;
     }
     applyDay(datum, { vm: !istGanztags, nm: !istGanztags });
@@ -1457,16 +1571,23 @@ function VerfuegbarkeitContent() {
       }
     }
 
-    // KW-Spans innerhalb eines Monats: eine KW wird pro Monat separat verbunden.
+    // KW-Spans rein nach ISO-Kalenderwoche (Montag–Sonntag), UNABHÄNGIG vom
+    // Monatswechsel: Die Tagesliste ist lückenlos chronologisch und startet
+    // immer an einem Montag (Wochenanker-Invariante), daher beginnt jede neue
+    // Kalenderwoche exakt an einem Montag (isoWochentag === 0). Eine KW, die
+    // über einen Monatswechsel läuft (z. B. KW 44: Mo. 26.10. bis So. 01.11.),
+    // bleibt dadurch EIN zusammenhängender Block – die Zelle „44“ wird nur
+    // einmal gerendert und spannt über alle 7 Tage der Woche.
     const kwRowSpan: number[] = new Array<number>(n).fill(1);
     const istKwStart: boolean[] = new Array<boolean>(n).fill(false);
     for (let i = 0; i < n; i++) {
-      const key = `${monatKeys[i]}-${kwKeys[i]}`;
-      const prevKey = i > 0 ? `${monatKeys[i - 1]}-${kwKeys[i - 1]}` : null;
-      if (i === 0 || key !== prevKey) {
+      if (i === 0 || isoWochentag(tageZeilen[i]) === 0) {
         istKwStart[i] = true;
-        let j = i;
-        while (j < n && `${monatKeys[j]}-${kwKeys[j]}` === key) j += 1;
+        // j startet beim Folgetag (i + 1), da tageZeilen[i] selbst der Montag
+        // ist – so läuft die Schleife bis zum nächsten Montag (exklusiv) und
+        // der rowSpan umfasst exakt die 7 Tage der Kalenderwoche.
+        let j = i + 1;
+        while (j < n && isoWochentag(tageZeilen[j]) !== 0) j += 1;
         for (let k = i; k < j; k += 1) kwRowSpan[k] = j - i;
       }
     }
@@ -1708,7 +1829,9 @@ function VerfuegbarkeitContent() {
   const renderWochenTag = (datum: Date) => {
     const datumStr = toDateStr(datum);
     const zustand = avail[datumStr] ?? { vm: false, nm: false };
-    const tagesKurse = kurse[datumStr] ?? [];
+    // Anzeige-Kurse (gefiltert): abgesagte Kurse werden bei aktivem
+    // „Abgesagte Kurse ausblenden“ ausgeblendet.
+    const tagesKurse = sichtbareKurseMap[datumStr] ?? [];
     const tagesReservierungen = reservierungen[datumStr] ?? [];
     // Standard-Slots für Reservierungen: Slot 1 = 09:00–13:00, Slot 2 = 13:00–17:00.
     const slot1Belegt = slotBelegt(tagesReservierungen, '09:00', '13:00');
@@ -1721,9 +1844,12 @@ function VerfuegbarkeitContent() {
     const frei = zustand.vm && zustand.nm;
     const teilweise = zustand.vm !== zustand.nm;
     // Rücknahme-Sperre: VM/NM darf nicht mehr entfernt werden, wenn in diesem
-    // Slot bereits aktive Kurse zugewiesen sind (09:00–13:00 bzw. 13:00–17:00).
-    const vmGesperrt = slotBelegtDurchKurse(tagesKurse, '09:00', '13:00');
-    const nmGesperrt = slotBelegtDurchKurse(tagesKurse, '13:00', '17:00');
+    // Slot bereits aktive Kurse zugewiesen sind (09:00–13:00 bzw. 13:00–17:00)
+    // oder eine Reservierung (Firmenanfrage) den Zeitabschnitt belegt.
+    const vmGesperrt =
+      slotBelegtDurchKurse(tagesKurse, '09:00', '13:00') || slot1Belegt;
+    const nmGesperrt =
+      slotBelegtDurchKurse(tagesKurse, '13:00', '17:00') || slot2Belegt;
 
     // Kurse nach zeitlicher Überschneidung gruppieren (Start-/Endzeit).
     const sortierteKurse = [...tagesKurse].sort((a, b) =>
@@ -1766,7 +1892,7 @@ function VerfuegbarkeitContent() {
     return (
       <div
         key={datumStr}
-        className={`group flex flex-col rounded-lg p-1 min-h-[96px] overflow-hidden transition ${
+        className={`group relative flex flex-col rounded-lg p-1 min-h-[96px] transition ${
           feiertag
             ? 'bg-purple-50 text-purple-700 border border-purple-300'
             : wochenende
@@ -1778,6 +1904,17 @@ function VerfuegbarkeitContent() {
                   : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
         } ${istHeute ? 'ring-1 ring-blue-300' : ''}`}
       >
+        {/* Monatskürzel-Badge: zentriert auf der oberen Rahmenkante des
+            Tages-Containers – nur für Überhangtage aus Vor-/Folgemonat. */}
+        {monatsId(datum) !== aktiverMonat && (
+          <span
+            title={`${MONATSNAMEN[datum.getMonth()]} ${datum.getFullYear()}`}
+            className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-white border border-purple-200 text-purple-700 shadow-sm leading-none"
+          >
+            {MONATSNAMEN[datum.getMonth()].slice(0, 3)}
+          </span>
+        )}
+
         {/* Datumszeile = Ganztags-Toggle */}
         <button
           type="button"
@@ -1785,13 +1922,16 @@ function VerfuegbarkeitContent() {
             e.stopPropagation();
             toggleGanzerTag(datumStr);
           }}
+          disabled={frei && (vmGesperrt || nmGesperrt)}
           title={
             feiertag
               ? `Feiertag: ${feiertagLabel(feiertag)} – Klicken: ganzen Tag verfügbar/nicht verfügbar`
-              : 'Klicken: ganzen Tag verfügbar/nicht verfügbar'
+              : frei && (vmGesperrt || nmGesperrt)
+                ? 'Ganztags-Rücknahme gesperrt: Slots durch Kurse oder Reservierungen belegt'
+                : 'Klicken: ganzen Tag verfügbar/nicht verfügbar'
           }
           aria-pressed={frei}
-          className={`relative flex items-center justify-between gap-1 rounded px-1 py-0.5 text-[10px] sm:text-xs font-semibold transition ${
+          className={`relative flex items-center justify-between gap-1 rounded px-1 py-0.5 text-[10px] sm:text-xs font-semibold transition disabled:cursor-not-allowed ${
             feiertag
               ? 'text-purple-700 hover:bg-purple-100'
               : frei
@@ -1803,16 +1943,6 @@ function VerfuegbarkeitContent() {
         >
           <span className="leading-none whitespace-nowrap shrink-0">
             {formatTageskopf(datum)}
-            {/* Monatskürzel NUR für Tage, die NICHT zum ausgewählten
-                Ansichts-Monat gehören (Überhangtage aus Vor-/Folgemonat). */}
-            {monatsId(datum) !== aktiverMonat && (
-              <span
-                title={`${MONATSNAMEN[datum.getMonth()]} ${datum.getFullYear()}`}
-                className="absolute left-1/2 -translate-x-1/2 text-[8px] sm:text-[9px] font-bold text-blue-700"
-              >
-                {MONATSNAMEN[datum.getMonth()].slice(0, 3)}
-              </span>
-            )}
             {echterKonflikt && (
               <span
                 title="Terminkonflikt: Doppel-Bestätigung"
@@ -1821,7 +1951,7 @@ function VerfuegbarkeitContent() {
               />
             )}
           </span>
-          <span className="text-[8px] sm:text-[9px] leading-tight font-normal min-w-0 text-right">
+          <span className="flex-1 min-w-0 truncate text-[8px] sm:text-[9px] leading-tight font-normal text-right">
             {feiertag
               ? feiertagLabel(feiertag)
               : frei
@@ -1858,7 +1988,7 @@ function VerfuegbarkeitContent() {
             aria-pressed={zustand.vm}
             title={
               vmGesperrt && zustand.vm
-                ? 'Vormittag durch Kurse belegt – Rücknahme gesperrt'
+                ? 'Vormittag durch Kurs/Reservierung belegt – Rücknahme gesperrt'
                 : 'Vormittag verfügbar/nicht verfügbar'
             }
             className={`flex-1 min-h-[20px] rounded text-[9px] sm:text-[10px] font-medium transition flex items-center justify-center border disabled:cursor-not-allowed ${
@@ -1879,7 +2009,7 @@ function VerfuegbarkeitContent() {
             aria-pressed={zustand.nm}
             title={
               nmGesperrt && zustand.nm
-                ? 'Nachmittag durch Kurse belegt – Rücknahme gesperrt'
+                ? 'Nachmittag durch Kurs/Reservierung belegt – Rücknahme gesperrt'
                 : 'Nachmittag verfügbar/nicht verfügbar'
             }
             className={`flex-1 min-h-[20px] rounded text-[9px] sm:text-[10px] font-medium transition flex items-center justify-center border disabled:cursor-not-allowed ${
@@ -2152,7 +2282,9 @@ function VerfuegbarkeitContent() {
   const renderTagesZeile = (datum: Date, index: number) => {
     const datumStr = toDateStr(datum);
     const zustand = avail[datumStr] ?? { vm: false, nm: false };
-    const tagesKurse = kurse[datumStr] ?? [];
+    // Anzeige-Kurse (gefiltert): abgesagte Kurse werden bei aktivem
+    // „Abgesagte Kurse ausblenden“ ausgeblendet.
+    const tagesKurse = sichtbareKurseMap[datumStr] ?? [];
     const tagesReservierungen = reservierungen[datumStr] ?? [];
     const meta = tagesMeta[index] ?? {
       monatLabel: null,
@@ -2170,9 +2302,14 @@ function VerfuegbarkeitContent() {
     const frei = zustand.vm && zustand.nm;
     const teilweise = zustand.vm !== zustand.nm;
     // Rücknahme-Sperre: VM/NM darf nicht mehr entfernt werden, wenn in diesem
-    // Slot bereits aktive Kurse zugewiesen sind (09:00–13:00 bzw. 13:00–17:00).
-    const vmGesperrt = slotBelegtDurchKurse(tagesKurse, '09:00', '13:00');
-    const nmGesperrt = slotBelegtDurchKurse(tagesKurse, '13:00', '17:00');
+    // Slot bereits aktive Kurse zugewiesen sind (09:00–13:00 bzw. 13:00–17:00)
+    // oder eine Reservierung (Firmenanfrage) den Zeitabschnitt belegt.
+    const slot1Belegt = slotBelegt(tagesReservierungen, '09:00', '13:00');
+    const slot2Belegt = slotBelegt(tagesReservierungen, '13:00', '17:00');
+    const vmGesperrt =
+      slotBelegtDurchKurse(tagesKurse, '09:00', '13:00') || slot1Belegt;
+    const nmGesperrt =
+      slotBelegtDurchKurse(tagesKurse, '13:00', '17:00') || slot2Belegt;
 
     // Kurse nach Startzeit sortieren (sauber untereinander).
     const sortierteKurse = [...tagesKurse].sort((a, b) =>
@@ -2181,9 +2318,13 @@ function VerfuegbarkeitContent() {
       )
     );
 
-    // Durchgehende Tagesbänderung (wie Dozenten-Planung): heller Blauwechsel
-    // über den globalen Zeilenindex; Feiertage und Wochenenden neutral.
-    const bgClass = index % 2 === 0 ? 'bg-blue-50' : 'bg-blue-100';
+    // Wochenbasierte Tagesbänderung: Der Farbwechsel erfolgt ausschließlich am
+    // Wochenübergang (Sonntag → Montag), nicht taggenau. Da die Tagesliste
+    // lückenlos ab einem Montag startet, ergibt index / 7 den Wochenindex –
+    // der Sonntag (letzter Tag der Woche) behält dadurch exakt dieselbe Farbe
+    // wie der Samstag davor (z. B. So. 01.11.2026 = Sa. 31.10.2026).
+    const bgClass =
+      Math.floor(index / 7) % 2 === 0 ? 'bg-blue-50' : 'bg-blue-100';
     let rowBg: string;
     if (feiertag) {
       rowBg = 'bg-slate-100/80';
@@ -2217,7 +2358,8 @@ function VerfuegbarkeitContent() {
           </td>
         )}
 
-        {/* Spalte 2: KW (verbunden über die Tage der KW im Monat) */}
+        {/* Spalte 2: KW (verbunden über die gesamte ISO-Kalenderwoche,
+            unabhängig vom Monatswechsel – z. B. KW 44: Mo. 26.10. bis So. 01.11.) */}
         {meta.istKwStart && (
           <td
             rowSpan={meta.kwRowSpan}
@@ -2250,7 +2392,7 @@ function VerfuegbarkeitContent() {
               aria-pressed={frei}
               title={
                 frei && (vmGesperrt || nmGesperrt)
-                  ? 'Ganztags-Rücknahme gesperrt: Slots durch Kurse belegt'
+                  ? 'Ganztags-Rücknahme gesperrt: Slots durch Kurse oder Reservierungen belegt'
                   : 'Ganztags verfügbar/nicht verfügbar'
               }
               className={`px-2 py-0.5 rounded text-[10px] font-bold border transition disabled:cursor-not-allowed ${
@@ -2268,7 +2410,7 @@ function VerfuegbarkeitContent() {
               aria-pressed={zustand.vm}
               title={
                 vmGesperrt && zustand.vm
-                  ? 'Vormittag durch Kurse belegt – Rücknahme gesperrt'
+                  ? 'Vormittag durch Kurs/Reservierung belegt – Rücknahme gesperrt'
                   : 'Vormittag verfügbar/nicht verfügbar'
               }
               className={`px-2 py-0.5 rounded text-[10px] font-bold border transition disabled:cursor-not-allowed ${
@@ -2286,7 +2428,7 @@ function VerfuegbarkeitContent() {
               aria-pressed={zustand.nm}
               title={
                 nmGesperrt && zustand.nm
-                  ? 'Nachmittag durch Kurse belegt – Rücknahme gesperrt'
+                  ? 'Nachmittag durch Kurs/Reservierung belegt – Rücknahme gesperrt'
                   : 'Nachmittag verfügbar/nicht verfügbar'
               }
               className={`px-2 py-0.5 rounded text-[10px] font-bold border transition disabled:cursor-not-allowed ${
@@ -2471,6 +2613,49 @@ function VerfuegbarkeitContent() {
       params.delete('trainer_id');
     }
     router.replace(`?${params.toString()}`, { scroll: false });
+    // Ist „Auswahl als Standard festlegen“ aktiv und wird ein ANDERER Dozent
+    // gewählt, wird der Haken für die aktuelle Sitzung entfernt. Der
+    // gespeicherte Standard (ursprünglicher Dozent) bleibt in localStorage
+    // unangetastet. Wechselt der Nutzer anschließend zurück auf genau diesen
+    // Standard-Dozenten, erscheint der Haken wieder aktiviert – vorausgesetzt,
+    // die Option wurde nicht zuvor manuell abgewählt (dann ist
+    // standardTrainerId leer).
+    if (value) {
+      if (standardTrainerAktiv && value !== standardTrainerId) {
+        setStandardTrainerAktiv(false);
+      } else if (
+        !standardTrainerAktiv &&
+        standardTrainerId &&
+        value === standardTrainerId
+      ) {
+        setStandardTrainerAktiv(true);
+      }
+    }
+  };
+
+  /** Aktiviert/deaktiviert „Auswahl als Standard festlegen“. Beim Aktivieren
+   *  wird die aktuelle Dozentenauswahl gespeichert; beim Deaktivieren wird
+   *  der gespeicherte Standard entfernt. */
+  const handleStandardTrainerToggle = (aktiv: boolean) => {
+    setStandardTrainerAktiv(aktiv);
+    try {
+      window.localStorage.setItem(
+        'verfuegbarkeit:standardTrainerAktiv',
+        String(aktiv)
+      );
+      if (aktiv && selectedTrainerId) {
+        setStandardTrainerId(selectedTrainerId);
+        window.localStorage.setItem(
+          'verfuegbarkeit:standardTrainerId',
+          selectedTrainerId
+        );
+      } else if (!aktiv) {
+        setStandardTrainerId('');
+        window.localStorage.removeItem('verfuegbarkeit:standardTrainerId');
+      }
+    } catch {
+      // Persistenz fehlgeschlagen – gilt nur für diese Sitzung.
+    }
   };
 
   /** Wechselt bei Klick auf eine Tageskachel direkt in die fortlaufende
@@ -2598,6 +2783,22 @@ function VerfuegbarkeitContent() {
               )}
             </select>
           </div>
+
+          {/* Optionsfeld: „Auswahl als Standard festlegen“ – rechts der
+              Dozentenauswahl, links der Ansichts-Buttons. Bei aktiviertem
+              Zustand wird die gewählte Dozentenauswahl in localStorage
+              gemerkt und beim erneuten Aufruf der Seite vorausgewählt.
+              py-2.5 richtet die Schrift vertikal auf die Höhe der
+              Button-Beschriftung (Wochenansicht/Tagesliste) aus. */}
+          <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs text-slate-600 py-2.5">
+            <input
+              type="checkbox"
+              checked={standardTrainerAktiv}
+              onChange={(e) => handleStandardTrainerToggle(e.target.checked)}
+              className="w-4 h-4"
+            />
+            Auswahl als Standard festlegen
+          </label>
 
           {/* Ansichts-Umschalter: Wochenansicht / Tagesliste */}
           <div className="flex rounded-lg border border-slate-300 overflow-hidden" role="group" aria-label="Ansicht wählen">
@@ -2780,6 +2981,33 @@ function VerfuegbarkeitContent() {
               Wochenenden ausblenden
             </label>
           )}
+
+          {/* Abgesagte Kurse ausblenden: rechts neben „Wochenenden ausblenden“.
+              Blendet abgesagte Kursangebote aus Wochenliste UND Tagesliste aus,
+              damit die übrigen Kursstatus besser überblickbar sind. Vorbild ist
+              das identische Optionsfeld in der Monatsübersicht. Die Einstellung
+              wird sofort in localStorage gespeichert und nach einem Refresh
+              wieder hergestellt. */}
+          <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={abgesagteAusblenden}
+              onChange={(e) => {
+                const wert = e.target.checked;
+                setAbgesagteAusblenden(wert);
+                try {
+                  window.localStorage.setItem(
+                    'verfuegbarkeit:abgesagteAusblenden',
+                    String(wert)
+                  );
+                } catch {
+                  // Persistenz fehlgeschlagen – gilt nur für diese Sitzung.
+                }
+              }}
+              className="w-4 h-4 accent-blue-600"
+            />
+            Abgesagte Kurse ausblenden
+          </label>
         </div>
 
         {/* Lade-/Fehlerzustand */}

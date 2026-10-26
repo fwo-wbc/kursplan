@@ -14,3 +14,8 @@
   `npx tsc --noEmit`
 - Führe keinen vollständigen Produktions-Build (`npm run build`) und keine HTTP-Runtime-Checks durch, es sei denn, der Benutzer fordert dies in einem Prompt ausdrücklich an.
 - Sind die TypeScript-Checks fehlerfrei (Exit Code 0), gilt die technische Implementierung als abgeschlossen.
+
+## 4. Farbcode-Regel (verbindlich)
+- Verwende für alle Seiten, Anpassungen und Neuerstellungen AUSSCHLIESSLICH den Farbcode `#285DAA` (CD-Blau).
+- Der Farbcode `#0345D6` ist grundsätzlich verboten und darf nirgendwo mehr angewendet werden.
+- Bestehende Vorkommen von `#0345D6` sind bei jeder Berührung der betroffenen Datei durch `#285DAA` zu ersetzen.

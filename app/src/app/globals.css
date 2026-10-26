@@ -41,3 +41,13 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Optionsfelder (Checkboxen): gilt grundsätzlich für alle Checkboxen der App.
+   CD-Hausfarbe #285DAA, im Hover dunkler #193C6F. */
+input[type="checkbox"] {
+  accent-color: #285daa;
+}
+
+input[type="checkbox"]:hover {
+  accent-color: #193c6f;
+}

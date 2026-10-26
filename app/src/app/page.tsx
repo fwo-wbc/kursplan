@@ -364,13 +364,6 @@ const MONAT_OPTIONS = [
 /** Zeitfilter-Optionen für die Kalenderwoche (KW 1–53). */
 const KW_OPTIONS = Array.from({ length: 53 }, (_, index) => String(index + 1));
 
-const dateFormatter = new Intl.DateTimeFormat('de-DE', {
-  weekday: 'short',
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-});
-
 const weekdayShortFormatter = new Intl.DateTimeFormat('de-DE', {
   weekday: 'short',
 });
@@ -435,6 +428,16 @@ function toDate(value: string | null | undefined): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/**
+ * Liefert das Wochentags-Kürzel mit Punkt ("Di."). Falls die Runtime bereits
+ * ein Kürzel mit Punkt liefert (de-DE: "Di."), wird es beibehalten, sonst
+ * wird der Punkt ergänzt – so entsteht z. B. "Di. 10.11.2026".
+ */
+function wochentagKurz(date: Date): string {
+  const kuerzel = weekdayShortFormatter.format(date);
+  return kuerzel.endsWith('.') ? kuerzel : `${kuerzel}.`;
+}
+
 /** Formatiert ein Datum als ISO-Tag (YYYY-MM-DD) für lexikografische Vergleiche. */
 function toIsoDate(date: Date): string {
   const jahr = date.getFullYear();
@@ -496,7 +499,9 @@ function formatZeitraum(
   if (!start && !end) return { haupt: DATUM_FALLBACK, detail: null };
 
   const basis = start ?? end;
-  const datumTeil = basis ? dateFormatter.format(basis) : DATUM_FALLBACK;
+  const datumTeil = basis
+    ? `${wochentagKurz(basis)} ${dateRangeFormatter.format(basis)}`
+    : DATUM_FALLBACK;
   const startZeit = start ? timeFormatter.format(start) : null;
   const endZeit = end ? timeFormatter.format(end) : null;
 

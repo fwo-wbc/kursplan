@@ -4,7 +4,9 @@ import {
   parseTrainerId,
   toErrorMessage,
   persistiereTag,
+  pruefeRuecknahmeSperren,
   TageEintrag,
+  VerfuegbarkeitSperreError,
 } from '@/lib/verfuegbarkeit';
 
 // ---------------------------------------------------------------------------
@@ -70,10 +72,20 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Gemeinsame Vorab-Prüfung (atomar): Ist eine Aufhebung eines der Einträge
+    // durch eine Reservierung gesperrt, wird der komplette Batch abgelehnt,
+    // bevor auch nur ein Tag geschrieben wird (keine Teil-Schreibvorgänge).
+    await pruefeRuecknahmeSperren(trainerId, eintraege);
+
     for (const eintrag of eintraege) {
       await persistiereTag(trainerId, eintrag.datum, eintrag.vm, eintrag.nm);
     }
   } catch (err: unknown) {
+    // Rücknahme-Sperre durch eine Reservierung: als HTTP 409 (Konflikt) melden,
+    // damit der Client die Sperre von echten Serverfehlern unterscheiden kann.
+    if (err instanceof VerfuegbarkeitSperreError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
     console.error('Fehler beim Batch-Speichern der Verfügbarkeiten:', err);
     return NextResponse.json(
       { error: `Datenbankfehler beim Speichern: ${toErrorMessage(err)}` },

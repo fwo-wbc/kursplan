@@ -1,0 +1,604 @@
+[
+  {
+    "id": "p05-0000-wiederanlauf",
+    "name": "P05 Wiederanlauf Sync-Recovery",
+    "active": true,
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "*/30 * * * *"
+              }
+            ]
+          }
+        },
+        "id": "p05-0001-zeitplan",
+        "name": "P05 Zeitplan",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1,
+        "position": [0, 0]
+      },
+      {
+        "parameters": {},
+        "id": "p05-0002-manuell",
+        "name": "P05 Manuell",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [0, 260]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT run_id, run_type, status, abgleichsart, retry_count, retry_status, error_text, started_at, finished_at\nFROM edoobox_raw.sync_run\nWHERE started_at >= (now() - INTERVAL '48 hours')\n  AND ( status = 'fehler'\n        OR (status = 'laeuft' AND started_at < (now() - INTERVAL '2 hours')) )\n  AND ( retry_status IS NULL OR retry_status = 'pending' )\n  AND retry_count < 3\nORDER BY started_at ASC;",
+          "options": {}
+        },
+        "id": "p05-0003-suchen",
+        "name": "P05 Kandidaten suchen",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [240, 0],
+        "credentials": {
+          "postgres": {
+            "id": "eXRRFRowW6RCTJvp",
+            "name": "PostgreSQL Kursplan – n8n_writer"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// P05 - Kandidatenliste auswerten.\n// Kein Kandidat -> 'keine' (Workflow endet ueber NoOp sauber).\nconst kandidaten = $input.all();\nif (kandidaten.length === 0) {\n  return [{ json: { entscheidung: 'keine', anzahl: 0 } }];\n}\nreturn [{\n  json: {\n    entscheidung: 'vorhanden',\n    anzahl: kandidaten.length,\n    aelterster_run_id: kandidaten[0].json.run_id,\n  },\n}];"
+        },
+        "id": "p05-0004-pruefen",
+        "name": "P05 Kandidaten pruefen",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [480, 0]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.entscheidung }}",
+                "rightValue": "vorhanden",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                },
+                "caseSensitive": true,
+                "typeValidation": "loose"
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "p05-0005-kandidaten-if",
+        "name": "P05 Kandidaten vorhanden?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [720, 0]
+      },
+      {
+        "parameters": {},
+        "id": "p05-0006-noop",
+        "name": "P05 Keine Kandidaten",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [960, 220]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "WITH kandidat AS (\n    SELECT s.run_id\n    FROM edoobox_raw.sync_run s\n    WHERE s.started_at >= (now() - INTERVAL '48 hours')\n      AND ( s.status = 'fehler'\n            OR (s.status = 'laeuft' AND s.started_at < (now() - INTERVAL '2 hours')) )\n      AND ( s.retry_status IS NULL OR s.retry_status = 'pending' )\n      AND s.retry_count < 3\n    ORDER BY s.started_at ASC\n    LIMIT 1\n    FOR UPDATE SKIP LOCKED\n)\nUPDATE edoobox_raw.sync_run s\nSET retry_status = 'in_progress',\n    retry_count  = s.retry_count + 1\nFROM kandidat k\nWHERE s.run_id = k.run_id\nRETURNING s.run_id, s.run_type, s.status, s.retry_count, s.retry_status, s.error_text;",
+          "options": {}
+        },
+        "id": "p05-0007-markieren",
+        "name": "P05 Kandidat markieren",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [960, -120],
+        "credentials": {
+          "postgres": {
+            "id": "eXRRFRowW6RCTJvp",
+            "name": "PostgreSQL Kursplan – n8n_writer"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// P05 - Reichert den markierten Alt-Lauf um die Ziel-Workflow-IDs der Sync-Kette an.\n// Workflow-IDs (Stand PROJEKTSTAND §4.1); per Env P05_WORKFLOW_P0x_ID ueberschreibbar.\nconst run = $input.first().json;\nconst ziel = {\n  p01: $env.P05_WORKFLOW_P01_ID || 'eIyJaeTeqWidRYDu',\n  p02: $env.P05_WORKFLOW_P02_ID || 'IrS9JcdrOK1MXUO5',\n  p03: $env.P05_WORKFLOW_P03_ID || 'Rg3rB0RD8ISL0U6Y',\n};\nconst fehlend = ['p01', 'p02', 'p03'].filter((k) => !ziel[k]);\nreturn [{\n  json: {\n    ...run,\n    ...ziel,\n    konfig_ok: fehlend.length === 0,\n    konfig_fehler: fehlend.length ? 'Fehlende Ziel-Workflow-IDs in n8n: ' + fehlend.join(', ') : null,\n  },\n}];"
+        },
+        "id": "p05-0008-kontext",
+        "name": "P05 Kontext bauen",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [1200, -120]
+      },
+      {
+        "parameters": {
+          "workflowId": "={{ $json.p01 }}",
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "alt_run_id",
+                "value": "={{ $json.run_id }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "onError": "continueRegularOutput",
+        "id": "p05-0009-p01",
+        "name": "P05 P01 ausfuehren",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1,
+        "position": [1440, -120]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// P05 - Bewertet das Ergebnis des P01-Unterworkflow-Aufrufs.\nconst ctx = $('P05 Kontext bauen').first().json;\nconst out = $input.first().json;\nlet fehlertext = null;\nif (!out) {\n  fehlertext = 'Keine Ausgabe vom Unterworkflow P01';\n} else if (out.error) {\n  fehlertext = (typeof out.error === 'string') ? out.error : (out.error.message || JSON.stringify(out.error));\n} else if (out.json && out.json.error) {\n  fehlertext = (typeof out.json.error === 'string') ? out.json.error : JSON.stringify(out.json.error);\n}\nreturn [{ json: { run_id: ctx.run_id, stufe: 'P01', fehler: !!fehlertext, fehlertext: fehlertext || '' } }];"
+        },
+        "id": "p05-0010-p01-geprueft",
+        "name": "P05 P01 geprueft",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [1680, -120]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.fehler }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true"
+                },
+                "typeValidation": "loose"
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "p05-0011-p01-if",
+        "name": "P05 P01 fehlgeschlagen?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [1920, -120]
+      },
+      {
+        "parameters": {
+          "workflowId": "={{ $('P05 Kontext bauen').first().json.p02 }}",
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "alt_run_id",
+                "value": "={{ $json.run_id }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "onError": "continueRegularOutput",
+        "id": "p05-0012-p02",
+        "name": "P05 P02 ausfuehren",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1,
+        "position": [2160, -240]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// P05 - Bewertet das Ergebnis des P02-Unterworkflow-Aufrufs.\nconst ctx = $('P05 Kontext bauen').first().json;\nconst out = $input.first().json;\nlet fehlertext = null;\nif (!out) {\n  fehlertext = 'Keine Ausgabe vom Unterworkflow P02';\n} else if (out.error) {\n  fehlertext = (typeof out.error === 'string') ? out.error : (out.error.message || JSON.stringify(out.error));\n} else if (out.json && out.json.error) {\n  fehlertext = (typeof out.json.error === 'string') ? out.json.error : JSON.stringify(out.json.error);\n}\nreturn [{ json: { run_id: ctx.run_id, stufe: 'P02', fehler: !!fehlertext, fehlertext: fehlertext || '' } }];"
+        },
+        "id": "p05-0013-p02-geprueft",
+        "name": "P05 P02 geprueft",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [2400, -240]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.fehler }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true"
+                },
+                "typeValidation": "loose"
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "p05-0014-p02-if",
+        "name": "P05 P02 fehlgeschlagen?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [2640, -240]
+      },
+      {
+        "parameters": {
+          "workflowId": "={{ $('P05 Kontext bauen').first().json.p03 }}",
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "alt_run_id",
+                "value": "={{ $json.run_id }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "onError": "continueRegularOutput",
+        "id": "p05-0015-p03",
+        "name": "P05 P03 ausfuehren",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1,
+        "position": [2880, -360]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// P05 - Bewertet das Ergebnis des P03-Unterworkflow-Aufrufs.\nconst ctx = $('P05 Kontext bauen').first().json;\nconst out = $input.first().json;\nlet fehlertext = null;\nif (!out) {\n  fehlertext = 'Keine Ausgabe vom Unterworkflow P03';\n} else if (out.error) {\n  fehlertext = (typeof out.error === 'string') ? out.error : (out.error.message || JSON.stringify(out.error));\n} else if (out.json && out.json.error) {\n  fehlertext = (typeof out.json.error === 'string') ? out.json.error : JSON.stringify(out.json.error);\n}\nreturn [{ json: { run_id: ctx.run_id, stufe: 'P03', fehler: !!fehlertext, fehlertext: fehlertext || '' } }];"
+        },
+        "id": "p05-0016-p03-geprueft",
+        "name": "P05 P03 geprueft",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [3120, -360]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.fehler }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true"
+                },
+                "typeValidation": "loose"
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "p05-0017-p03-if",
+        "name": "P05 P03 fehlgeschlagen?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [3360, -360]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// P05 - Bereitet die Fehlerdaten fuer Status-Update (failed) und O-7-Eskalationsmail auf.\nconst d = $input.first().json;\nconst stufe = d.stufe || 'UNBEKANNT';\nconst fehlertext = d.fehlertext || 'Unbekannter Fehler im Wiederanlauf';\nconst mailBody = [\n  'Automatischer P05-Wiederanlauf fehlgeschlagen.',\n  '',\n  'Betroffener Alt-Lauf (run_id): ' + d.run_id,\n  'Fehlerstufe: ' + stufe,\n  'Fehlertext: ' + fehlertext,\n  '',\n  'Der Alt-Lauf wurde auf retry_status=failed gesetzt. Bitte manuell pruefen (O-7-Alarmschiene).',\n].join('\\n');\nreturn [{ json: { run_id: d.run_id, stufe: stufe, fehlertext: fehlertext, mail_body: mailBody } }];"
+        },
+        "id": "p05-0018-fehler",
+        "name": "P05 Fehler behandeln",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [2160, 40]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE edoobox_raw.sync_run\nSET retry_status = 'failed',\n    error_text = left(coalesce(error_text, '') || E'\\n[P05] Wiederanlauf in ' || $2 || ' fehlgeschlagen: ' || $3, 4000)\nWHERE run_id = $1\nRETURNING run_id, retry_count, retry_status, error_text;",
+          "options": {
+            "queryReplacement": "={{ [$json.run_id, $json.stufe, $json.fehlertext] }}"
+          }
+        },
+        "id": "p05-0019-failed",
+        "name": "P05 Lauf failed",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [2400, 40],
+        "credentials": {
+          "postgres": {
+            "id": "eXRRFRowW6RCTJvp",
+            "name": "PostgreSQL Kursplan – n8n_writer"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "fromEmail": "={{ $env.P04_MAIL_FROM || 'kursplan@localhost' }}",
+          "toEmail": "={{ $env.P05_MAIL_TO || $env.P04_MAIL_TO || 'admin@localhost' }}",
+          "subject": "={{ 'P05-Eskalation: Wiederanlauf fehlgeschlagen (' + $json.stufe + ', run_id ' + $json.run_id + ')' }}",
+          "text": "={{ $json.mail_body }}",
+          "emailFormat": "text",
+          "options": {}
+        },
+        "onError": "continueRegularOutput",
+        "disabled": true,
+        "id": "p05-0020-mail",
+        "name": "P05 Eskalationsmail senden",
+        "type": "n8n-nodes-base.emailSend",
+        "typeVersion": 2,
+        "position": [2640, 40]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE edoobox_raw.sync_run\nSET retry_status = 'resolved'\nWHERE run_id = $1\nRETURNING run_id, retry_count, retry_status;",
+          "options": {
+            "queryReplacement": "={{ [$json.run_id] }}"
+          }
+        },
+        "id": "p05-0021-resolved",
+        "name": "P05 Lauf resolved",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [3600, -480],
+        "credentials": {
+          "postgres": {
+            "id": "eXRRFRowW6RCTJvp",
+            "name": "PostgreSQL Kursplan – n8n_writer"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "P05 Zeitplan": {
+        "main": [
+          [
+            {
+              "node": "P05 Kandidaten suchen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 Manuell": {
+        "main": [
+          [
+            {
+              "node": "P05 Kandidaten suchen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 Kandidaten suchen": {
+        "main": [
+          [
+            {
+              "node": "P05 Kandidaten pruefen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 Kandidaten pruefen": {
+        "main": [
+          [
+            {
+              "node": "P05 Kandidaten vorhanden?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 Kandidaten vorhanden?": {
+        "main": [
+          [
+            {
+              "node": "P05 Kandidat markieren",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "P05 Keine Kandidaten",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 Kandidat markieren": {
+        "main": [
+          [
+            {
+              "node": "P05 Kontext bauen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 Kontext bauen": {
+        "main": [
+          [
+            {
+              "node": "P05 P01 ausfuehren",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 P01 ausfuehren": {
+        "main": [
+          [
+            {
+              "node": "P05 P01 geprueft",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 P01 geprueft": {
+        "main": [
+          [
+            {
+              "node": "P05 P01 fehlgeschlagen?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 P01 fehlgeschlagen?": {
+        "main": [
+          [
+            {
+              "node": "P05 Fehler behandeln",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "P05 P02 ausfuehren",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 P02 ausfuehren": {
+        "main": [
+          [
+            {
+              "node": "P05 P02 geprueft",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 P02 geprueft": {
+        "main": [
+          [
+            {
+              "node": "P05 P02 fehlgeschlagen?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 P02 fehlgeschlagen?": {
+        "main": [
+          [
+            {
+              "node": "P05 Fehler behandeln",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "P05 P03 ausfuehren",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 P03 ausfuehren": {
+        "main": [
+          [
+            {
+              "node": "P05 P03 geprueft",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 P03 geprueft": {
+        "main": [
+          [
+            {
+              "node": "P05 P03 fehlgeschlagen?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 P03 fehlgeschlagen?": {
+        "main": [
+          [
+            {
+              "node": "P05 Fehler behandeln",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "P05 Lauf resolved",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 Fehler behandeln": {
+        "main": [
+          [
+            {
+              "node": "P05 Lauf failed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P05 Lauf failed": {
+        "main": [
+          [
+            {
+              "node": "P05 Eskalationsmail senden",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "pinData": {},
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "tags": []
+  }
+]

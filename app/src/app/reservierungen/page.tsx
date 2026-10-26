@@ -161,6 +161,32 @@ const datumFormatter = new Intl.DateTimeFormat('de-DE', {
   year: 'numeric',
 });
 
+/** Formatiert einen ISO-Zeitstempel als Wochentag ("Di.") in Europe/Berlin. */
+const wochentagFormatter = new Intl.DateTimeFormat('de-DE', {
+  timeZone: 'Europe/Berlin',
+  weekday: 'short',
+});
+
+/** Wochentags-Kürzel mit Punkt, passend zu Date.getUTCDay() (0=So … 6=Sa). */
+const WOCHENTAGE_KURZ = [
+  'So.',
+  'Mo.',
+  'Di.',
+  'Mi.',
+  'Do.',
+  'Fr.',
+  'Sa.',
+];
+
+/**
+ * Liefert das Wochentags-Kürzel mit Punkt ("Di."). Falls die Runtime bereits
+ * einen Punkt liefert (de-DE: "Di."), wird er beibehalten, sonst ergänzt.
+ */
+function wochentagKurz(date: Date): string {
+  const kuerzel = wochentagFormatter.format(date);
+  return kuerzel.endsWith('.') ? kuerzel : `${kuerzel}.`;
+}
+
 /** Wandelt einen ISO-String in ein Date um (null bei ungültigem Wert). */
 function toDate(value: string | null | undefined): Date | null {
   if (typeof value !== 'string' || value.trim() === '') return null;
@@ -177,15 +203,22 @@ function toIsoDate(date: Date): string {
 }
 
 /**
- * Formatiert ein reines ISO-Datum (YYYY-MM-DD) als "TT.MM.JJJJ".
- * Bewusst zeitzonenunabhängig (kein new Date()), damit die Frist nie durch
- * UTC/Berlin-Verschiebungen auf den Folgetag kippt. Leere Werte → '–'.
+ * Formatiert ein reines ISO-Datum (YYYY-MM-DD) als "Di. 10.11.2026".
+ * Bewusst zeitzonenunabhängig (kein new Date() mit lokaler/UTC-Konvertierung,
+ * sondern Date.UTC), damit die Frist nie durch UTC/Berlin-Verschiebungen auf
+ * den Folgetag kippt. Leere Werte → '–'.
  */
 function formatDatumIso(iso: string | null | undefined): string {
   if (typeof iso !== 'string' || iso.trim() === '') return KEIN_WERT;
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
   if (!match) return KEIN_WERT;
-  return `${match[3]}.${match[2]}.${match[1]}`;
+  const wochentag =
+    WOCHENTAGE_KURZ[
+      new Date(
+        Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+      ).getUTCDay()
+    ];
+  return `${wochentag} ${match[3]}.${match[2]}.${match[1]}`;
 }
 
 /** Ermittelt die ISO-8601-Kalenderwoche eines Datums (1–53). */
@@ -234,12 +267,12 @@ function monatsRaster(jahr: number, monat: number): KalenderWoche[] {
   return wochen;
 }
 
-/** Formatiert den Start bis Ende eines Termins: "TT.MM.JJJJ, HH:MM–HH:MM Uhr". */
+/** Formatiert den Start bis Ende eines Termins: "Di. 10.11.2026, HH:MM–HH:MM Uhr". */
 function formatTermin(termin: KursTermin): string {
   const start = toDate(termin.date_start);
   const ende = toDate(termin.date_end);
   if (!start) return 'Datum n. v.';
-  const datum = datumFormatter.format(start);
+  const datum = `${wochentagKurz(start)} ${datumFormatter.format(start)}`;
   const von = zeitFormatter.format(start);
   const bis = ende ? zeitFormatter.format(ende) : '--:--';
   return `${datum}, ${von}–${bis} Uhr`;

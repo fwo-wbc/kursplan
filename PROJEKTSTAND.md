@@ -1,8 +1,8 @@
 # Projektstand — Kursplan-App
 
 **Dokumenttyp:** Projektstand-Dokumentation (laufend gepflegt)
-**Stand:** 21. Oktober 2026
-**Basis:** [`Statusbericht Datenbank und Trainer-Zuweisung.md`](Statusbericht Datenbank und Trainer-Zuweisung.md), [`Spezifikation produktive n8n-Workflows P90-P05.md`](Spezifikation produktive n8n-Workflows P90-P05.md), [`Abgleichbericht P01-P05.md`](Abgleichbericht P01-P05.md), [`End-to-End-Abgleichbericht.md`](End-to-End-Abgleichbericht.md), [`Lastenheft Kursplan v1.6.md`](Lastenheft Kursplan v1.6.md)
+**Stand:** 25. Oktober 2026
+**Basis:** [`Statusbericht Datenbank und Trainer-Zuweisung.md`](Statusbericht Datenbank und Trainer-Zuweisung.md), [`Spezifikation produktive n8n-Workflows P90-P05.md`](Spezifikation produktive n8n-Workflows P90-P05.md), [`Abgleichbericht P01-P05.md`](Abgleichbericht P01-P05.md), [`End-to-End-Abgleichbericht.md`](End-to-End-Abgleichbericht.md), [`Lastenheft Kursplan v1.6.md`](Lastenheft Kursplan v1.6.md), [`AENDERUNGEN.md`](AENDERUNGEN.md) (laufende Änderungsdokumentation)
 
 ---
 
@@ -96,7 +96,7 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | **P01** | Operative Ressourcen synchronisieren | `eIyJaeTeqWidRYDu` | 11 | ✅ | 0 Fehler |
 | **P02** | Stamm- und Referenzdaten synchronisieren | `IrS9JcdrOK1MXUO5` | 9 | ✅ | 0 Fehler |
 | **P04** | Qualitätskontrolle und Benachrichtigung | `dnf6LyuhQawESBX0` | 6 | ✅ | 0 Fehler |
-| **P05** | Manueller Wiederanlauf | `DRcCDA7Dp02NYryE` | 9 | ⏸ inaktiv | 0 Fehler |
+| **P05** | Wiederanlauf-Sync-Recovery (Retry) | `DRcCDA7Dp02NYryE`; Neuimport [`n8n/P05_Wiederanlauf.json`](n8n/P05_Wiederanlauf.json) | 21 | ✅ bereit | 0 Fehler |
 | **S63** | Pflegeschritt Kostenkonfiguration | `6OouANAXpN1HR9tl` | — | ✅ | idempotent |
 | **B01** | Kurstransfer edoobox (Batch) | `4wdC1BJi6gyaZQel` | 13 | ✅ | — |
 
@@ -111,7 +111,7 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | **P01** | Operative Ressourcen | `*/15 8-23 * * 1-5` | 7 Ressourcen, `track_deletions = false` |
 | **P02** | Stamm-/Referenzdaten | täglich 02:00 | 5 Ressourcen, `track_deletions = false` |
 | **P04** | Qualitätskontrolle | täglich 04:30 + nach P01–P03/P05 | Laufalter, Vollständigkeit, Beziehungen, DB-I-Kennzahlen |
-| **P05** | Manueller Wiederanlauf | manuell | Ressource/`alle`, `normal`/`voll` |
+| **P05** | Wiederanlauf-Sync-Recovery | `*/30 * * * *` + manuell | fehlgeschlagene/steckengebliebene Sync-Läufe (48 h, `fehler`/`laeuft` > 2 h) sequenziell über P01→P02→P03 wiederholen; `retry_status`/`retry_count`; O-7-Eskalation |
 
 ### 4.3 Kernmechanik P90
 
@@ -146,8 +146,11 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | `/reservierungen` | Reservierungen: Listenansicht (Datum, Thema, Trainer, Status) plus eigene Monatsübersicht mit Überhang-Tages-Kürzeln |
 | `/kursplan` | Kursplanung: Planungsansicht je Bereich mit Terminanlage/-bearbeitung, 3-Fach-Belegung und Batch-Transfer an B01 |
 | `/trainer` | Trainerübersicht |
-| `/trainer/verfuegbarkeit` | Verfügbarkeitsverwaltung |
+| `/trainer/verfuegbarkeit` | Verfügbarkeitsverwaltung (klassische VM/NM-Sicht) |
+| `/trainer/availabilities` | Verfügbarkeitsmanager mit Zeitfenster-Slots (`start_time`/`end_time`/`is_booked`) |
 | `/trainer/zeitplan` | Zeitplan |
+| `/kursthemen` | Kursthemen-Verwaltung (Prioritäten, Aktiv-Status) |
+| `/system-logs` | System-Log-Ansicht (`public.system_logs`) |
 
 ### 5.2 API-Routen
 
@@ -173,10 +176,14 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | `/api/trainer-zuweisung` | Trainer-Zuweisungen (Trainer-Sicht) |
 | `/api/verfuegbarkeit` | Verfügbarkeiten |
 | `/api/zuweisung` | Trainer-Zuweisungen |
+| `/api/zuweisung/bulk` | Massen-Zuweisung (PATCH) inkl. asynchronem n8n-Rückkanal für Modultitel-Kürzel |
+| `/api/logs` | System-Log-Abruf (`public.system_logs`) |
+| `/api/reservations` (+ `/[id]`, `/by-code/[code]`, `/by-code/[code]/item`) | Reservierungs-API mit Buchungscode-Lookup |
+| `/api/course-topics` · `/api/kursthemen` · `/api/trainer-topics` | Kurs-Themen, -Verwaltung und Trainer-Themen-Zuordnung |
 
 ### 5.3 Bibliotheken (`app/src/lib/`)
 
-`db.ts` (PostgreSQL-Verbindung) · `feiertage.ts` · `honorar.ts` · `umwandlung.ts` · `verfuegbarkeit.ts`
+`db.ts` (PostgreSQL-Verbindung) · `feiertage.ts` · `honorar.ts` · `umwandlung.ts` · `verfuegbarkeit.ts` · `logger.ts` (persistentes Logging via `public.system_logs`) · `clipboard.ts` (Zwischenablage mit Fallback) · `n8n-sync.ts` (Webhook-Helfer) · `planning-utils.ts` · `reservations.ts`
 
 ### 5.4 Kurstransfer (statisch, `app/public/Kurstransfer/`)
 
@@ -186,10 +193,10 @@ Statische Import-/Planungshilfen (Excel-Import, Kategorien, Python-Skripte) für
 
 ## 6. Skripte und Migrationen (`scripts/`, Projektstamm)
 
-- **Migrationen (SQL):** `trainer_zuweisung_*`, `trainer_saetze`, `trainer_kosten`, `trainer_halbtagessatz_reduziert`, `termin_reservierung_*`, `trainer_honorar_90min_migration.sql`, `kursplan_themen_migration.sql` (Kursthemen-Stamm + Sicht `v_course_topics_edoobox` + UNIQUE-Indexe), `kursplan_planung_migration.sql` (Planungstabelle + Sichten `v_kursplan_*`), `kursplan_seed_ms_office.sql` (20 MS-Office-Kursdefinitionen als Startbestand)
-- **Pflege-/Verifikationsskripte (CJS):** `import_trainer_kosten.cjs`, `check_trainer.cjs`, `cleanup_ghost_trainer.cjs`, `cleanup_trainer_zuweisung_alt.cjs`, `diagnose_*.cjs`, `verify_*.cjs` (Verfügbarkeit, Schließung, Last-Minute, Hervorhebung, Status), `apply_kursplan_migrationen.cjs` (wendet die drei Kursplan-Migrationen an), `sync_course_topics.cjs` (automatische Themen-Ableitung aus `edoobox_raw.offer`)
+- **Migrationen (SQL):** `trainer_zuweisung_*`, `trainer_saetze`, `trainer_kosten`, `trainer_halbtagessatz_reduziert`, `termin_reservierung_*`, `trainer_honorar_90min_migration.sql`, `kursplan_themen_migration.sql` (Kursthemen-Stamm + Sicht `v_course_topics_edoobox` + UNIQUE-Indexe), `kursplan_planung_migration.sql` (Planungstabelle + Sichten `v_kursplan_*`), `kursplan_seed_ms_office.sql` (20 MS-Office-Kursdefinitionen als Startbestand), `legacy_data_dod_migration.sql` (verbindliche Stichtags-Regelung: Stichtag 01.09.2026, Qualitäts-View `kursplan.v_qualitaet_historienluecken` mit `is_legacy`; Runner [`scripts/apply_legacy_data_dod_migration.cjs`](scripts/apply_legacy_data_dod_migration.cjs))
+- **Pflege-/Verifikationsskripte (CJS):** `import_trainer_kosten.cjs`, `check_trainer.cjs`, `cleanup_ghost_trainer.cjs`, `cleanup_trainer_zuweisung_alt.cjs`, `diagnose_*.cjs`, `verify_*.cjs` (Verfügbarkeit, Schließung, Last-Minute, Hervorhebung, Status), `apply_kursplan_migrationen.cjs` (wendet die drei Kursplan-Migrationen an), `sync_course_topics.cjs` (automatische Themen-Ableitung aus `edoobox_raw.offer`), `verify_legacy_dod.ts` (Legacy-DoD-Verifikation)
 - **n8n-Referenzdateien:** `p90_node_konfig.js`, `p90_node_holen.js`, `p90_node_fehlertext.js`, `p90_node_zaehlwerte.js`, `P90_Ressourcen_Konfiguration.sql`, `p90_build.ps1`, `p90_verify.ps1`
-- **Workflow-Exporte:** `n8n/P96_Create_edoobox_Offer_from_Reservation.json`, `n8n/P06_trainer_adhoc_sync.json`
+- **Workflow-Exporte:** `n8n/P96_Create_edoobox_Offer_from_Reservation.json`, `n8n/P06_trainer_adhoc_sync.json`, [`n8n/P05_Wiederanlauf.json`](n8n/P05_Wiederanlauf.json) (Wiederanlauf-Sync-Recovery)
 
 ---
 
@@ -207,11 +214,15 @@ Referenzmarken aus der Spezifikation; Ist-Stand nach S63 (20.09.2026):
 | **DB I** | **190.882,62 €** | **186.247,24 €** | 🟢 −2,43 % |
 | offene Kostenkonfigurationen | 0 | **0** | ✅ |
 
-**Bekannte Historienlücken (P04-Warnungen, bewusst nicht „repariert“):**
+**Historienlücken — Klassen per verbindlicher Stichtags-Regelung gelöst (DoD, 25.10.2026):**
 
-- 87 Buchungen ohne Angebot
-- 10 Trainerzuordnungen ohne Trainerprofil (historische Admin-Kennungen, O-10)
-- 4 Anwesenheiten ohne Termin
+| Anomalie | Bestand | Klassifikation | Aktive Alarme ab Stichtag |
+| --- | ---: | --- | ---: |
+| Buchungen ohne Angebot | 87 | `is_legacy = TRUE` (Alle `booking_time` 2020–2025-09-11 < Stichtag) | **0** |
+| Trainer/Leads ohne Trainerprofil (historische Admin-Kennungen, O-10) | 10 | `is_legacy = TRUE` (Termine 2020–2021 < Stichtag) | **0** |
+| Anwesenheiten ohne Termin | 4 | `is_legacy = TRUE` (fachliche Änderung 2026-01-15 < Stichtag) | **0** |
+
+**Regelung (Definition of Done):** Verbindlicher Stichtag **01.09.2026** (Beginn des einheitlichen Regelbetriebs, erster Vollabgleich 05.09.2026). Altbestände vor dem Stichtag werden über [`kursplan.v_qualitaet_historienluecken`](legacy_data_dod_migration.sql) als Legacy klassifiziert und sind **keine** P04-Alarme mehr; für Datensätze **ab** dem Stichtag gilt **strikte Null-Toleranz** (100 % relationale Integrität). Details: [`DOKU/DEFINITION_OF_DONE_DATENSTAND.md`](DOKU/DEFINITION_OF_DONE_DATENSTAND.md), Migration [`legacy_data_dod_migration.sql`](legacy_data_dod_migration.sql), Runner [`scripts/apply_legacy_data_dod_migration.cjs`](scripts/apply_legacy_data_dod_migration.cjs), Verifikation [`scripts/verify_legacy_dod.ts`](scripts/verify_legacy_dod.ts). Der Datenstand gilt damit als **100 % fachlich abgenommen / Clean**.
 
 ---
 
@@ -219,26 +230,26 @@ Referenzmarken aus der Spezifikation; Ist-Stand nach S63 (20.09.2026):
 
 | Kennung | Punkt | Status |
 | --- | --- | --- |
-| **O-7** | Benachrichtigungskanal für P04 (E-Mail) | offen — Meldung derzeit nur über `sync_run.status='fehler'`/`error_text` |
+| **O-7** | Benachrichtigungskanal für P04 (E-Mail) | ✅ **abgeschlossen** (25.10.2026) — E-Mail in P04 umgesetzt; `edoobox_raw.sync_run` um `alert_sent`/`alert_sent_at`/`alert_message` erweitert; Vorbedingung: Env `P04_ALERT_EMAIL` + SMTP-Credential `SMTP Kursplan` |
 | **O-8** | Ableitung `booking_position`/`booking_transaction` aus `booking.list` | **fachlich geschlossen** (20.09.2026); Rest: Pflege offener Kostenkonfigurationen via S63 |
 | **O-9** | Vollständige Transaktionsressource | abgedeckt über `transaction_full`; Buchungsbezug zusätzlich in `booking_transaction` |
-| **O-10** | Historische Platzhalterprofile | bewusst **nicht** erfundene Profile; FK-Lücken bleiben P04-Warnung; neue Trainer/Kurscodes werden vollständig angelegt (S63) |
-| **P05** | Manueller Wiederanlauf | angelegt und validiert, noch **inaktiv** (planmäßig) |
+| **O-10** | Historische Platzhalterprofile | ✅ **fachlich geschlossen** (25.10.2026) — Legacy-Stichtagsregelung: 10 Altbestands-Trainerzuordnungen (Termine 2020–2021) als `is_legacy` klassifiziert, kein P04-Alarm mehr; neue Trainer/Kurscodes werden vollständig angelegt (S63) |
+| **P05** | Wiederanlauf-Sync-Recovery | ✅ **umgesetzt/bereit** (25.10.2026) — `edoobox_raw.sync_run` um `retry_count`/`retry_of_run_id`/`retry_status` erweitert; Workflow [`n8n/P05_Wiederanlauf.json`](n8n/P05_Wiederanlauf.json) (21 Nodes, Retry-Kette P01→P02→P03, O-7-Eskalation); Migration [`sync_run_retry_migration.sql`](sync_run_retry_migration.sql), Anwender [`scripts/apply_sync_run_retry_migration.cjs`](scripts/apply_sync_run_retry_migration.cjs), Verifikation [`scripts/verify_p05_retry.ts`](scripts/verify_p05_retry.ts) |
 
 ---
 
 ## 9. Nächste Schritte (Empfehlung)
 
-1. **P05** aktivieren (manueller Wiederanlauf für Wartung/Fehlerbehebung).
-2. **O-7** klären: E-Mail-Kanal für P04-Benachrichtigungen einrichten.
-3. **P04-Warnungen** bewerten: 87 Buchungen ohne Angebot, 10 Trainer ohne Profil, 4 Anwesenheiten ohne Termin (Historienbereinigung oder dauerhafte Toleranz).
-4. **App-Ausbau:** API-Routen und Frontend-Komponenten für Trainerauswahl, Zeitplan und Verfügbarkeit an die produktiven Sichten anbinden.
-5. **Regelmäßiger Betrieb:** P03 wöchentlich, P01/P02 im Takt, S63 nach P01/P03 als Pflegeschritt; P04-Kennzahlen gegen die Kontrollmarken überwachen.
+1. **P05** in n8n importieren bzw. aus [`n8n/P05_Wiederanlauf.json`](n8n/P05_Wiederanlauf.json) aktivieren (Definitionsstand `active=true`); Ziel-Workflow-IDs P01/P02/P03 bei Bedarf per Env `P05_WORKFLOW_P0x_ID` überschreiben.
+2. ~~**P04-Warnungen** bewerten (87/10/4 Historienlücken)~~ ✅ **gelöst** (25.10.2026) durch verbindliche Legacy-Stichtagsregelung (Stichtag 01.09.2026) — siehe [`DOKU/DEFINITION_OF_DONE_DATENSTAND.md`](DOKU/DEFINITION_OF_DONE_DATENSTAND.md); aktive P04-Alarme für diese Kategorien sind 0.
+3. **App-Ausbau:** API-Routen und Frontend-Komponenten für Trainerauswahl, Zeitplan und Verfügbarkeit an die produktiven Sichten anbinden.
+4. **Regelmäßiger Betrieb:** P03 wöchentlich, P01/P02 im Takt, S63 nach P01/P03 als Pflegeschritt; P04-Kennzahlen gegen die Kontrollmarken überwachen.
 
 ---
 
 ## 10. Quellenverzeichnis
 
+- [`AENDERUNGEN.md`](AENDERUNGEN.md) — laufende Änderungsdokumentation aller App-Umsetzungen
 - [`Lastenheft Kursplan v1.6.md`](Lastenheft Kursplan v1.6.md) — Anforderungen E-24a, E-27 bis E-34, Abnahmefälle AK-29 bis AK-40
 - [`Spezifikation produktive n8n-Workflows P90-P05.md`](Spezifikation produktive n8n-Workflows P90-P05.md) — Zielarchitektur P90–P05, Feld-Mappings, offene Punkte O-1 bis O-10
 - [`Abgleichbericht P01-P05.md`](Abgleichbericht P01-P05.md) — Erstellung/Validierung P01–P05, P03-Ergänzung
@@ -248,3 +259,4 @@ Referenzmarken aus der Spezifikation; Ist-Stand nach S63 (20.09.2026):
 - [`Abschlussbericht zur DB-I-Auswertung.md`](Abschlussbericht zur DB-I-Auswertung.md) — DB-I-Auswertung
 - [`edoobox_spiegelung_schema.sql`](edoobox_spiegelung_schema.sql), [`edoobox-Spiegelung  Sichten.sql`](edoobox-Spiegelung  Sichten.sql), [`edoobox-Spiegelung  Rechnungstabellen.sql`](edoobox-Spiegelung  Rechnungstabellen.sql) — DDL der Spiegelung
 - [`P90_Ressourcen_Konfiguration.sql`](P90_Ressourcen_Konfiguration.sql), [`p90_node_konfig.js`](p90_node_konfig.js), [`p90_node_holen.js`](p90_node_holen.js) — kanonische P90-Konfiguration
+- [`DOKU/DEFINITION_OF_DONE_DATENSTAND.md`](DOKU/DEFINITION_OF_DONE_DATENSTAND.md) — verbindliche Stichtags-Regelung (Legacy-DoD, 01.09.2026)

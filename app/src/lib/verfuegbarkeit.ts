@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { transaction } from '@/lib/db';
+import type { PoolClient } from 'pg';
 
 export const VM_SLOTS = ['HT', 'K1', 'K2'];
 export const NM_SLOTS = ['K3', 'K4'];
@@ -17,6 +18,22 @@ export const TAG_SLOTS = [...VM_SLOTS, ...NM_SLOTS];
 
 /** Status einer freien Freigabe (konsistent zur bestehenden Route / V-09). */
 export const STATUS_FREI = 'frei';
+
+/** Fehlerklasse: Die Rücknahme einer Verfügbarkeit ist durch eine Reservierung
+ *  (Firmenanfrage) gesperrt. Wird von den Routen als HTTP 409 ausgeliefert,
+ *  damit der Client die Sperre gezielt darstellen kann. */
+export class VerfuegbarkeitSperreError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VerfuegbarkeitSperreError';
+  }
+}
+
+/** VM-Zeitfenster für die Reservierungs-Prüfung (konsistent zur UI: 09:00–13:00). */
+const VM_FENSTER = { start: '09:00', ende: '13:00' };
+
+/** NM-Zeitfenster für die Reservierungs-Prüfung (konsistent zur UI: 13:00–17:00). */
+const NM_FENSTER = { start: '13:00', ende: '17:00' };
 
 export interface TageEintrag {
   datum: string;
@@ -78,6 +95,116 @@ export function parseTrainerId(value: unknown): number | null {
   }
   return null;
 }
+
+/** Liefert die aktuell freien VM/NM-Slot-Codes des Tages als Set. */
+async function freieSlotsDesTages(
+  client: PoolClient,
+  trainerId: number,
+  datum: string
+): Promise<Set<string>> {
+  const result = await client.query(
+    `SELECT slot_code
+     FROM public.trainer_verfuegbarkeit
+     WHERE trainer_id = $1
+       AND datum = $2::date
+       AND status = $3
+       AND slot_code = ANY($4::text[])`,
+    [trainerId, datum, STATUS_FREI, TAG_SLOTS]
+  );
+  return new Set(result.rows.map((r) => String(r.slot_code)));
+}
+
+/** Prüft, ob am Tag für den Trainer eine Reservierung das Zeitfenster belegt. */
+async function reservierungBelegtFenster(
+  client: PoolClient,
+  trainerId: number,
+  datum: string,
+  start: string,
+  ende: string
+): Promise<boolean> {
+  const result = await client.query(
+    `SELECT 1
+     FROM public.trainer_reservierung
+     WHERE trainer_id = $1
+       AND datum = $2::date
+       AND start_time < $4::time
+       AND end_time > $3::time
+     LIMIT 1`,
+    [trainerId, datum, start, ende]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/** Erzwingt die Rücknahme-Sperre serverseitig (Defense in Depth zur UI-Sperre):
+ *  Wird eine aktuell freie VM-/NM-Freigabe entfernt und existiert im jeweiligen
+ *  Tagesabschnitt eine Reservierung (Firmenanfrage), ist die Aufhebung nicht
+ *  erlaubt. Das Setzen von Freigaben (vm/nm = true) bleibt immer möglich. */
+async function pruefeRuecknahmeSperre(
+  client: PoolClient,
+  trainerId: number,
+  datum: string,
+  vm: boolean,
+  nm: boolean
+): Promise<void> {
+  // Nur tatsächliche Entfernungen prüfen – reine Freigaben sind nie gesperrt.
+  if (vm && nm) return;
+
+  const freie = await freieSlotsDesTages(client, trainerId, datum);
+
+  if (!vm && VM_SLOTS.some((s) => freie.has(s))) {
+    const belegt = await reservierungBelegtFenster(
+      client,
+      trainerId,
+      datum,
+      VM_FENSTER.start,
+      VM_FENSTER.ende
+    );
+    if (belegt) {
+      throw new VerfuegbarkeitSperreError(
+        'Vormittag ist durch eine Reservierung belegt – die Aufhebung ist nicht möglich.'
+      );
+    }
+  }
+
+  if (!nm && NM_SLOTS.some((s) => freie.has(s))) {
+    const belegt = await reservierungBelegtFenster(
+      client,
+      trainerId,
+      datum,
+      NM_FENSTER.start,
+      NM_FENSTER.ende
+    );
+    if (belegt) {
+      throw new VerfuegbarkeitSperreError(
+        'Nachmittag ist durch eine Reservierung belegt – die Aufhebung ist nicht möglich.'
+      );
+    }
+  }
+}
+
+/**
+ * Validiert eine ganze Liste von Tageseinträgen gegen die Rücknahme-Sperre,
+ * OHNE etwas zu persistieren. Wird vom Batch-Endpunkt vor der Persistenz
+ * aufgerufen, damit eine gesperrte Aufhebung keine Teil-Schreibvorgänge
+ * hinterlässt (alle Einträge werden gemeinsam angenommen oder abgelehnt).
+ */
+export async function pruefeRuecknahmeSperren(
+  trainerId: number,
+  eintraege: TageEintrag[]
+): Promise<void> {
+  await transaction(async (client) => {
+    for (const eintrag of eintraege) {
+      await pruefeRuecknahmeSperre(
+        client,
+        trainerId,
+        eintrag.datum,
+        eintrag.vm,
+        eintrag.nm
+      );
+    }
+  });
+}
+
 /**
  * Persistiert den gewünschten VM/NM-Zustand eines einzelnen Tages.
  * DELETE und INSERT laufen in einer gemeinsamen Transaktion, damit beim
@@ -99,6 +226,12 @@ export async function persistiereTag(
   }
 
   await transaction(async (client) => {
+    // Rücknahme-Sperre serverseitig erzwingen (Defense in Depth): Eine Freigabe
+    // darf nicht entfernt werden, solange eine Reservierung (Firmenanfrage) den
+    // betroffenen VM-/NM-Zeitabschnitt belegt. Die UI sperrt dieselben Fälle;
+    // diese Prüfung schützt auch direkte API-Aufrufe (z. B. Batch-Endpunkt).
+    await pruefeRuecknahmeSperre(client, trainerId, datum, vm, nm);
+
     // VM/NM-Slots: Nur freie VM/NM-Slots entfernen. Bereits
     // gebuchte/reservierte Slots (status <> 'frei') bleiben unangetastet.
     await client.query(

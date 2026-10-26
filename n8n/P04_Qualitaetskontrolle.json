@@ -1,0 +1,289 @@
+[
+  {
+    "id": "dnf6LyuhQawESBX0",
+    "name": "P04 Qualitaetskontrolle und Benachrichtigung",
+    "active": 1,
+    "nodes": [
+      {
+        "id": "p04-0001-schedule",
+        "name": "P04 Taeglich starten",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "30 4 * * *"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "p04-0002-call",
+        "name": "P04 Aufruf Eingang",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          260
+        ],
+        "parameters": {
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "anlass"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "p04-0003-anlegen",
+        "name": "P04 Lauf anlegen",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          240,
+          0
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO edoobox_raw.sync_run (run_type, status, abgleichsart)\nVALUES ('P04', 'laeuft', 'kontrolle')\nRETURNING run_id, started_at, status;",
+          "options": {}
+        },
+        "credentials": {
+          "postgres": {
+            "id": "eXRRFRowW6RCTJvp",
+            "name": "PostgreSQL Kursplan – n8n_writer"
+          }
+        }
+      },
+      {
+        "id": "p04-0004-kontrollen",
+        "name": "P04 Kontrollen ausfuehren",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          480,
+          0
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "WITH lr AS (\n    SELECT\n        (SELECT max(finished_at) FROM edoobox_raw.sync_run WHERE run_type = 'P01' AND status = 'erfolgreich') AS last_p01,\n        (SELECT max(finished_at) FROM edoobox_raw.sync_run WHERE run_type = 'P02' AND status = 'erfolgreich') AS last_p02,\n        (SELECT max(finished_at) FROM edoobox_raw.sync_run WHERE run_type IN ('vollabgleich','P03') AND status = 'erfolgreich') AS last_p03\n)\nSELECT\n    lr.last_p01,\n    round(extract(epoch from (now() - lr.last_p01)))::numeric AS p01_alter_sek,\n    lr.last_p02,\n    round(extract(epoch from (now() - lr.last_p02)))::numeric AS p02_alter_sek,\n    lr.last_p03,\n    round(extract(epoch from (now() - lr.last_p03)))::numeric AS p03_alter_sek,\n    extract(isodow from now() at time zone 'Europe/Berlin')::int AS wochentag,\n    extract(hour   from now() at time zone 'Europe/Berlin')::int AS stunde,\n    (SELECT count(*) FROM edoobox_raw.offer_date d\n       LEFT JOIN edoobox_raw.offer o ON o.offer_id = d.offer_id\n      WHERE d.is_deleted IS NOT TRUE AND o.offer_id IS NULL) AS date_ohne_offer,\n    (SELECT count(*) FROM edoobox_raw.booking_position p\n       LEFT JOIN edoobox_raw.booking b ON b.booking_id = p.booking_id\n      WHERE b.booking_id IS NULL) AS position_ohne_buchung,\n    (SELECT count(*) FROM edoobox_raw.booking_transaction t\n       LEFT JOIN edoobox_raw.booking b ON b.booking_id = t.booking_id\n      WHERE b.booking_id IS NULL) AS trans_ohne_buchung,\n    (SELECT coalesce(max(anzahl_aktiv), 0)\n       FROM kursplan.v_qualitaet_historienluecken\n      WHERE kategorie = 'buchung_ohne_offer') AS buchung_ohne_offer_aktiv,\n    (SELECT coalesce(max(anzahl_legacy), 0)\n       FROM kursplan.v_qualitaet_historienluecken\n      WHERE kategorie = 'buchung_ohne_offer') AS buchung_ohne_offer_legacy,\n    (SELECT coalesce(max(anzahl_aktiv), 0)\n       FROM kursplan.v_qualitaet_historienluecken\n      WHERE kategorie = 'leader_ohne_trainer') AS leader_ohne_trainer_aktiv,\n    (SELECT coalesce(max(anzahl_legacy), 0)\n       FROM kursplan.v_qualitaet_historienluecken\n      WHERE kategorie = 'leader_ohne_trainer') AS leader_ohne_trainer_legacy,\n    (SELECT coalesce(max(anzahl_aktiv), 0)\n       FROM kursplan.v_qualitaet_historienluecken\n      WHERE kategorie = 'attendance_ohne_termin') AS attendance_ohne_termin_aktiv,\n    (SELECT coalesce(max(anzahl_legacy), 0)\n       FROM kursplan.v_qualitaet_historienluecken\n      WHERE kategorie = 'attendance_ohne_termin') AS attendance_ohne_termin_legacy,\n    (SELECT count(*) FILTER (WHERE kostenkonfiguration_fehlt)\n       FROM kursplan.v_termin_db1\n      WHERE date_start >= timestamp '2023-01-01') AS offen_kosten,\n    (SELECT count(*) FILTER (WHERE NOT kostenkonfiguration_fehlt)\n       FROM kursplan.v_termin_db1\n      WHERE date_start >= timestamp '2023-01-01') AS berechenbare_angebote,\n    (SELECT round(sum(netto_gebucht), 2)\n       FROM kursplan.v_termin_db1\n      WHERE date_start >= timestamp '2023-01-01' AND NOT kostenkonfiguration_fehlt) AS netto,\n    (SELECT round(sum(trainerkosten), 2)\n       FROM kursplan.v_termin_db1\n      WHERE date_start >= timestamp '2023-01-01' AND NOT kostenkonfiguration_fehlt) AS trainerkosten,\n    (SELECT round(sum(plattformkosten), 2)\n       FROM kursplan.v_termin_db1\n      WHERE date_start >= timestamp '2023-01-01' AND NOT kostenkonfiguration_fehlt) AS plattformkosten,\n    (SELECT round(sum(direkte_kosten), 2)\n       FROM kursplan.v_termin_db1\n      WHERE date_start >= timestamp '2023-01-01' AND NOT kostenkonfiguration_fehlt) AS direkte_kosten,\n    (SELECT round(sum(db1), 2)\n       FROM kursplan.v_termin_db1\n      WHERE date_start >= timestamp '2023-01-01' AND NOT kostenkonfiguration_fehlt) AS db1,\n    (SELECT count(*) FROM kursplan.v_termin_db1 t\n      WHERE t.date_start >= timestamp '2023-01-01'\n        AND t.kosten_aktiv\n        AND NOT EXISTS (\n            SELECT 1 FROM edoobox_raw.offer_date d\n            JOIN edoobox_raw.date_leader dl ON dl.date_id = d.date_id\n            WHERE d.offer_id = t.offer_id AND d.is_deleted IS NOT TRUE\n        )) AS angebote_ohne_trainer\nFROM lr;",
+          "options": {}
+        },
+        "credentials": {
+          "postgres": {
+            "id": "eXRRFRowW6RCTJvp",
+            "name": "PostgreSQL Kursplan – n8n_writer"
+          }
+        }
+      },
+      {
+        "id": "p04-0005-auswerten",
+        "name": "P04 Ergebnis auswerten",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          720,
+          0
+        ],
+        "parameters": {
+          "jsCode": "// P04 - Ergebnis auswerten\n// Liest die Einzelwerte der Kontrollabfrage und stellt Status + Bericht zusammen.\n// Harte Fehler (Laufalter, offene Kosten, harte Beziehungsbrueche) setzen den\n// Lauf auf 'fehler'. Warnungen werden nur gemeldet.\n//\n// Legacy-Stichtagsregelung (seit 01.09.2026):\n// Die drei Historienlücken-Bloecke werden über kursplan.v_qualitaet_historienluecken\n// geliefert. Nur die *_aktiv-Zaehler (Datensätze ab Stichtag) losen Alarme aus;\n// die *_legacy-Zaehler (Altdatenbestand vor dem Stichtag) erscheinen als INFO.\n\nconst r = $('P04 Kontrollen ausfuehren').first().json;\n\nfunction zahl(w) {\n  const n = Number(w);\n  return Number.isFinite(n) ? n : 0;\n}\n\nconst imBetriebsfenster = (r.wochentag >= 1 && r.wochentag <= 5 && r.stunde >= 8 && r.stunde <= 23);\nconst p01Alter = (r.p01_alter_sek === null || r.p01_alter_sek === undefined) ? null : zahl(r.p01_alter_sek);\nconst p02Alter = (r.p02_alter_sek === null || r.p02_alter_sek === undefined) ? null : zahl(r.p02_alter_sek);\nconst p03Alter = (r.p03_alter_sek === null || r.p03_alter_sek === undefined) ? null : zahl(r.p03_alter_sek);\n\nconst fehler = [];\nconst warnungen = [];\nconst info = [];\n\n// P01 nur im Betriebszeitfenster pruefen (werktags 08:00-23:45).\nif (imBetriebsfenster && (p01Alter === null || p01Alter > 1800)) {\n  fehler.push(p01Alter === null\n    ? 'P01: kein erfolgreicher Lauf vorhanden'\n    : 'P01: letzter erfolgreicher Lauf vor ' + Math.round(p01Alter / 60) + ' Minuten');\n}\n\nif (p02Alter === null || p02Alter > 93600) {\n  fehler.push(p02Alter === null\n    ? 'P02: kein erfolgreicher Lauf vorhanden'\n    : 'P02: letzter erfolgreicher Lauf vor ' + (p02Alter / 3600).toFixed(1) + ' Stunden');\n}\n\nif (p03Alter === null || p03Alter > 691200) {\n  fehler.push(p03Alter === null\n    ? 'P03: kein erfolgreicher Vollabgleich vorhanden'\n    : 'P03: letzter Vollabgleich vor ' + (p03Alter / 86400).toFixed(1) + ' Tagen');\n}\n\nif (zahl(r.offen_kosten) > 0)            fehler.push('Offene Kostenkonfigurationen: ' + r.offen_kosten);\nif (zahl(r.date_ohne_offer) > 0)         fehler.push('Termine ohne Angebot: ' + r.date_ohne_offer);\nif (zahl(r.position_ohne_buchung) > 0)   fehler.push('Buchungspositionen ohne Buchung: ' + r.position_ohne_buchung);\nif (zahl(r.trans_ohne_buchung) > 0)      fehler.push('Buchungstransaktionen ohne Buchung: ' + r.trans_ohne_buchung);\n\n// Nur aktive Luecken ab dem Legacy-Stichtag sind Alarme.\nif (zahl(r.buchung_ohne_offer_aktiv) > 0)        warnungen.push('Buchungen ohne Angebot (ab Stichtag): ' + r.buchung_ohne_offer_aktiv);\nif (zahl(r.leader_ohne_trainer_aktiv) > 0)       warnungen.push('Trainerzuordnungen ohne Trainerprofil (ab Stichtag): ' + r.leader_ohne_trainer_aktiv);\nif (zahl(r.attendance_ohne_termin_aktiv) > 0)    warnungen.push('Anwesenheiten ohne Termin (ab Stichtag): ' + r.attendance_ohne_termin_aktiv);\nif (zahl(r.angebote_ohne_trainer) > 0)           warnungen.push('Produktive Angebote ohne Trainer: ' + r.angebote_ohne_trainer);\n\n// Altdatenbestand vor dem Stichtag wird nur informativ ausgewiesen.\ninfo.push('Legacy-Altbestand (vor 01.09.2026): Buchungen ohne Angebot ' + r.buchung_ohne_offer_legacy +\n  ', Trainer ohne Profil ' + r.leader_ohne_trainer_legacy +\n  ', Anwesenheiten ohne Termin ' + r.attendance_ohne_termin_legacy);\n\ninfo.push(\n  'DB-I (ab 2023): Netto ' + r.netto +\n  ', Trainer ' + r.trainerkosten +\n  ', Plattform ' + r.plattformkosten +\n  ', direkte Kosten ' + r.direkte_kosten +\n  ', DB I ' + r.db1 +\n  ', berechenbare Angebote ' + r.berechenbare_angebote\n);\n\nconst status = fehler.length ? 'fehler' : 'erfolgreich';\nconst bericht = ['P04-Kontrolle']\n  .concat(fehler.map(function (f) { return 'FEHLER: ' + f; }))\n  .concat(warnungen.map(function (w) { return 'WARNUNG: ' + w; }))\n  .concat(info.map(function (i) { return 'INFO: ' + i; }))\n  .join(' | ');\n\n// O-7: E-Mail-Benachrichtigung nur bei Befund (Fehler oder Warnung).\nconst mailNoetig = fehler.length > 0 || warnungen.length > 0;\nconst mailBetreff = mailNoetig\n  ? '[' + (fehler.length ? 'FEHLER' : 'WARNUNG') + '] P04-Qualitaetskontrolle ' + new Date().toISOString().slice(0, 10)\n  : '';\n// Empfängeradresse über n8n-Umgebungsvariable, z. B. P04_ALERT_EMAIL=team@example.com\nconst mailEmpfaenger = $env.P04_ALERT_EMAIL || '';\n\nreturn [{\n  json: {\n    run_id: $('P04 Lauf anlegen').first().json.run_id,\n    status,\n    fehler: fehler.length,\n    warnungen: warnungen.length,\n    bericht,\n    error_text: (fehler.length || warnungen.length) ? bericht.slice(0, 4000) : null,\n    alert_message: (fehler.length || warnungen.length) ? bericht.slice(0, 4000) : null,\n    mail_to: mailEmpfaenger,\n    mail_subject: mailBetreff,\n    mail_body: mailNoetig ? bericht : '',\n  },\n}];"
+        }
+      },
+      {
+        "id": "p04-0007-mail-if",
+        "name": "P04 Mail erforderlich?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1080,
+          0
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.error_text }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty"
+                },
+                "caseSensitive": true,
+                "typeValidation": "loose"
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "p04-0008-mail-senden",
+        "name": "P04 Alert-Mail senden",
+        "type": "n8n-nodes-base.emailSend",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          0
+        ],
+        "onError": "continueRegularOutput",
+        "disabled": true,
+        "parameters": {
+          "fromEmail": "={{ $env.P04_MAIL_FROM || 'kursplan@localhost' }}",
+          "toEmail": "={{ $json.mail_to }}",
+          "subject": "={{ $json.mail_subject }}",
+          "text": "={{ $json.mail_body }}",
+          "emailFormat": "text",
+          "options": {}
+        }
+      },
+      {
+        "id": "p04-0006-abschluss",
+        "name": "P04 Lauf abschliessen",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1560,
+          0
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE edoobox_raw.sync_run\nSET\n    status = $1,\n    finished_at = now(),\n    error_text = $2,\n    alert_sent = $4,\n    alert_sent_at = CASE WHEN $4 THEN now() ELSE NULL END,\n    alert_message = CASE WHEN $4 THEN $5 ELSE NULL END\nWHERE run_id = $3\nRETURNING run_id, status, finished_at, error_text, alert_sent, alert_sent_at, alert_message;",
+          "options": {
+            "queryReplacement": "={{ [$json.status, $json.error_text, $json.run_id, ($json.fehler > 0 || $json.warnungen > 0), $json.alert_message] }}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "eXRRFRowW6RCTJvp",
+            "name": "PostgreSQL Kursplan – n8n_writer"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "P04 Taeglich starten": {
+        "main": [
+          [
+            {
+              "node": "P04 Lauf anlegen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P04 Aufruf Eingang": {
+        "main": [
+          [
+            {
+              "node": "P04 Lauf anlegen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P04 Lauf anlegen": {
+        "main": [
+          [
+            {
+              "node": "P04 Kontrollen ausfuehren",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P04 Kontrollen ausfuehren": {
+        "main": [
+          [
+            {
+              "node": "P04 Ergebnis auswerten",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P04 Ergebnis auswerten": {
+        "main": [
+          [
+            {
+              "node": "P04 Mail erforderlich?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P04 Mail erforderlich?": {
+        "main": [
+          [
+            {
+              "node": "P04 Alert-Mail senden",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "P04 Lauf abschliessen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "P04 Alert-Mail senden": {
+        "main": [
+          [
+            {
+              "node": "P04 Lauf abschliessen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "saveExecutionProgress": true,
+      "saveManualExecutions": true,
+      "saveDataErrorExecution": "all",
+      "saveDataSuccessExecution": "all",
+      "timezone": "Europe/Berlin",
+      "executionOrder": "v1",
+      "availableInMCP": true
+    },
+    "staticData": {
+      "node:P04 Taeglich starten": {
+        "recurrenceRules": [
+          null
+        ],
+        "recurrenceRuleSignatures": [
+          null
+        ]
+      }
+    },
+    "pinData": null,
+    "versionId": "28208b62-e6e1-4680-a7bd-d2684619dd73",
+    "triggerCount": 1,
+    "meta": null,
+    "nodeGroups": [],
+    "description": null
+  }
+]

@@ -104,11 +104,26 @@ export interface ReservierungsGruppeDialogProps {
 // Konstanten & Helfer
 // ---------------------------------------------------------------------------
 
-/** Formatiert ein ISO-Datum (YYYY-MM-DD) als "19.11.2026". */
+/** Wochentags-Kürzel mit Punkt, passend zu Date.getUTCDay() (0=So … 6=Sa). */
+const WOCHENTAGE_KURZ = [
+  'So.',
+  'Mo.',
+  'Di.',
+  'Mi.',
+  'Do.',
+  'Fr.',
+  'Sa.',
+];
+
+/** Formatiert ein ISO-Datum (YYYY-MM-DD) als "Di. 10.11.2026". */
 function formatDatum(datum: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(datum)) return datum;
-  const [, m, t] = datum.split('-');
-  return `${t}.${m}.${datum.slice(0, 4)}`;
+  const [y, m, t] = datum.split('-');
+  const wochentag =
+    WOCHENTAGE_KURZ[
+      new Date(Date.UTC(Number(y), Number(m) - 1, Number(t))).getUTCDay()
+    ];
+  return `${wochentag} ${t}.${m}.${y}`;
 }
 
 /** Heutiges Datum als YYYY-MM-DD (lokal, ohne UTC-Versatz). */
