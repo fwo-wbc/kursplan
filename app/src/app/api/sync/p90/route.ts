@@ -13,11 +13,27 @@ export const dynamic = 'force-dynamic';
 export async function POST() {
   const webhookUrl = process.env.N8N_P90_WEBHOOK_URL?.trim();
 
-  // Lokaler Entwicklungs-Fallback: Ohne konfigurierte Webhook-URL wird ein
-  // simulierter Erfolg zurückgegeben, damit die Oberfläche ohne n8n testbar ist.
+  // Fehlende Webhook-URL niemals als Erfolg melden: In Produktion muss der
+  // Aufrufer einen echten Fehler sehen, sonst zeigt das Frontend
+  // "Synchronisiert", obwohl n8n nie erreicht wurde. Der simulierte Erfolg
+  // ist ausschließlich für die lokale Entwicklung ohne n8n gedacht.
   if (!webhookUrl) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error(
+        'N8N_P90_WEBHOOK_URL ist nicht gesetzt – P90-Sync kann nicht gestartet werden.'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Synchronisierung fehlgeschlagen: N8N_P90_WEBHOOK_URL ist nicht konfiguriert.',
+        },
+        { status: 500 }
+      );
+    }
+
     console.warn(
-      'N8N_P90_WEBHOOK_URL ist nicht gesetzt – simulierter P90-Sync-Erfolg.'
+      'N8N_P90_WEBHOOK_URL ist nicht gesetzt – simulierter P90-Sync-Erfolg (nur Entwicklung).'
     );
     revalidatePath('/');
     return NextResponse.json(
