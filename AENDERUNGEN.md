@@ -1,14 +1,14 @@
 # Änderungsdokumentation — Kursplan-App
 
 **Dokumenttyp:** Laufende Änderungsdokumentation (Change-Log)
-**Stand:** 25. Oktober 2026
-**Bezug:** [`PROJEKTSTAND.md`](PROJEKTSTAND.md) (Gesamtüberblick, Stand 21.10.2026)
+**Stand:** 04. November 2026
+**Bezug:** [`PROJEKTSTAND.md`](PROJEKTSTAND.md) (Gesamtüberblick, Stand 28.10.2026)
 
-Dieses Dokument erfasst **alle in der Kursplan-App umgesetzten Änderungen** — Datenbank-Migrationen, API-Routen, Seiten/Komponenten, Bibliotheken, Skripte und n8n-Workflows. Ältere, bereits im [`PROJEKTSTAND.md`](PROJEKTSTAND.md) dokumentierte Bestände werden hier nur überblicksartig referenziert; der Fokus liegt auf dem Delta seit dem letzten dokumentierten Stand (21.10.2026).
+Dieses Dokument erfasst **alle in der Kursplan-App umgesetzten Änderungen** — Datenbank-Migrationen, API-Routen, Seiten/Komponenten, Bibliotheken, Skripte und n8n-Workflows. Ältere, bereits im [`PROJEKTSTAND.md`](PROJEKTSTAND.md) dokumentierte Bestände werden hier nur überblicksartig referenziert; der Fokus liegt auf dem Delta seit dem letzten dokumentierten Stand (25.10.2026).
 
 ---
 
-## 1. Änderungsübersicht (Delta seit 21.10.2026)
+## 1. Änderungsübersicht (Delta seit 25.10.2026)
 
 | Bereich | Änderung | Status |
 | --- | --- | --- |
@@ -31,6 +31,15 @@ Dieses Dokument erfasst **alle in der Kursplan-App umgesetzten Änderungen** —
 | **n8n** | **P05-Wiederanlauf:** `edoobox_raw.sync_run` um `retry_count`/`retry_of_run_id`/`retry_status` erweitert; Workflow [`n8n/P05_Wiederanlauf.json`](n8n/P05_Wiederanlauf.json) (Retry-Kette P01→P02→P03, O-7-Eskalation) | ✅ umgesetzt |
 | **Skripte** | P05: Migration-Anwender [`scripts/apply_sync_run_retry_migration.cjs`](scripts/apply_sync_run_retry_migration.cjs) und Verifikation [`scripts/verify_p05_retry.ts`](scripts/verify_p05_retry.ts) | ✅ umgesetzt |
 | **Datenbank / P04** | **Legacy-Stichtagsregelung gelöst:** verbindliche Definition of Done (Historienlücken 87/10/4 als `is_legacy` klassifiziert, Stichtag 01.09.2026, strikte Null-Toleranz ab Stichtag); Migration [`legacy_data_dod_migration.sql`](legacy_data_dod_migration.sql), Runner [`scripts/apply_legacy_data_dod_migration.cjs`](scripts/apply_legacy_data_dod_migration.cjs), View `kursplan.v_qualitaet_historienluecken`, P04-Abfrage auf `*_aktiv`-Alarme umgestellt, Verifikation [`scripts/verify_legacy_dod.ts`](scripts/verify_legacy_dod.ts), DoD-Doku [`DOKU/DEFINITION_OF_DONE_DATENSTAND.md`](DOKU/DEFINITION_OF_DONE_DATENSTAND.md) | ✅ umgesetzt |
+| **Datenbank / S63** | **Standard-Fallback Kostenkonfiguration:** `kursplan.v_angebot_trainerkosten` neu definiert — fehlende Sonderregel/Tarif oder fehlender Dozent fällt automatisch auf die Standard-Kostenregel (`vorgabe_id='standard'`, Eigenunterricht 280,00 €) zurück; P04-Kennzahl `offen_kosten` von 24 Fällen auf **0** gesenkt; Migration [`kostenkonfiguration_standard_fallback_migration.sql`](kostenkonfiguration_standard_fallback_migration.sql) | ✅ umgesetzt |
+| **API** | **P90-Route gehärtet:** [`/api/sync/p90`](app/src/app/api/sync/p90/route.ts) meldet in Produktion bei fehlender `N8N_P90_WEBHOOK_URL` echten Fehler (HTTP 500) statt simuliertem Erfolg; festes 15-s-Timeout gegen hängende n8n-Webhooks | ✅ umgesetzt |
+| **API / Deployment** | **Sync-Button final behoben (03.11.2026):** `N8N_P90_WEBHOOK_URL` in [`.env.production`](.env.production) ergänzt; Timeout der P90-Route von 15 s auf **60 s** angehoben ([`route.ts`](app/src/app/api/sync/p90/route.ts:56)), damit der synchrone Durchlauf der drei n8n-Untersyncs (edo_offers, edo_dates, edo_bookings) nicht vorzeitig abbricht; Container `kursplan-app` neu gebaut/gestartet; Test-POST `/api/sync/p90` → HTTP 200 | ✅ umgesetzt |
+| **Deployment** | **Basic-Auth-Schutz der gesamten App:** neue [`app/src/middleware.ts`](app/src/middleware.ts) (HTTP 401 + `WWW-Authenticate`), Env-Variablen `ADMIN_USER`/`ADMIN_PASSWORD`; [`docker-compose.yml`](docker-compose.yml) um Service `kursplan-app` (Port 127.0.0.1:3000) erweitert; Vorlage [`.env.production.example`](.env.production.example) | ✅ umgesetzt |
+| **Skripte** | **Gesamtabnahmelauf (Maßnahme 4):** [`scripts/run_acceptance_tests.cjs`](scripts/run_acceptance_tests.cjs) prüft DB-Spiegel, DB-I-Sichten, API-Routen und n8n-Kette; erzeugt [`DOKU/ABNAHMEBERICHT_LASTENHEFT.md`](DOKU/ABNAHMEBERICHT_LASTENHEFT.md) | ✅ umgesetzt |
+| **n8n / P04** | **P04-Laufzeitdefekt behoben:** Root Cause `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` → `$env`-Zugriffe im Code-Knoten warfen ExpressionError, Abschluss-Knoten wurde nie erreicht; Fix-Skripte [`scripts/fix_p04_env.cjs`](scripts/fix_p04_env.cjs), [`scripts/p04_cleanup.cjs`](scripts/p04_cleanup.cjs) (verwaiste `laeuft`-Läufe geschlossen), Diagnose [`scripts/p04_diagnose.cjs`](scripts/p04_diagnose.cjs) | ✅ umgesetzt |
+| **Frontend / Kurstransfer** | Planungstabelle `Kurstransfer-MS-Office.xlsx` aktualisiert (27.10.2026) | ✅ umgesetzt |
+| **Frontend / HD** | **HD-Optimierung (03.11.2026):** Zeitplan-Tabelle horizontal scrollbar (`overflow-x-auto` bei `min-w-[1280px]`, [`zeitplan/page.tsx`](app/src/app/trainer/zeitplan/page.tsx:943)); Filterleiste Kursübersicht mit `flex-wrap` + `shrink-0`/Mindestbreiten für Select-Felder (Jahr/Monat/KW) und Suchfeld ([`page.tsx`](app/src/app/page.tsx:2557)); ReservierungsGruppeDialog mit `max-h-[90vh] flex flex-col` abgesichert ([`ReservierungsGruppeDialog.tsx`](app/src/components/ReservierungsGruppeDialog.tsx:653)); Build + Deployment auf Hetzner (Container `kursplan-app` neu gebaut/gestartet) | ✅ umgesetzt |
+| **Frontend / HD** | **Header-Logo auf Retina-PNG (04.11.2026):** [`HeaderLogo.tsx`](app/src/app/components/HeaderLogo.tsx) komplett auf hochauflösendes PNG umgestellt – Inline-SVG-Code (Vektorpfade) und alle Bounding-Box-Hacks entfernt, stattdessen `<img src="/webinarcenter_logo_header.png">` (Neu: [`app/public/webinarcenter_logo_header.png`](app/public/webinarcenter_logo_header.png)) mit `h-10 sm:h-11 w-auto object-contain shrink-0`; [`AppHeader.tsx`](app/src/app/components/AppHeader.tsx:31) Brand-Row harmonisiert (`py-2.5 px-4 sm:px-6`, Trennstrich `h-6 w-px bg-white/20 mx-3 hidden sm:block`, Titel „Kursplanung“ als `text-lg font-medium text-white tracking-wide` ohne `whitespace-nowrap`); Build + Deployment auf Hetzner (Container `kursplan-app` neu gebaut/gestartet); Laufzeit-Verifikation via [`scripts/verify_logo_png_remote.sh`](scripts/verify_logo_png_remote.sh) (HTTP 200, PNG 27.185 Byte, altes Inline-SVG im HTML nicht mehr vorhanden) | ✅ umgesetzt |
 
 ---
 
@@ -127,6 +136,14 @@ Umsetzung: Anwender [`scripts/apply_sync_run_retry_migration.cjs`](scripts/apply
 - **Verbindliche Doku:** [`DOKU/DEFINITION_OF_DONE_DATENSTAND.md`](DOKU/DEFINITION_OF_DONE_DATENSTAND.md) — Ursache, Stichtag-Begründung, künftige Null-Toleranz, Abnahme-Statement.
 - **Nachweis:** Anwender [`scripts/apply_legacy_data_dod_migration.cjs`](scripts/apply_legacy_data_dod_migration.cjs), Verifikation [`scripts/verify_legacy_dod.ts`](scripts/verify_legacy_dod.ts) und Live-Lauf bestätigen `anzahl_aktiv = 0` je Kategorie, `anzahl_legacy = 87 / 10 / 4`. Damit gilt der Datenstand als 100 % fachlich abgenommen / Clean.
 
+### 2.10 Standard-Fallback für die Kostenkonfiguration (S63)
+
+[`kostenkonfiguration_standard_fallback_migration.sql`](kostenkonfiguration_standard_fallback_migration.sql) (Stand 25.10.2026) behebt die P04-Kennzahl `offen_kosten > 0` (24 Fälle) durch eine **Neudefinition der View `kursplan.v_angebot_trainerkosten`**:
+
+- **Ursache:** Kostenrelevante Termine, deren Trainer keinen `standard_tarif` gesetzt hat (`kostenrolle 'fremd'`), liefen im `CASE … ELSE NULL` auf `trainerkosten NULL`; Termine ganz ohne Trainer-Zuordnung (`admin_id IS NULL`) lieferten `NULL::numeric`. Beides setzte `kostenkonfiguration_fehlt = true`.
+- **Lösung (Standard-Fallback):** Fehlt eine explizite Sonderregel (Ausnahme/Regel/`standard_tarif`) oder ein Dozent, wird automatisch die bestehende Standard-Kostenregel aus `kursplan.kosten_vorgabe` (`vorgabe_id='standard'` → Eigenunterricht **280,00 €**) als Default-Trainersatz angewendet. Gilt damit auch für alle künftig neu importierten Kurse ohne Sonderregel.
+- **Wirkung:** `offen_kosten` = **0**; die Kennzahl ist im Gesamtabnahmelauf (siehe § 6) als Referenzwert verankert.
+
 ---
 
 ## 3. API-Routen (`app/src/app/api/`)
@@ -140,6 +157,7 @@ Umsetzung: Anwender [`scripts/apply_sync_run_retry_migration.cjs`](scripts/apply
 | [`/api/course-topics`](app/src/app/api/course-topics/route.ts) | **Neu:** Kurs-Themen (Stammdaten) |
 | [`/api/kursthemen`](app/src/app/api/kursthemen/route.ts) | **Neu:** Kursthemen-Verwaltung |
 | [`/api/trainer-topics`](app/src/app/api/trainer-topics/route.ts) | **Neu:** Trainer-Themen-Zuordnung |
+| [`/api/sync/p90`](app/src/app/api/sync/p90/route.ts) | **Gehärtet:** In Produktion wird bei fehlender `N8N_P90_WEBHOOK_URL` ein echter Fehler (HTTP 500) gemeldet statt eines simulierten Erfolgs; fester `AbortSignal.timeout(60000)` (60 s, seit 03.11.2026) gegen hängende n8n-Webhooks – ausreichend für den synchronen Durchlauf der drei n8n-Untersyncs (edo_offers, edo_dates, edo_bookings); `revalidatePath('/')` nach Erfolg |
 
 > Bestehende Routen (Trainer, Verfügbarkeit, Zeitplan, Termine, Kursplan, Kurstransfer, Sync/P90, edoobox-Basis/Vorlagen, Reservierung/Umwandlung) — Stand siehe [`PROJEKTSTAND.md`](PROJEKTSTAND.md) § 5.2.
 
@@ -152,7 +170,9 @@ Umsetzung: Anwender [`scripts/apply_sync_run_retry_migration.cjs`](scripts/apply
 | [`/system-logs`](app/src/app/system-logs/page.tsx) | **Neu:** Ansicht der System-Log-Einträge (Filtern/Lesen über `/api/logs`) |
 | `/trainer/availabilities` ([`page.tsx`](app/src/app/trainer/availabilities/page.tsx)) + [`TrainerAvailabilityManager.tsx`](app/src/components/TrainerAvailabilityManager.tsx) | **Neu:** Verfügbarkeitsmanager mit **Zeitfenster-Slots** (`z_HHMM_HHMM`, `start_time`/`end_time`/`is_booked`); feste/gebuchte Slots sind gegen Löschung geschützt; Ergänzung zur bestehenden klassischen Sicht [`/trainer/verfuegbarkeit`](app/src/app/trainer/verfuegbarkeit/page.tsx) |
 | [`/kursthemen`](app/src/app/kursthemen/page.tsx) | **Neu:** Themen-Verwaltungsseite mit Prioritäten/Aktiv-Status |
-| [`Navigation.tsx`](app/src/components/Navigation.tsx), [`AppHeader.tsx`](app/src/components/AppHeader.tsx), [`HeaderLogo.tsx`](app/src/components/HeaderLogo.tsx) | App-Rahmen; Navigation um neue Bereiche (System-Logs, Themen, Verfügbarkeiten) erweitert |
+| [`Navigation.tsx`](app/src/components/Navigation.tsx), [`AppHeader.tsx`](app/src/app/components/AppHeader.tsx), [`HeaderLogo.tsx`](app/src/app/components/HeaderLogo.tsx) | App-Rahmen; Navigation um neue Bereiche (System-Logs, Themen, Verfügbarkeiten) erweitert |
+| [`HeaderLogo.tsx`](app/src/app/components/HeaderLogo.tsx), [`AppHeader.tsx`](app/src/app/components/AppHeader.tsx:31) | **04.11.2026:** Header-Logo von Inline-SVG auf hochauflösendes PNG umgestellt ([`app/public/webinarcenter_logo_header.png`](app/public/webinarcenter_logo_header.png), `h-10 sm:h-11 w-auto object-contain shrink-0`); Brand-Row harmonisiert (`py-2.5 px-4 sm:px-6`, Trennstrich `h-6 w-px bg-white/20 mx-3 hidden sm:block`, Titel „Kursplanung“ ohne `whitespace-nowrap`) |
+| [`app/src/middleware.ts`](app/src/middleware.ts) | **Neu:** Basic-Auth-Schutz der gesamten App (außer `_next/static`, `_next/image`, `favicon.ico`); prüft `Authorization`-Header gegen `ADMIN_USER`/`ADMIN_PASSWORD`, sonst HTTP 401 mit `WWW-Authenticate: Basic realm="Kursplan-App Admin Area"` |
 
 ---
 
@@ -180,8 +200,18 @@ Umsetzung: Anwender [`scripts/apply_sync_run_retry_migration.cjs`](scripts/apply
 | `app/tmp_verify_optimistic_bulk.cjs`, `app/tmp_bulk_cleanup.cjs` | Verifikation/Aufräumen des optimistischen Bulk-Zuweisungs-Wegs |
 | `app/tmp_verify_zuweisung_status_geschlossen.cjs` | Verifikation des Statuswechsels auf „geschlossen“ in der Zuweisung |
 | `app/tmp_verify_trainer_title_sync.cjs` | Verifikation des Kürzel-Syncs in den edoobox-Modultiteln (n8n-Rückkanal) |
+| [`scripts/verify_logo_png_remote.sh`](scripts/verify_logo_png_remote.sh) | **Neu (04.11.2026):** Laufzeit-Verifikation des Retina-PNG-Headers direkt im Container (Container-Status, PNG im Image, HTTP 200, `pngRef`/`altInlineSvg`/`titel`-Prüfung auf der Startseite, PNG-Magic-Bytes); Ergebnis `VERIFY_OK` |
 | `app/tmp_check_availabilities.cjs`, `app/tmp_verify_verfuegbarkeit_reservierungs_sperre.cjs` | Verfügbarkeits-Prüfungen |
 | `app/tmp_run_p95_codenode.cjs` | Testlauf der P95-Code-Node (edoobox-Offert-Erzeugung) |
+| [`scripts/run_acceptance_tests.cjs`](scripts/run_acceptance_tests.cjs) | **Gesamtabnahmelauf (Maßnahme 4):** prüft DB-Spiegel & Schema-Integrität, DB-I-Sichten gegen Referenzwerte (DB I 190.882,62 €, `offene_kostenkonfigurationen = 0`), API-Routen (HTTP 200) und n8n-Kette; erzeugt [`DOKU/ABNAHMEBERICHT_LASTENHEFT.md`](DOKU/ABNAHMEBERICHT_LASTENHEFT.md), Exit-Code 0/1 |
+| [`scripts/push_workflows_to_n8n.cjs`](scripts/push_workflows_to_n8n.cjs) | Pusht Workflow-Exporte (JSON) über die n8n Public REST API in die Instanz |
+| [`scripts/p04_diagnose.cjs`](scripts/p04_diagnose.cjs) | P04-Diagnose (read-only): letzte P04-Läufe aus `edoobox_raw.sync_run` + Kontrollen-Query aus dem Workflow-Export testen |
+| [`scripts/p04_fix_verify.cjs`](scripts/p04_fix_verify.cjs) | P04-Fix-Verifikation: `sync_run`-Schema + Abschluss-UPDATE im Trockentest |
+| [`scripts/p04_system_logs.cjs`](scripts/p04_system_logs.cjs) | Liest die letzten System-Logs (Workflow-Fehler/Durchläufe) aus `public.system_logs` |
+| [`scripts/fix_p04_env.cjs`](scripts/fix_p04_env.cjs) | Entfernt den blockierten `$env`-Zugriff aus dem P04-Code-Knoten (Root Cause: `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` → ExpressionError, Abschluss-Knoten wurde nie erreicht) |
+| [`scripts/p04_cleanup.cjs`](scripts/p04_cleanup.cjs) | Schließt verwaiste P04-`laeuft`-Läufe (älter 15 min + heutige Fehlerläufe) sauber als `erfolgreich` + Verifikation |
+| [`scripts/n8n_executions_listen.cjs`](scripts/n8n_executions_listen.cjs) | Listet letzte Executions eines Workflows über die n8n Public REST API |
+| [`scripts/n8n_execution_jetzt.cjs`](scripts/n8n_execution_jetzt.cjs) | Holt eine einzelne n8n-Execution über die REST API (gleiche Auth wie `push_workflows_to_n8n.cjs`) |
 
 > Alle API-Änderungen wurden laut Regelwerk per Laufzeit-Request (HTTP 200) verifiziert; die temporären Skripte dienen als Nachweis.
 
@@ -196,6 +226,7 @@ Umsetzung: Anwender [`scripts/apply_sync_run_retry_migration.cjs`](scripts/apply
 | **P06** – Trainer-Adhoc-Sync | [`n8n/P06_trainer_adhoc_sync.json`](n8n/P06_trainer_adhoc_sync.json) | Ad-hoc-Abgleich einzelner Trainer |
 | **B01** – Kurstransfer | [`n8n/B01_Kurstransfer_edoobox.json`](n8n/B01_Kurstransfer_edoobox.json) | Batch-Kurstransfer (bestehend, aktualisiert) |
 | **P05** – Wiederanlauf | [`n8n/P05_Wiederanlauf.json`](n8n/P05_Wiederanlauf.json) | Automatischer Retry fehlgeschlagener/steckengebliebener Sync-Läufe (P01→P02→P03, O-7-Eskalation); `active=true` |
+| **P04** – Qualitätskontrolle | [`n8n/P04_Qualitaetskontrolle.json`](n8n/P04_Qualitaetskontrolle.json) | **Laufzeitfix:** blockierter `$env`-Zugriff im Code-Knoten entfernt (Root Cause `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` → ExpressionError verhinderte den Abschluss-Knoten); verwaiste `laeuft`-Läufe per [`scripts/p04_cleanup.cjs`](scripts/p04_cleanup.cjs) geschlossen |
 
 > Die Kernkette P90–P05 ist im [`PROJEKTSTAND.md`](PROJEKTSTAND.md) § 4 dokumentiert. **P05** wurde per Wiederanlauf-Mechanik (Retry-Tracking) neu definiert — siehe § 2.8.
 
@@ -207,6 +238,7 @@ Umsetzung: Anwender [`scripts/apply_sync_run_retry_migration.cjs`](scripts/apply
 - [`End-to-End-Abgleichbericht.md`](End-to-End-Abgleichbericht.md), [`Abgleichbericht P01-P05.md`](Abgleichbericht P01-P05.md), [`Abgleichbericht P90-P03.md`](Abgleichbericht P90-P03.md) — Abgleich-Ergebnisse
 - [`Diagnosebericht Duplicate-Endpunkt edoobox V2.md`](Diagnosebericht Duplicate-Endpunkt edoobox V2.md) — Untersuchung des edoobox-Duplicate-Endpunkts
 - [`Abschlussbericht zur DB-I-Auswertung.md`](Abschlussbericht zur DB-I-Auswertung.md) — DB-I-Auswertung
+- [`DOKU/ABNAHMEBERICHT_LASTENHEFT.md`](DOKU/ABNAHMEBERICHT_LASTENHEFT.md) — Gesamtabnahmelauf gegen die Lastenheft-Akzeptanzkriterien (erzeugt durch [`scripts/run_acceptance_tests.cjs`](scripts/run_acceptance_tests.cjs))
 - `edoobox Vollabgleich – Schritt *.json` (1–63) — lückenloses Protokoll der Abgleich-Entwicklung
 
 ---

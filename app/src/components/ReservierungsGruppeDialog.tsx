@@ -651,7 +651,7 @@ export default function ReservierungsGruppeDialog({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl rounded-xl bg-white p-5 shadow-2xl border border-slate-200"
+        className="w-full max-w-2xl rounded-xl bg-white p-5 shadow-2xl border border-slate-200 max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Kopfbereich */}

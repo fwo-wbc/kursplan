@@ -238,13 +238,6 @@ export default function TrainerPage() {
     <main className="min-h-screen bg-slate-50 p-4 text-slate-800 sm:p-6">
       <AppHeader />
 
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-slate-500">
-          Übersicht der gespiegelten Trainerkürzel aus edoobox. Kürzel und Status werden
-          über edoobox gesteuert, die Vergütungssätze lokal gepflegt.
-        </p>
-      </div>
-
       {/* Feedback-Banner */}
       {feedback && (
         <div

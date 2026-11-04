@@ -561,10 +561,6 @@ export default function ReservierungenPage() {
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-800 sm:p-6">
       <AppHeader />
-      <p className="mb-6 text-xs text-slate-500">
-        Alle angefragten Firmenkurse und Trainer-Reservierungen im Status
-        „Reservierung“ – als Liste oder in der eigenen Monatsübersicht.
-      </p>
 
       {/* Ansicht-Toggle: Listenansicht / Monatsübersicht */}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">

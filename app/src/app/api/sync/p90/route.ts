@@ -53,7 +53,9 @@ export async function POST() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       // Festes Timeout, damit die Route bei hängendem n8n-Webhook nicht blockiert.
-      signal: AbortSignal.timeout(15000),
+      // 60 s, damit der synchrone Durchlauf der drei n8n-Untersyncs
+      // (edo_offers, edo_dates, edo_bookings) nicht vorzeitig abbricht.
+      signal: AbortSignal.timeout(60000),
     });
 
     if (!response.ok) {

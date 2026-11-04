@@ -14,13 +14,14 @@ import {
 import type { LucideIcon } from 'lucide-react';
 
 /**
- * Hauptnavigation in drei logische Blöcke gegliedert, optisch getrennt
- * durch dezente vertikale Trennlinien:
+ * Hauptnavigation – alle sieben Menüpunkte auf einer einzigen horizontalen
+ * Zeile (Kursmanagement, Monatsübersicht, Reservierungen, Kursthemen,
+ * Trainerverfügbarkeiten, Trainer verwalten, Kurstransfer).
  *
- * - Block „Kurse“:    Kursmanagement, Monatsübersicht, Reservierungen
- * - Block „Personal“: Trainerverfügbarkeiten, Trainer verwalten
- * - Block „System“:   Kurstransfer (der Sync-Button sitzt unten in der
- *                     Aktionszeile der Kursmanagement-Seite)
+ * Bei schmalen Viewports scrollt die Leiste horizontal (`overflow-x-auto`),
+ * statt umzubrechen. Die aktive Seite wird über die hervorgehobene
+ * Menüschaltfläche (Hintergrund #285DAA, Icon und Schrift in Weiß)
+ * gekennzeichnet.
  */
 type NavItem = {
   href: string;
@@ -29,51 +30,20 @@ type NavItem = {
   external?: boolean;
 };
 
-type NavGroup = {
-  label: string;
-  items: NavItem[];
-};
-
-const NAV_GROUPS: NavGroup[] = [
+const NAV_ITEMS: NavItem[] = [
+  { href: '/', label: 'Kursmanagement', icon: LayoutDashboard },
+  { href: '/kalender', label: 'Monatsübersicht', icon: CalendarDays },
+  { href: '/reservierungen', label: 'Reservierungen', icon: Bookmark },
+  { href: '/kursthemen', label: 'Kursthemen', icon: Tags },
+  { href: '/trainer/verfuegbarkeit', label: 'Trainerverfügbarkeiten', icon: CalendarRange },
+  { href: '/trainer', label: 'Trainer verwalten', icon: Users },
   {
-    label: 'Kurse',
-    items: [
-      { href: '/', label: 'Kursmanagement', icon: LayoutDashboard },
-      { href: '/kalender', label: 'Monatsübersicht', icon: CalendarDays },
-      { href: '/reservierungen', label: 'Reservierungen', icon: Bookmark },
-      {
-        href: '/kursthemen',
-        label: 'Kursthemen',
-        icon: Tags,
-      },
-    ],
-  },
-  {
-    label: 'Personal',
-    items: [
-      {
-        href: '/trainer/verfuegbarkeit',
-        label: 'Trainerverfügbarkeiten',
-        icon: CalendarRange,
-      },
-      { href: '/trainer', label: 'Trainer verwalten', icon: Users },
-    ],
-  },
-  {
-    label: 'System',
-    items: [
-      {
-        href: '/Kurstransfer/index.html',
-        label: 'Kurstransfer',
-        icon: ArrowRightLeft,
-        external: true,
-      },
-    ],
+    href: '/Kurstransfer/index.html',
+    label: 'Kurstransfer',
+    icon: ArrowRightLeft,
+    external: true,
   },
 ];
-
-// Flache Liste über alle Blöcke, wird nur für die Aktiverkennung verwendet.
-const NAV_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
 
 export default function Navigation() {
   const pathname = usePathname();
@@ -94,55 +64,44 @@ export default function Navigation() {
 
   return (
     <nav
-      className="flex flex-wrap items-center gap-1"
+      className="flex items-center gap-1.5 overflow-x-auto py-1.5 px-4 bg-white border-b border-slate-200"
       aria-label="Hauptnavigation"
     >
-      {NAV_GROUPS.map((group, groupIndex) => {
+      {NAV_ITEMS.map((item) => {
+        const Icon = item.icon;
+        const isActive = aktiverHref === item.href;
+
+        // Statische HTML-Datei (Kurstransfer) liegt außerhalb der Next.js-Routen
+        // und wird deshalb als normales <a>-Element gerendert.
+        if (item.external) {
+          return (
+            <a
+              key={item.href}
+              href={item.href}
+              className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+            >
+              <Icon className="w-4 h-4 text-cd-blue" />
+              {item.label}
+            </a>
+          );
+        }
+
         return (
-          <div
-            key={group.label}
-            className={`flex flex-wrap items-center gap-1 ${
-              groupIndex > 0 ? 'border-l border-slate-300 pl-4 ml-2' : ''
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={isActive ? 'page' : undefined}
+            className={`inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+              isActive
+                ? 'bg-cd-blue text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
-            {group.items.map((item) => {
-              const Icon = item.icon;
-              const isActive = aktiverHref === item.href;
-
-              // Statische HTML-Datei (Kurstransfer) liegt außerhalb der Next.js-Routen
-              // und wird deshalb als normales <a>-Element gerendert.
-              if (item.external) {
-                return (
-                  <a
-                    key={item.href}
-                    href={item.href}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                  >
-                    <Icon className="w-4 h-4 text-cd-blue" />
-                    {item.label}
-                  </a>
-                );
-              }
-
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                    isActive
-                      ? 'bg-cd-blue text-white shadow-sm'
-                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                  }`}
-                >
-                  <Icon
-                    className={`w-4 h-4 ${isActive ? 'text-white' : 'text-cd-blue'}`}
-                  />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
+            <Icon
+              className={`w-4 h-4 ${isActive ? 'text-white' : 'text-cd-blue'}`}
+            />
+            {item.label}
+          </Link>
         );
       })}
     </nav>

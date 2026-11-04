@@ -2747,9 +2747,6 @@ function VerfuegbarkeitContent() {
       <div className="w-full max-w-none px-4 pt-4 lg:px-6 lg:pt-6">
         {/* Einheitlicher Seiten-Header (Titel + identische Menüleiste). */}
         <AppHeader />
-        <p className="mb-4 text-xs text-slate-500">
-          Stufenlose Wochenliste mit Vormittag / Nachmittag – Änderungen werden automatisch gespeichert.
-        </p>
 
         {/* Toolbar: Dozent + Ansichts-Umschalter + Speicher-Status.
             Der Umschalter sitzt fest direkt neben dem Dozenten-Filter, damit
@@ -3148,10 +3145,6 @@ function VerfuegbarkeitContent() {
             >
               Verfügbare Zeiträume erfassen
             </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Wochenenden und gesetzliche Feiertage werden automatisch
-              ausgeschlossen.
-            </p>
 
             <div className="mt-4 grid grid-cols-2 gap-3">
               <div>

@@ -91,9 +91,6 @@ export default function Kursthemenmanagement() {
               <h2 className="text-xl font-bold text-slate-800">
                 Kursthemenmanagement
               </h2>
-              <p className="text-sm text-slate-500">
-                Alle Kurstitel aus edoobox ({themen.length})
-              </p>
             </div>
           </div>
 

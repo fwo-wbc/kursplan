@@ -151,27 +151,6 @@ export default function SystemLogsPage() {
           <h2 className="text-xl font-semibold text-slate-700">
             System-Protokolle
           </h2>
-          <p className="text-xs text-slate-500">
-            Interne Überwachungsseite – letzte{' '}
-            {eintraege.length > 0 ? `${eintraege.length} ` : ''}Einträge aus{' '}
-            <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-[11px]">
-              public.system_logs
-            </code>
-            {eintraegeMitDetails > 0 &&
-              `, davon ${eintraegeMitDetails} mit Details`}
-            {zuletztAktualisiert && (
-              <>
-                {' '}
-                · aktualisiert:{' '}
-                {new Intl.DateTimeFormat('de-DE', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                }).format(zuletztAktualisiert)}
-                &nbsp;Uhr
-              </>
-            )}
-          </p>
         </div>
 
         <button

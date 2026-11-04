@@ -1269,9 +1269,11 @@ function SyncButton() {
       className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
         status === 'success'
           ? 'border-green-300 bg-green-50 text-green-700'
-          : status === 'loading' || status === 'error'
-            ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
-            : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+          : status === 'loading'
+            ? 'border-white/20 bg-white/10 text-white animate-pulse'
+            : status === 'error'
+              ? 'border-red-400/50 bg-red-500/20 text-red-100'
+              : 'border-white/20 bg-white/10 hover:bg-white/20 text-white'
       } disabled:opacity-60 disabled:cursor-not-allowed`}
     >
       <Icon
@@ -1279,8 +1281,8 @@ function SyncButton() {
           status === 'success'
             ? 'text-green-600'
             : status === 'loading' || status === 'error'
-              ? 'text-white'
-              : 'text-slate-500'
+              ? 'text-red-100'
+              : 'text-white'
         }`}
       />
       {label}
@@ -2501,33 +2503,28 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-800 sm:p-6">
-      <AppHeader />
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-slate-500">
-          Traineranzeige wird aus edoobox übernommen; der Status wird bei
-          Änderung automatisch gespeichert.
-        </p>
-        {/* Sync-Button + Bereinigen als gemeinsame, rechtsbündige
-            Aktionsgruppe in der unteren Zeile. */}
-        <div className="flex items-center gap-4 ml-auto">
-          <SyncButton />
-          {/* Doppelte Trainer-Zuweisungen erkennen und bereinigen – bewusst an
-              letzter Position, da die Funktion nur selten genutzt wird. */}
-          <button
-            type="button"
-            onClick={() => {
-              setCleanupErgebnis(null);
-              setCleanupFehler(null);
-              setCleanupOffen(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg hover:bg-slate-100 transition shrink-0"
-            title="Doppelte Trainer-Zuweisungen erkennen und bereinigen"
-          >
-            <Wand2 className="w-4 h-4 text-cd-blue" />
-            Zuweisungen bereinigen
-          </button>
-        </div>
-      </div>
+      <AppHeader
+        actions={
+          <>
+            <SyncButton />
+            {/* Doppelte Trainer-Zuweisungen erkennen und bereinigen – bewusst an
+                letzter Position, da die Funktion nur selten genutzt wird. */}
+            <button
+              type="button"
+              onClick={() => {
+                setCleanupErgebnis(null);
+                setCleanupFehler(null);
+                setCleanupOffen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/10 border border-white/20 text-white text-xs font-semibold rounded-lg hover:bg-white/20 transition shrink-0"
+              title="Doppelte Trainer-Zuweisungen erkennen und bereinigen"
+            >
+              <Wand2 className="w-4 h-4 text-white" />
+              Zuweisungen bereinigen
+            </button>
+          </>
+        }
+      />
 
       {!isLoading && !error && kurse.length > 0 && (
         <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 bg-white border-b border-slate-200 shadow-sm mb-4 flex flex-col gap-3">
@@ -2554,9 +2551,9 @@ export default function Home() {
             })}
           </div>
 
-          <div className="flex flex-col lg:flex-row lg:items-end gap-3">
+          <div className="flex flex-col lg:flex-row lg:flex-wrap lg:items-end gap-3">
             {/* Suchfeld */}
-            <div className="flex-1">
+            <div className="flex-1 min-w-[220px]">
               <label htmlFor="kurs-suche" className="block text-xs font-semibold text-slate-500 mb-1">
                 Kursname suchen
               </label>
@@ -2657,7 +2654,7 @@ export default function Home() {
             </div>
 
             {/* Zeitfilter: Jahr */}
-            <div className="w-full lg:w-28">
+            <div className="w-full lg:w-28 shrink-0">
               <label htmlFor="jahr-filter" className="block text-xs font-semibold text-slate-500 mb-1">
                 Jahr
               </label>
@@ -2687,7 +2684,7 @@ export default function Home() {
             </div>
 
             {/* Zeitfilter: Monat */}
-            <div className="w-full lg:w-36">
+            <div className="w-full lg:w-36 shrink-0">
               <label htmlFor="monat-filter" className="block text-xs font-semibold text-slate-500 mb-1">
                 Monat
               </label>
@@ -2717,7 +2714,7 @@ export default function Home() {
             </div>
 
             {/* Zeitfilter: Kalenderwoche */}
-            <div className="w-full lg:w-28">
+            <div className="w-full lg:w-28 shrink-0">
               <label htmlFor="kw-filter" className="block text-xs font-semibold text-slate-500 mb-1">
                 Kalenderwoche
               </label>

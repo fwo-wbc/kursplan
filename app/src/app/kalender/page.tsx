@@ -777,9 +777,6 @@ export default function KalenderPage() {
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-800 sm:p-6">
       <AppHeader />
-      <p className="mb-6 text-xs text-slate-500">
-        Alle Kurse im Monatsraster – Uhrzeit, Kurztitel und Trainerkürzel je Tag.
-      </p>
 
       {/* Monats-Navigation: Monats-Auswahl → ‹ → › → Heute → Aktualisieren */}
       <div className="flex flex-wrap items-center gap-2 mb-4">

@@ -1,7 +1,7 @@
 # Projektstand — Kursplan-App
 
 **Dokumenttyp:** Projektstand-Dokumentation (laufend gepflegt)
-**Stand:** 25. Oktober 2026
+**Stand:** 04. November 2026
 **Basis:** [`Statusbericht Datenbank und Trainer-Zuweisung.md`](Statusbericht Datenbank und Trainer-Zuweisung.md), [`Spezifikation produktive n8n-Workflows P90-P05.md`](Spezifikation produktive n8n-Workflows P90-P05.md), [`Abgleichbericht P01-P05.md`](Abgleichbericht P01-P05.md), [`End-to-End-Abgleichbericht.md`](End-to-End-Abgleichbericht.md), [`Lastenheft Kursplan v1.6.md`](Lastenheft Kursplan v1.6.md), [`AENDERUNGEN.md`](AENDERUNGEN.md) (laufende Änderungsdokumentation)
 
 ---
@@ -137,6 +137,8 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 
 **Stack:** Next.js 16.3.5 · React 19.2.8 · TypeScript 5 · Tailwind CSS 4 · `pg` 8.23
 
+**Zugriffsschutz & Deployment:** Seit 28.10.2026 schützt eine Basic-Auth-Middleware ([`app/src/middleware.ts`](app/src/middleware.ts)) die gesamte App (Ausnahmen: `_next/static`, `_next/image`, `favicon.ico`); Zugangsdaten über `ADMIN_USER`/`ADMIN_PASSWORD` (Vorlage [`.env.production.example`](.env.production.example)). Produktions-Deployment über den Service `kursplan-app` in [`docker-compose.yml`](docker-compose.yml) (Port `127.0.0.1:3000`, Env aus `.env.production`). Seit 03.11.2026 enthält [`.env.production`](.env.production) zusätzlich `N8N_P90_WEBHOOK_URL` (n8n-Webhook `https://m.webinarcenter.de/webhook/p90-sync`) für den manuellen P90-Sync über den Sync-Button. Seit 04.11.2026 rendert der Header das Logo als hochauflösendes Retina-PNG statt Inline-SVG: [`app/public/webinarcenter_logo_header.png`](app/public/webinarcenter_logo_header.png) wird über [`HeaderLogo.tsx`](app/src/app/components/HeaderLogo.tsx) mit `h-10 sm:h-11 w-auto object-contain shrink-0` eingebunden; [`AppHeader.tsx`](app/src/app/components/AppHeader.tsx:31) nutzt dafür `py-2.5 px-4 sm:px-6`, den Trennstrich `h-6 w-px bg-white/20 mx-3 hidden sm:block` und den Titel „Kursplanung“. Verifikation nach Deployment über [`scripts/verify_logo_png_remote.sh`](scripts/verify_logo_png_remote.sh).
+
 ### 5.1 Seiten
 
 | Route | Zweck |
@@ -180,6 +182,7 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | `/api/logs` | System-Log-Abruf (`public.system_logs`) |
 | `/api/reservations` (+ `/[id]`, `/by-code/[code]`, `/by-code/[code]/item`) | Reservierungs-API mit Buchungscode-Lookup |
 | `/api/course-topics` · `/api/kursthemen` · `/api/trainer-topics` | Kurs-Themen, -Verwaltung und Trainer-Themen-Zuordnung |
+| `/api/sync/p90` | Manueller P90-Sync-Auslöser; gehärtet: echter Fehler (HTTP 500) bei fehlender `N8N_P90_WEBHOOK_URL` in Produktion, 60-s-Timeout (seit 03.11.2026, vorher 15 s – ausreichend für den synchronen Durchlauf der drei n8n-Untersyncs edo_offers/edo_dates/edo_bookings), `revalidatePath('/')` nach Erfolg |
 
 ### 5.3 Bibliotheken (`app/src/lib/`)
 
@@ -189,14 +192,24 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 
 Statische Import-/Planungshilfen (Excel-Import, Kategorien, Python-Skripte) für die Jahres-Kursplanung.
 
+### 5.5 HD-Optimierung (1280–1440px / 768px, seit 03.11.2026)
+
+Drei Layout-Schwachstellen für HD-Auflösungen behoben:
+
+- **Zeitplan-Tabelle** ([`app/src/app/trainer/zeitplan/page.tsx`](app/src/app/trainer/zeitplan/page.tsx:943)): Container mit `overflow-x-auto` – die Tabelle bleibt bei `min-w-[1280px]` auf schmaleren Viewports horizontal scrollbar, keine Spalten gehen verloren.
+- **Filterleiste Kursübersicht** ([`app/src/app/page.tsx`](app/src/app/page.tsx:2557)): `flex-wrap` ergänzt; Select-Felder (Jahr, Monat, KW) mit `shrink-0`, Suchfeld mit `min-w-[220px]` – Dropdown-Pfeile und Texte werden nicht abgeschnitten.
+- **ReservierungsGruppeDialog** ([`app/src/components/ReservierungsGruppeDialog.tsx`](app/src/components/ReservierungsGruppeDialog.tsx:653)): äußerer Dialog-Container mit `max-h-[90vh] flex flex-col` – Header und Buttons bleiben bei niedrigen Viewports (z. B. 768px / 650px Nutzfläche) sichtbar.
+
+Deployment: `npm run build` (lokal und im Docker-Build) erfolgreich; Container `kursplan-app` auf dem Hetzner-Server neu gebaut und gestartet (`docker compose up -d --build --force-recreate kursplan-app`).
+
 ---
 
 ## 6. Skripte und Migrationen (`scripts/`, Projektstamm)
 
-- **Migrationen (SQL):** `trainer_zuweisung_*`, `trainer_saetze`, `trainer_kosten`, `trainer_halbtagessatz_reduziert`, `termin_reservierung_*`, `trainer_honorar_90min_migration.sql`, `kursplan_themen_migration.sql` (Kursthemen-Stamm + Sicht `v_course_topics_edoobox` + UNIQUE-Indexe), `kursplan_planung_migration.sql` (Planungstabelle + Sichten `v_kursplan_*`), `kursplan_seed_ms_office.sql` (20 MS-Office-Kursdefinitionen als Startbestand), `legacy_data_dod_migration.sql` (verbindliche Stichtags-Regelung: Stichtag 01.09.2026, Qualitäts-View `kursplan.v_qualitaet_historienluecken` mit `is_legacy`; Runner [`scripts/apply_legacy_data_dod_migration.cjs`](scripts/apply_legacy_data_dod_migration.cjs))
-- **Pflege-/Verifikationsskripte (CJS):** `import_trainer_kosten.cjs`, `check_trainer.cjs`, `cleanup_ghost_trainer.cjs`, `cleanup_trainer_zuweisung_alt.cjs`, `diagnose_*.cjs`, `verify_*.cjs` (Verfügbarkeit, Schließung, Last-Minute, Hervorhebung, Status), `apply_kursplan_migrationen.cjs` (wendet die drei Kursplan-Migrationen an), `sync_course_topics.cjs` (automatische Themen-Ableitung aus `edoobox_raw.offer`), `verify_legacy_dod.ts` (Legacy-DoD-Verifikation)
+- **Migrationen (SQL):** `trainer_zuweisung_*`, `trainer_saetze`, `trainer_kosten`, `trainer_halbtagessatz_reduziert`, `termin_reservierung_*`, `trainer_honorar_90min_migration.sql`, `kursplan_themen_migration.sql` (Kursthemen-Stamm + Sicht `v_course_topics_edoobox` + UNIQUE-Indexe), `kursplan_planung_migration.sql` (Planungstabelle + Sichten `v_kursplan_*`), `kursplan_seed_ms_office.sql` (20 MS-Office-Kursdefinitionen als Startbestand), `legacy_data_dod_migration.sql` (verbindliche Stichtags-Regelung: Stichtag 01.09.2026, Qualitäts-View `kursplan.v_qualitaet_historienluecken` mit `is_legacy`; Runner [`scripts/apply_legacy_data_dod_migration.cjs`](scripts/apply_legacy_data_dod_migration.cjs)), `kostenkonfiguration_standard_fallback_migration.sql` (Standard-Fallback in `kursplan.v_angebot_trainerkosten`: fehlende Tarife/Dozenten fallen auf die Standard-Kostenregel zurück, P04-Kennzahl `offen_kosten` = 0)
+- **Pflege-/Verifikationsskripte (CJS):** `import_trainer_kosten.cjs`, `check_trainer.cjs`, `cleanup_ghost_trainer.cjs`, `cleanup_trainer_zuweisung_alt.cjs`, `diagnose_*.cjs`, `verify_*.cjs` (Verfügbarkeit, Schließung, Last-Minute, Hervorhebung, Status), `apply_kursplan_migrationen.cjs` (wendet die drei Kursplan-Migrationen an), `sync_course_topics.cjs` (automatische Themen-Ableitung aus `edoobox_raw.offer`), `verify_legacy_dod.ts` (Legacy-DoD-Verifikation), [`run_acceptance_tests.cjs`](scripts/run_acceptance_tests.cjs) (Gesamtabnahmelauf gegen Lastenheft → [`DOKU/ABNAHMEBERICHT_LASTENHEFT.md`](DOKU/ABNAHMEBERICHT_LASTENHEFT.md)), `p04_diagnose.cjs`/`p04_fix_verify.cjs`/`p04_system_logs.cjs`/`fix_p04_env.cjs`/`p04_cleanup.cjs` (P04-Laufzeitfix: `$env`-Zugriff blockiert durch `N8N_BLOCK_ENV_ACCESS_IN_NODE`, verwaiste `laeuft`-Läufe geschlossen), `push_workflows_to_n8n.cjs`/`n8n_executions_listen.cjs`/`n8n_execution_jetzt.cjs` (n8n-Public-API-Helfer)
 - **n8n-Referenzdateien:** `p90_node_konfig.js`, `p90_node_holen.js`, `p90_node_fehlertext.js`, `p90_node_zaehlwerte.js`, `P90_Ressourcen_Konfiguration.sql`, `p90_build.ps1`, `p90_verify.ps1`
-- **Workflow-Exporte:** `n8n/P96_Create_edoobox_Offer_from_Reservation.json`, `n8n/P06_trainer_adhoc_sync.json`, [`n8n/P05_Wiederanlauf.json`](n8n/P05_Wiederanlauf.json) (Wiederanlauf-Sync-Recovery)
+- **Workflow-Exporte:** `n8n/P96_Create_edoobox_Offer_from_Reservation.json`, `n8n/P06_trainer_adhoc_sync.json`, [`n8n/P05_Wiederanlauf.json`](n8n/P05_Wiederanlauf.json) (Wiederanlauf-Sync-Recovery), [`n8n/P04_Qualitaetskontrolle.json`](n8n/P04_Qualitaetskontrolle.json) (P04-Laufzeitfix: blockierter `$env`-Zugriff entfernt)
 
 ---
 

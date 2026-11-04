@@ -778,10 +778,7 @@ export default function ZeitplanPage() {
       <div className="max-w-[1500px] w-full mx-auto px-4 pt-4 flex flex-col flex-1 min-h-0">
         {/* Einheitlicher Seiten-Header (Titel + identische Menüleiste). */}
         <AppHeader />
-        <div className="mb-4 shrink-0 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-slate-500">
-            Chronologische Kalender- und Planungsansicht (eine Zeile pro Tag).
-          </p>
+        <div className="mb-4 shrink-0 flex flex-wrap items-center justify-end gap-3">
           <button
             type="button"
             onClick={() => {
@@ -940,7 +937,7 @@ export default function ZeitplanPage() {
             </button>
           </div>
         ) : (
-          <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-x-auto">
             <table className="w-full border-separate border-spacing-0 text-xs min-w-[1280px]">
               <thead className="sticky top-0 z-30 bg-slate-100 shadow-sm">
                 <tr className="text-slate-500 uppercase tracking-wider">
