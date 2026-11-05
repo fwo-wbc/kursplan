@@ -156,14 +156,14 @@ const SLOT_CONFIG: { code: SlotCode; sub: string }[] = [
 
 /** CSS-Klassen je Kurs-Status (Farbkodierung). */
 const AMPEL_KLASSEN: Record<KursStatus, string> = {
-  ausgeschrieben: 'bg-blue-100 border-blue-300 text-blue-900',
+  ausgeschrieben: 'bg-[#285DAA]/10 border-[#285DAA]/40 text-[#285DAA]',
   'unter Vorbehalt': 'bg-amber-100 border-amber-300 text-amber-900',
   bestätigt: 'bg-emerald-100 border-emerald-300 text-emerald-900',
   abgesagt: 'bg-red-100 border-red-300 text-red-900 line-through',
 };
 
 const AMPEL_DOT: Record<KursStatus, string> = {
-  ausgeschrieben: 'bg-blue-500',
+  ausgeschrieben: 'bg-[#285DAA]',
   'unter Vorbehalt': 'bg-amber-400',
   bestätigt: 'bg-emerald-500',
   abgesagt: 'bg-red-500',
@@ -806,7 +806,7 @@ export default function ZeitplanPage() {
               value={selectedTrainerId}
               onChange={(e) => setSelectedTrainerId(e.target.value)}
               disabled={isTrainerLoading}
-              className="w-full text-sm font-medium border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-60"
+              className="w-full text-sm font-medium border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-[#285DAA] bg-white disabled:opacity-60"
             >
               {isTrainerLoading ? (
                 <option value="">Lade Dozenten…</option>
@@ -831,7 +831,7 @@ export default function ZeitplanPage() {
                 <select
                   value={String(periodMonths)}
                   onChange={(e) => setPeriodMonths(Number(e.target.value))}
-                  className="text-sm border border-slate-300 rounded px-2.5 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="text-sm border border-slate-300 rounded px-2.5 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                 >
                   <option value="1">1 Monat</option>
                   <option value="3">3 Monate (Quartal)</option>
@@ -853,7 +853,7 @@ export default function ZeitplanPage() {
                     setStartDate(new Date(y, m - 1, 1));
                   }}
                   suppressHydrationWarning
-                  className="text-sm border border-slate-300 rounded px-2.5 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="text-sm border border-slate-300 rounded px-2.5 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                 />
               </div>
 
@@ -931,7 +931,7 @@ export default function ZeitplanPage() {
             <button
               type="button"
               onClick={loadZeitplan}
-              className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
+              className="px-3 py-1.5 rounded-lg bg-[#285DAA] text-white text-sm font-medium hover:bg-[#1E4A87] transition"
             >
               Erneut versuchen
             </button>
@@ -976,7 +976,7 @@ export default function ZeitplanPage() {
                   // -----------------------------------------------------------------
                   const globalRowIndex = index;
                   const bgClass =
-                    globalRowIndex % 2 === 0 ? 'bg-blue-50' : 'bg-blue-100';
+                    globalRowIndex % 2 === 0 ? 'bg-[#285DAA]/5' : 'bg-[#285DAA]/10';
 
                   let rowBg: string;
                   if (tag.feiertag) {
@@ -1014,7 +1014,7 @@ export default function ZeitplanPage() {
                       {meta.istKwStart && (
                         <td
                           rowSpan={meta.kwRowSpan}
-                          className={`${rowBg} ${zellRand} border-r-[0.75px] border-[#666666] p-2 align-middle text-slate-500 font-medium hover:bg-blue-200/50`}
+                          className={`${rowBg} ${zellRand} border-r-[0.75px] border-[#666666] p-2 align-middle text-slate-500 font-medium hover:bg-[#285DAA]/10`}
                         >
                           <div className="flex h-full items-center justify-center">
                             <span className="whitespace-nowrap">{meta.kwLabel}</span>
@@ -1025,23 +1025,23 @@ export default function ZeitplanPage() {
                       {/* Spalte 3: Datum (Wochentag) – Ende des Kalenderblocks */}
                       <td
                         className={`${rowBg} ${zellRand} border-r-[1.5px] border-[#666666] p-2 align-middle font-medium whitespace-nowrap ${
-                          istHeute ? 'border-l-[3px] border-l-blue-600' : ''
+                          istHeute ? 'border-l-[3px] border-l-[#285DAA]' : ''
                         } ${tag.feiertag ? 'text-slate-400' : 'text-slate-700'}`}
                       >
-                        <span className={istHeute ? 'font-bold text-blue-700' : ''}>
+                        <span className={istHeute ? 'font-bold text-[#285DAA]' : ''}>
                           {formatDatumDisplay(tag.datum)}
                         </span>
                       </td>
 
                       {/* Spalte 4: Freigabe (Toggle) */}
-                      <td className={`${rowBg} ${zellRand} p-1 align-middle text-center hover:bg-blue-200/50`}>
+                      <td className={`${rowBg} ${zellRand} p-1 align-middle text-center hover:bg-[#285DAA]/10`}>
                         <button
                           type="button"
                           onClick={() => toggleFreigabe(tag)}
                           title="Klicken: Freigabe toggeln"
                           className={`w-full px-2 py-1 rounded-md text-xs font-bold border transition ${
                             tag.freigabe
-                              ? 'bg-blue-500 border-blue-600 text-white'
+                              ? 'bg-[#285DAA] border-[#285DAA] text-white'
                               : 'bg-white border-slate-200 text-slate-300 hover:bg-slate-100'
                           }`}
                         >
@@ -1056,7 +1056,7 @@ export default function ZeitplanPage() {
 
                         return (
                           <React.Fragment key={config.code}>
-                            <td className={`${rowBg} ${zellRand} p-1 align-middle text-center hover:bg-blue-200/50`}>
+                            <td className={`${rowBg} ${zellRand} p-1 align-middle text-center hover:bg-[#285DAA]/10`}>
                               <div className="flex flex-col items-center gap-0.5">
                                 <span className="text-[10px] font-semibold text-slate-400">
                                   {config.code}
@@ -1069,7 +1069,7 @@ export default function ZeitplanPage() {
                               </div>
                             </td>
                             <td
-                              className={`${rowBg} ${zellRand} p-1 align-middle hover:bg-blue-200/50 ${
+                              className={`${rowBg} ${zellRand} p-1 align-middle hover:bg-[#285DAA]/10 ${
                                 config.code === 'KT3'
                                   ? 'border-r-[1.5px] border-[#666666]'
                                   : ''
@@ -1145,7 +1145,7 @@ export default function ZeitplanPage() {
                       })}
 
                       {/* Spalte 11: Reservierungen */}
-                      <td className={`${rowBg} ${zellRand} p-1 align-top hover:bg-blue-200/50`}>
+                      <td className={`${rowBg} ${zellRand} p-1 align-top hover:bg-[#285DAA]/10`}>
                         <div className="flex flex-col gap-1">
                           {tag.reservierungen.slice(0, 2).map((res) => (
                             <div key={res.id} className="flex items-stretch gap-0.5">
@@ -1173,7 +1173,7 @@ export default function ZeitplanPage() {
                                 onClick={() => openUmwandlung(res, tag.datum)}
                                 title="In Kurs umwandeln"
                                 aria-label="In Kurs umwandeln"
-                                className="shrink-0 rounded-md border border-blue-300 bg-blue-50 px-1 text-blue-700 hover:bg-blue-100 transition"
+                                className="shrink-0 rounded-md border border-[#285DAA]/40 bg-[#285DAA]/10 px-1 text-[#285DAA] hover:bg-[#285DAA]/20 transition"
                               >
                                 <Wand2 className="w-3 h-3" />
                               </button>
@@ -1194,7 +1194,7 @@ export default function ZeitplanPage() {
                       </td>
 
                       {/* Spalte 12: Fristende (Fristenampel) */}
-                      <td className={`${rowBg} ${zellRand} p-1 align-top hover:bg-blue-200/50`}>
+                      <td className={`${rowBg} ${zellRand} p-1 align-top hover:bg-[#285DAA]/10`}>
                         <div className="flex flex-col gap-1">
                           {tag.reservierungen.length === 0 && (
                             <span className="text-slate-300">–</span>
@@ -1228,7 +1228,7 @@ export default function ZeitplanPage() {
                       </td>
 
                       {/* Spalte 13: Kommentare / Abwesenheiten / Feiertage */}
-                      <td className={`${rowBg} ${zellRand} p-1 align-middle hover:bg-blue-200/50`}>
+                      <td className={`${rowBg} ${zellRand} p-1 align-middle hover:bg-[#285DAA]/10`}>
                         <div className="flex flex-col gap-1">
                           {tag.feiertag && (
                             <span className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-[10px] leading-tight text-slate-600">
@@ -1266,7 +1266,7 @@ export default function ZeitplanPage() {
         {/* Legende */}
         <div className="mt-4 shrink-0 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block w-3.5 h-3.5 rounded bg-blue-500" />
+            <span className="inline-block w-3.5 h-3.5 rounded bg-[#285DAA]" />
             Ausgeschrieben
           </span>
           <span className="inline-flex items-center gap-1.5">
@@ -1376,7 +1376,7 @@ export default function ZeitplanPage() {
                     }
                   }}
                   disabled={vorlagenLoading}
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-[#285DAA] disabled:opacity-60"
                 >
                   {vorlagenLoading ? (
                     <option value="">Lade Vorlagen…</option>
@@ -1405,7 +1405,7 @@ export default function ZeitplanPage() {
                     setUmwandlung((p) => ({ ...p, firmenname: e.target.value }))
                   }
                   placeholder="Deutsche Rück"
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                 />
                 <p className="mt-1 text-[11px] text-slate-400">
                   Unterkategorie „{umwandlung.reservierung.kd_nr}{' '}
@@ -1440,7 +1440,7 @@ export default function ZeitplanPage() {
                       freigebenAlternativen: e.target.checked,
                     }))
                   }
-                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#285DAA] focus:ring-[#285DAA]"
                 />
                 Weitere Alternativ-Reservierungen dieser KD-Nr. automatisch freigeben
               </label>
@@ -1465,7 +1465,7 @@ export default function ZeitplanPage() {
                 type="button"
                 onClick={submitUmwandlung}
                 disabled={umwandlungSaving || !umwandlung.templateId || !umwandlung.kursnr}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#285DAA] text-white text-sm font-medium hover:bg-[#1E4A87] transition disabled:opacity-60"
               >
                 {umwandlungSaving && <Loader2 className="w-4 h-4 animate-spin" />}
                 Verbindlich in edoobox anlegen

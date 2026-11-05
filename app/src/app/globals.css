@@ -42,6 +42,20 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Globaler Hand-Mauszeiger für alle interaktiven Elemente. Tailwind setzt in
+   seinem Preflight-Reset für <button> standardmäßig 'cursor: default'; diese
+   Regel stellt die gewohnte Hand für Buttons, Toggles, Tabs, Filter, Selects,
+   Summaries sowie Checkboxen/Radios in der gesamten Kursplan-App einheitlich
+   wieder her. */
+button,
+[role="button"],
+select,
+summary,
+input[type="checkbox"],
+input[type="radio"] {
+  cursor: pointer;
+}
+
 /* Optionsfelder (Checkboxen): gilt grundsätzlich für alle Checkboxen der App.
    CD-Hausfarbe #285DAA, im Hover dunkler #193C6F. */
 input[type="checkbox"] {

@@ -259,7 +259,7 @@ function istBestaetigt(status: string | null): boolean {
 function statusSlotClasses(status: string | null): string {
   switch (statusLabel(status).toLowerCase()) {
     case 'ausgeschrieben':
-      return 'bg-blue-50 text-blue-700 border border-blue-300 hover:bg-blue-100';
+      return 'bg-[#285DAA]/10 text-[#285DAA] border border-[#285DAA]/40 hover:bg-[#285DAA]/20';
     case 'unter vorbehalt':
       return 'bg-amber-500 text-white font-medium border border-amber-600 hover:bg-amber-600';
     case 'bestätigt':
@@ -355,7 +355,7 @@ function begrenzeAufDrei(kurse: KursRow[]): {
 function statusBadgeClasses(status: string | null): string {
   switch (statusLabel(status).toLowerCase()) {
     case 'ausgeschrieben':
-      return 'bg-blue-50 text-blue-700 border-blue-200';
+      return 'bg-[#285DAA]/10 text-[#285DAA] border-[#285DAA]/30';
     case 'unter vorbehalt':
       return 'bg-amber-500 text-white font-medium border-amber-600';
     case 'bestätigt':
@@ -1840,7 +1840,7 @@ function VerfuegbarkeitContent() {
                 : teilweise
                   ? 'bg-amber-50 text-amber-800 border border-amber-300'
                   : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
-        } ${istHeute ? 'ring-1 ring-blue-300' : ''}`}
+        } ${istHeute ? 'ring-1 ring-[#285DAA]/40' : ''}`}
       >
         {/* Monatskürzel-Badge: zentriert auf der oberen Rahmenkante des
             Tages-Containers – nur für Überhangtage aus Vor-/Folgemonat. */}
@@ -1875,7 +1875,7 @@ function VerfuegbarkeitContent() {
               : frei
                 ? 'text-teal-900 hover:bg-teal-100'
                 : istHeute
-                  ? 'text-blue-700 hover:bg-blue-50'
+                  ? 'text-[#285DAA] hover:bg-[#285DAA]/10'
                   : 'text-slate-700 hover:bg-slate-100'
           }`}
         >
@@ -2262,7 +2262,7 @@ function VerfuegbarkeitContent() {
     // der Sonntag (letzter Tag der Woche) behält dadurch exakt dieselbe Farbe
     // wie der Samstag davor (z. B. So. 01.11.2026 = Sa. 31.10.2026).
     const bgClass =
-      Math.floor(index / 7) % 2 === 0 ? 'bg-blue-50' : 'bg-blue-100';
+      Math.floor(index / 7) % 2 === 0 ? 'bg-[#285DAA]/5' : 'bg-[#285DAA]/10';
     let rowBg: string;
     if (feiertag) {
       rowBg = 'bg-slate-100/80';
@@ -2312,10 +2312,10 @@ function VerfuegbarkeitContent() {
         {/* Spalte 3: Datum / Tag */}
         <td
           className={`${rowBg} ${zellRand} border-r-[1.5px] border-[#666666] p-2 align-middle font-medium whitespace-nowrap ${
-            istHeute ? 'border-l-[3px] border-l-blue-600' : ''
+            istHeute ? 'border-l-[3px] border-l-[#285DAA]' : ''
           } ${feiertag ? 'text-slate-400' : 'text-slate-700'}`}
         >
-          <span className={istHeute ? 'font-bold text-blue-700' : ''}>
+          <span className={istHeute ? 'font-bold text-[#285DAA]' : ''}>
             {formatTageskopf(datum)}
           </span>
         </td>
@@ -2630,12 +2630,12 @@ function VerfuegbarkeitContent() {
           die Seite über die Padding-Werte sauber gefüllt. */}
       <div className="w-full max-w-none px-4 pt-4 lg:px-6 lg:pt-6">
         {/* Einheitlicher Portal-Header: Nur Brand-Row (Logo, Trennstrich,
-            Titel „Trainer-Portal“, Dozentenname + Abmelden) – ohne Menüleiste. */}
+            Titel „Trainerportal“, Dozentenname + Abmelden) – ohne Menüleiste. */}
         <PortalHeader />
 
         {/* Toolbar: Ansichts-Umschalter + Speicher-Status. Die Dozentenauswahl
             entfällt – die Trainer-ID ist fest an die Portal-Session gebunden. */}
-        <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="mt-[10px] mb-4 flex flex-wrap items-end gap-3">
           {/* Ansichts-Umschalter: Wochenansicht / Tagesliste */}
           <div className="flex rounded-lg border border-slate-300 overflow-hidden" role="group" aria-label="Ansicht wählen">
               <button
@@ -2708,7 +2708,7 @@ function VerfuegbarkeitContent() {
               }
             }}
             title="Monat/Jahr wählen"
-            className="inline-flex items-center justify-between gap-1.5 w-48 min-w-[190px] px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 font-semibold text-slate-800 hover:bg-blue-100 transition whitespace-nowrap"
+            className="inline-flex items-center justify-between gap-1.5 w-48 min-w-[190px] px-3 py-2 rounded-lg bg-[#285DAA]/10 border border-[#285DAA]/30 font-semibold text-slate-800 hover:bg-[#285DAA]/20 transition whitespace-nowrap"
           >
             <span className="flex items-center gap-1.5 min-w-0">
               <CalendarDays className="w-4 h-4 text-cd-blue shrink-0" />
@@ -2812,7 +2812,7 @@ function VerfuegbarkeitContent() {
                     // Persistenz fehlgeschlagen – gilt nur für diese Sitzung.
                   }
                 }}
-                className="w-4 h-4 accent-blue-600"
+                className="w-4 h-4 accent-[#285DAA]"
               />
               Wochenenden ausblenden
             </label>
@@ -2840,7 +2840,7 @@ function VerfuegbarkeitContent() {
                   // Persistenz fehlgeschlagen – gilt nur für diese Sitzung.
                 }
               }}
-              className="w-4 h-4 accent-blue-600"
+              className="w-4 h-4 accent-[#285DAA]"
             />
             Abgesagte Kurse ausblenden
           </label>
@@ -2859,7 +2859,7 @@ function VerfuegbarkeitContent() {
             <button
               type="button"
               onClick={() => void loadGrid(false)}
-              className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
+              className="px-3 py-1.5 rounded-lg bg-[#285DAA] text-white text-sm font-medium hover:bg-[#1E4A87] transition"
             >
               Erneut versuchen
             </button>
@@ -2937,7 +2937,7 @@ function VerfuegbarkeitContent() {
 
               {/* Gruppe 2: Kurs-/Termin-Status */}
               <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block w-3.5 h-3.5 rounded bg-blue-50 border border-blue-300" />
+                <span className="inline-block w-3.5 h-3.5 rounded bg-[#285DAA]/10 border border-[#285DAA]/40" />
                 Kurs ausgeschrieben
               </span>
               <span className="inline-flex items-center gap-1.5">
@@ -2998,7 +2998,7 @@ function VerfuegbarkeitContent() {
                   type="date"
                   value={modalVon}
                   onChange={(e) => setModalVon(e.target.value)}
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#285DAA] bg-white"
                 />
               </div>
               <div>
@@ -3013,7 +3013,7 @@ function VerfuegbarkeitContent() {
                   type="date"
                   value={modalBis}
                   onChange={(e) => setModalBis(e.target.value)}
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#285DAA] bg-white"
                 />
               </div>
             </div>
@@ -3041,7 +3041,7 @@ function VerfuegbarkeitContent() {
                     if (ok) setModalOffen(false);
                   })();
                 }}
-                className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
+                className="px-3 py-2 rounded-lg bg-[#285DAA] text-white text-sm font-medium hover:bg-[#1E4A87] transition"
               >
                 Zeitraum als verfügbar setzen
               </button>

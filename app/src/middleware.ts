@@ -5,7 +5,7 @@ export function middleware(req: NextRequest) {
   const basicAuth = req.headers.get('authorization');
   const url = req.nextUrl;
 
-  // Trainer-Portal (auffindbar unter /portal/...) ist öffentlich erreichbar:
+  // Trainerportal (auffindbar unter /portal/...) ist öffentlich erreichbar:
   // Login-Seite und Portal-API müssen ohne Admin-Basic-Auth funktionieren.
   if (url.pathname === '/portal' || url.pathname.startsWith('/portal/')) {
     return NextResponse.next();
@@ -13,7 +13,7 @@ export function middleware(req: NextRequest) {
 
   // Statische Dateien (Bilder, Fonts, CSS, PDFs) grundsätzlich OHNE Basic-Auth
   // ausliefern – sonst würde der Browser bei öffentlichen Seiten (z. B. dem
-  // Trainer-Portal, das das Logo /webinarcenter_logo_header.png lädt) ein
+  // Trainerportal, das das Logo /webinarcenter_logo_header.png lädt) ein
   // Login-Popup anzeigen. Der Guard ist bewusst ergänzend zum Matcher unten.
   if (/\.(?:png|jpe?g|svg|webp|gif|ico|css|woff2?|pdf)$/i.test(url.pathname)) {
     return NextResponse.next();
@@ -43,7 +43,7 @@ export const config = {
   matcher: [
     // Alles außer: Next-interne Assets (_next/static|_next/image), Favicon und
     // statische Dateien (Bilder/Fonts/CSS/PDF) – damit z. B. das Logo im
-    // öffentlichen Trainer-Portal ohne Browser-Login-Popup geladen werden kann.
+    // öffentlichen Trainerportal ohne Browser-Login-Popup geladen werden kann.
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpe?g|svg|webp|gif|ico|css|woff2?|pdf)$).*)',
   ],
 };

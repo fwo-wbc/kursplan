@@ -151,8 +151,8 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | `/trainer/verfuegbarkeit` | Verfügbarkeitsverwaltung (klassische VM/NM-Sicht) |
 | `/trainer/availabilities` | Verfügbarkeitsmanager mit Zeitfenster-Slots (`start_time`/`end_time`/`is_booked`) |
 | `/trainer/zeitplan` | Zeitplan |
-| `/portal/login` | **Trainer-Portal (Neu, Schritt 1–3):** Login für externe Trainer (`portal_email` + Kennwort), prüft `portal_active`/`is_active` |
-| `/portal/verfuegbarkeit` | **Trainer-Portal:** Verfügbarkeitspflege der externen Trainer nach Login |
+| `/portal/login` | **Trainerportal (Neu, Schritt 1–3):** Login für externe Trainer (`portal_email` + Kennwort), prüft `portal_active`/`is_active` |
+| `/portal/verfuegbarkeit` | **Trainerportal:** Verfügbarkeitspflege der externen Trainer nach Login |
 | `/kursthemen` | Kursthemen-Verwaltung (Prioritäten, Aktiv-Status) |
 | `/system-logs` | System-Log-Ansicht (`public.system_logs`) |
 
@@ -186,7 +186,7 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | `/api/course-topics` · `/api/kursthemen` · `/api/trainer-topics` | Kurs-Themen, -Verwaltung und Trainer-Themen-Zuordnung |
 | `/api/sync/p90` | Manueller P90-Sync-Auslöser; gehärtet: echter Fehler (HTTP 500) bei fehlender `N8N_P90_WEBHOOK_URL` in Produktion, 60-s-Timeout (seit 03.11.2026, vorher 15 s – ausreichend für den synchronen Durchlauf der drei n8n-Untersyncs edo_offers/edo_dates/edo_bookings), `revalidatePath('/')` nach Erfolg |
 
-| `/portal/api/auth/login` · `/portal/api/auth/logout` · `/portal/api/auth/me` · `/portal/api/verfuegbarkeit` | **Neu:** Trainer-Portal — Session-Login/-Logout (HttpOnly-Cookie `trainer_session`, HMAC-SHA256, Path `/portal`, 30 Tage), Stammdaten-Abgleich (`/me`), Verfügbarkeiten |
+| `/portal/api/auth/login` · `/portal/api/auth/logout` · `/portal/api/auth/me` · `/portal/api/verfuegbarkeit` | **Neu:** Trainerportal — Session-Login/-Logout (HttpOnly-Cookie `trainer_session`, HMAC-SHA256, Path `/portal`, 30 Tage), Stammdaten-Abgleich (`/me`), Verfügbarkeiten |
 
 ### 5.3 Bibliotheken (`app/src/lib/`)
 
@@ -206,7 +206,7 @@ Drei Layout-Schwachstellen für HD-Auflösungen behoben:
 
 Deployment: `npm run build` (lokal und im Docker-Build) erfolgreich; Container `kursplan-app` auf dem Hetzner-Server neu gebaut und gestartet (`docker compose up -d --build --force-recreate kursplan-app`).
 
-### 5.6 Trainer-Portal — Zugang für externe Trainer (Neu, Live deployed)
+### 5.6 Trainerportal — Zugang für externe Trainer (Neu, Live deployed)
 
 **Status: ✅ Live deployed** (04.11.2026). Externe Trainer melden sich über das eigenständige, geschützte Portal (`/portal/login`, Login-Schritt 1) an und pflegen anschließend ihre Verfügbarkeiten (`/portal/verfuegbarkeit`, Schritt 2). Seit Schritt 3 verwaltet die Admin-Ansicht die Zugänge vollständig.
 

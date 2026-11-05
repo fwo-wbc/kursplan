@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Remote-Setup Trainer-Portal – wird auf dem Produktionsserver ausgeführt:
+# Remote-Setup Trainerportal – wird auf dem Produktionsserver ausgeführt:
 #   1. DDL-Migration auf public.trainer (idempotent)
 #   2. Trainer Frank Woltmann identifizieren (edoobox_admin_id aus Seed-Schema)
 #   3. Test-Portal-Account anlegen (portal_email + bcrypt-Hash)

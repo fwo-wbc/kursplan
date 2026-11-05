@@ -41,7 +41,7 @@ Dieses Dokument erfasst **alle in der Kursplan-App umgesetzten Änderungen** —
 | **Frontend / HD** | **HD-Optimierung (03.11.2026):** Zeitplan-Tabelle horizontal scrollbar (`overflow-x-auto` bei `min-w-[1280px]`, [`zeitplan/page.tsx`](app/src/app/trainer/zeitplan/page.tsx:943)); Filterleiste Kursübersicht mit `flex-wrap` + `shrink-0`/Mindestbreiten für Select-Felder (Jahr/Monat/KW) und Suchfeld ([`page.tsx`](app/src/app/page.tsx:2557)); ReservierungsGruppeDialog mit `max-h-[90vh] flex flex-col` abgesichert ([`ReservierungsGruppeDialog.tsx`](app/src/components/ReservierungsGruppeDialog.tsx:653)); Build + Deployment auf Hetzner (Container `kursplan-app` neu gebaut/gestartet) | ✅ umgesetzt |
 | **Frontend / HD** | **Header-Logo auf Retina-PNG (04.11.2026):** [`HeaderLogo.tsx`](app/src/app/components/HeaderLogo.tsx) komplett auf hochauflösendes PNG umgestellt – Inline-SVG-Code (Vektorpfade) und alle Bounding-Box-Hacks entfernt, stattdessen `<img src="/webinarcenter_logo_header.png">` (Neu: [`app/public/webinarcenter_logo_header.png`](app/public/webinarcenter_logo_header.png)) mit `h-10 sm:h-11 w-auto object-contain shrink-0`; [`AppHeader.tsx`](app/src/app/components/AppHeader.tsx:31) Brand-Row harmonisiert (`py-2.5 px-4 sm:px-6`, Trennstrich `h-6 w-px bg-white/20 mx-3 hidden sm:block`, Titel „Kursplanung“ als `text-lg font-medium text-white tracking-wide` ohne `whitespace-nowrap`); Build + Deployment auf Hetzner (Container `kursplan-app` neu gebaut/gestartet); Laufzeit-Verifikation via [`scripts/verify_logo_png_remote.sh`](scripts/verify_logo_png_remote.sh) (HTTP 200, PNG 27.185 Byte, altes Inline-SVG im HTML nicht mehr vorhanden) | ✅ umgesetzt |
 
-| **Portal** | **Trainer-Portal — Zugangsverwaltung (04.11.2026, Schritt 3):** Admin-Ansicht [`/trainer`](app/src/app/trainer/page.tsx) zeigt Portal-Status-Badge („Portal aktiv“ / „Kein Zugang“) und bietet einen Zugangs-Dialog (Portal-E-Mail, Aktiv-Schalter, „Neues Kennwort“ + „Zufallskennwort generieren“); Admin-API [`/api/trainer`](app/src/app/api/trainer/route.ts) verarbeitet `portal_email`/`portal_active`/`password` sicher (bcrypt-Hash, `password_hash` nie in der Response); Build + Deployment (Container `kursplan-app` neu gebaut/gestartet) | ✅ umgesetzt |
+| **Portal** | **Trainerportal — Zugangsverwaltung (04.11.2026, Schritt 3):** Admin-Ansicht [`/trainer`](app/src/app/trainer/page.tsx) zeigt Portal-Status-Badge („Portal aktiv“ / „Kein Zugang“) und bietet einen Zugangs-Dialog (Portal-E-Mail, Aktiv-Schalter, „Neues Kennwort“ + „Zufallskennwort generieren“); Admin-API [`/api/trainer`](app/src/app/api/trainer/route.ts) verarbeitet `portal_email`/`portal_active`/`password` sicher (bcrypt-Hash, `password_hash` nie in der Response); Build + Deployment (Container `kursplan-app` neu gebaut/gestartet) | ✅ umgesetzt |
 
 ---
 
@@ -146,7 +146,7 @@ Umsetzung: Anwender [`scripts/apply_sync_run_retry_migration.cjs`](scripts/apply
 - **Lösung (Standard-Fallback):** Fehlt eine explizite Sonderregel (Ausnahme/Regel/`standard_tarif`) oder ein Dozent, wird automatisch die bestehende Standard-Kostenregel aus `kursplan.kosten_vorgabe` (`vorgabe_id='standard'` → Eigenunterricht **280,00 €**) als Default-Trainersatz angewendet. Gilt damit auch für alle künftig neu importierten Kurse ohne Sonderregel.
 - **Wirkung:** `offen_kosten` = **0**; die Kennzahl ist im Gesamtabnahmelauf (siehe § 6) als Referenzwert verankert.
 
-### 2.11 Trainer-Portal — Authentifizierung & Zugangsverwaltung
+### 2.11 Trainerportal — Authentifizierung & Zugangsverwaltung
 
 [`trainer_portal_auth_migration.sql`](trainer_portal_auth_migration.sql) (Stand Schritt 1, idempotent) erweitert `public.trainer` um die **Portal-Zugangsfelder**:
 
@@ -175,7 +175,7 @@ Zusätzlich `GRANT SELECT, UPDATE ON public.trainer TO n8n_writer` (konsistent z
 | [`/api/sync/p90`](app/src/app/api/sync/p90/route.ts) | **Gehärtet:** In Produktion wird bei fehlender `N8N_P90_WEBHOOK_URL` ein echter Fehler (HTTP 500) gemeldet statt eines simulierten Erfolgs; fester `AbortSignal.timeout(60000)` (60 s, seit 03.11.2026) gegen hängende n8n-Webhooks – ausreichend für den synchronen Durchlauf der drei n8n-Untersyncs (edo_offers, edo_dates, edo_bookings); `revalidatePath('/')` nach Erfolg |
 
 | [`/api/trainer`](app/src/app/api/trainer/route.ts) | **Erweitert (04.11.2026):** PUT/PATCH verarbeitet zusätzlich `portal_email` (Validierung/Normalisierung), `portal_active` (boolescher Wert) und `password` (bcrypt-Hash mit 12 Rounds → `password_hash`); `password_hash` wird weder selektiert noch `RETURNING` geliefert → **strikte Bereinigung in jeder Response**; UNIQUE-Verstoß (PostgreSQL `23505`) auf `portal_email` → HTTP 409 |
-| [`/portal/api/auth/login`](app/src/app/portal/api/auth/login/route.ts) · [`/logout`](app/src/app/portal/api/auth/logout/route.ts) · [`/me`](app/src/app/portal/api/auth/me/route.ts) · [`/portal/api/verfuegbarkeit`](app/src/app/portal/api/verfuegbarkeit/route.ts) | **Neu (Schritt 1/2):** Authentifizierung des Trainer-Portals; Login prüft `portal_email`/`password_hash`/`portal_active`/`is_active` und setzt das signierte Session-Cookie `trainer_session` (Path `/portal`, HttpOnly, 30 Tage); `/me` lädt frische Stammdaten; `/verfuegbarkeit` stellt Verfügbarkeiten für die Portal-Ansicht bereit |
+| [`/portal/api/auth/login`](app/src/app/portal/api/auth/login/route.ts) · [`/logout`](app/src/app/portal/api/auth/logout/route.ts) · [`/me`](app/src/app/portal/api/auth/me/route.ts) · [`/portal/api/verfuegbarkeit`](app/src/app/portal/api/verfuegbarkeit/route.ts) | **Neu (Schritt 1/2):** Authentifizierung des Trainerportals; Login prüft `portal_email`/`password_hash`/`portal_active`/`is_active` und setzt das signierte Session-Cookie `trainer_session` (Path `/portal`, HttpOnly, 30 Tage); `/me` lädt frische Stammdaten; `/verfuegbarkeit` stellt Verfügbarkeiten für die Portal-Ansicht bereit |
 
 > Bestehende Routen (Trainer, Verfügbarkeit, Zeitplan, Termine, Kursplan, Kurstransfer, Sync/P90, edoobox-Basis/Vorlagen, Reservierung/Umwandlung) — Stand siehe [`PROJEKTSTAND.md`](PROJEKTSTAND.md) § 5.2.
 
@@ -191,7 +191,7 @@ Zusätzlich `GRANT SELECT, UPDATE ON public.trainer TO n8n_writer` (konsistent z
 | [`Navigation.tsx`](app/src/components/Navigation.tsx), [`AppHeader.tsx`](app/src/app/components/AppHeader.tsx), [`HeaderLogo.tsx`](app/src/app/components/HeaderLogo.tsx) | App-Rahmen; Navigation um neue Bereiche (System-Logs, Themen, Verfügbarkeiten) erweitert |
 | [`HeaderLogo.tsx`](app/src/app/components/HeaderLogo.tsx), [`AppHeader.tsx`](app/src/app/components/AppHeader.tsx:31) | **04.11.2026:** Header-Logo von Inline-SVG auf hochauflösendes PNG umgestellt ([`app/public/webinarcenter_logo_header.png`](app/public/webinarcenter_logo_header.png), `h-10 sm:h-11 w-auto object-contain shrink-0`); Brand-Row harmonisiert (`py-2.5 px-4 sm:px-6`, Trennstrich `h-6 w-px bg-white/20 mx-3 hidden sm:block`, Titel „Kursplanung“ ohne `whitespace-nowrap`) |
 | [`app/src/middleware.ts`](app/src/middleware.ts) | **Neu:** Basic-Auth-Schutz der gesamten App (außer `_next/static`, `_next/image`, `favicon.ico`); prüft `Authorization`-Header gegen `ADMIN_USER`/`ADMIN_PASSWORD`, sonst HTTP 401 mit `WWW-Authenticate: Basic realm="Kursplan-App Admin Area"` |
-| [`/portal/login`](app/src/app/portal/login/page.tsx), [`/portal/verfuegbarkeit`](app/src/app/portal/verfuegbarkeit/page.tsx) + [`PortalHeader.tsx`](app/src/app/portal/components/PortalHeader.tsx) | **Neu (Schritt 1–3):** geschütztes **Trainer-Portal** für externe Trainer — Login über `portal_email` + Kennwort, danach Verfügbarkeitspflege; Kopf-Komponente `PortalHeader` mit Abmelden (`/portal/api/auth/logout`) |
+| [`/portal/login`](app/src/app/portal/login/page.tsx), [`/portal/verfuegbarkeit`](app/src/app/portal/verfuegbarkeit/page.tsx) + [`PortalHeader.tsx`](app/src/app/portal/components/PortalHeader.tsx) | **Neu (Schritt 1–3):** geschütztes **Trainerportal** für externe Trainer — Login über `portal_email` + Kennwort, danach Verfügbarkeitspflege; Kopf-Komponente `PortalHeader` mit Abmelden (`/portal/api/auth/logout`) |
 | [`/trainer`](app/src/app/trainer/page.tsx) | **Erweitert (04.11.2026):** Tabellenspalte „Portal-Zugang“ mit Status-Badge („Portal aktiv“ / „Kein Zugang“) + E-Mail-Anzeige; Aktion „Zugang“ öffnet einen Dialog zur Pflege von `portal_email`, `portal_active` und zur Kennwortvergabe („Zufallskennwort generieren“ via `crypto.getRandomValues`, Sichtbarkeits-Toggle) |
 
 ---
@@ -272,9 +272,9 @@ Zusätzlich `GRANT SELECT, UPDATE ON public.trainer TO n8n_writer` (konsistent z
 
 ---
 
-## 10. Trainer-Portal — Session-Konzept (Schritt 1–3)
+## 10. Trainerportal — Session-Konzept (Schritt 1–3)
 
-Das Trainer-Portal (`/portal/login`, `/portal/verfuegbarkeit`) wird über ein **stateless signiertes Session-Cookie** geschützt — implementiert in [`app/src/lib/portal-session.ts`](app/src/lib/portal-session.ts):
+Das Trainerportal (`/portal/login`, `/portal/verfuegbarkeit`) wird über ein **stateless signiertes Session-Cookie** geschützt — implementiert in [`app/src/lib/portal-session.ts`](app/src/lib/portal-session.ts):
 
 - **Token-Format:** `base64url({ tid, exp }).hmac_sha256_signatur` — der Payload enthält nur `trainerId` und ein 30-Tage-Ablaufdatum (`exp`).
 - **Signatur:** `HMAC-SHA256` über den Base64url-Body mit `SESSION_SECRET` aus der Umgebung (siehe [`.env.production`](.env.production)); Verifikation mit `timingSafeEqual` gegen Timing-Angriffe.

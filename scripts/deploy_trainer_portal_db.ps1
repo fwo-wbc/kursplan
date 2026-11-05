@@ -1,5 +1,5 @@
 # =============================================================================
-# Führt das Remote-Setup für das Trainer-Portal über SSH aus
+# Führt das Remote-Setup für das Trainerportal über SSH aus
 # (Muster: scripts/deploy_header_verify.ps1).
 # Nutzung:
 #   powershell -ExecutionPolicy Bypass -File scripts\deploy_trainer_portal_db.ps1

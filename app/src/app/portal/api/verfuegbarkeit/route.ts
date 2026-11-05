@@ -14,7 +14,7 @@ import {
 } from '@/lib/portal-session';
 
 // =============================================================================
-// /portal/api/verfuegbarkeit – gesicherte Verfügbarkeits-API des Trainer-Portals
+// /portal/api/verfuegbarkeit – gesicherte Verfügbarkeits-API des Trainerportals
 // -----------------------------------------------------------------------------
 // - Jeder Aufruf wird gegen die Portal-Session geprüft (trainer_session-Cookie,
 //   Pfad '/portal'). Ungültig oder fehlend → HTTP 401.

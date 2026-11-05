@@ -1,5 +1,5 @@
 // =============================================================================
-// Laufzeit-Verifikation Schritt 3: Trainer-Portal – Zugangsverwaltung
+// Laufzeit-Verifikation Schritt 3: Trainerportal – Zugangsverwaltung
 // -----------------------------------------------------------------------------
 // Ausführung direkt im Container kursplan-app:
 //   docker cp scripts/verify_trainer_portal_access.cjs kursplan-app:/app/verify_tmp.cjs

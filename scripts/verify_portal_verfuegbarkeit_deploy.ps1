@@ -1,13 +1,13 @@
 $ErrorActionPreference = 'Stop'
 
 # =============================================================================
-# Verifikation: Trainer-Portal /portal/verfuegbarkeit (neue 1:1-Kopie)
+# Verifikation: Trainerportal /portal/verfuegbarkeit (neue 1:1-Kopie)
 # Prüft remote im Container:
 #   1) Container-Status (kursplan-app)
 #   2) /portal/verfuegbarkeit liefert HTTP 200 (öffentlich, ohne Basic-Auth)
 #      und enthält NICHT: Trainer-Auswahl (trainer-select), „Auswahl als
 #      Standard festlegen“, zweite Menüleiste – aber sehr wohl Header-Brand
-#      „Trainer-Portal“ + „Abmelden“.
+#      „Trainerportal“ + „Abmelden“.
 #   3) Logo /webinarcenter_logo_header.png liefert OHNE Authorization 200
 #      (kein Browser-Login-Popup) – Gefallen durch die neue Middleware-Regel.
 #   4) Admin-Home mit Basic-Auth liefert weiterhin 200 (Auth bleibt aktiv).
@@ -27,7 +27,7 @@ docker exec kursplan-app node -e '
       status: portal.status,
       keineDozentenauswahl: !html.includes("trainer-select"),
       keinStandardHaken: !html.includes("Auswahl als Standard festlegen"),
-      headerTitel: html.includes("Trainer-Portal"),
+      headerTitel: html.includes("Trainerportal"),
       abmeldenButton: html.includes("Abmelden"),
     };
     console.log("PORTAL-FETCH:", JSON.stringify(checks), "bytes=" + html.length);
@@ -46,7 +46,7 @@ docker exec kursplan-app node -e '
     if (!portalOk) { console.error("FEHLER: Portal-Status = " + portal.status); bad++; }
     if (!checks.keineDozentenauswahl) { console.error("FEHLER: trainer-select (Dozentenauswahl) gefunden"); bad++; }
     if (!checks.keinStandardHaken) { console.error("FEHLER: StandardHaken-Text gefunden"); bad++; }
-    if (!checks.headerTitel) { console.error("FEHLER: Header-Titel Trainer-Portal fehlt"); bad++; }
+    if (!checks.headerTitel) { console.error("FEHLER: Header-Titel Trainerportal fehlt"); bad++; }
     if (!checks.abmeldenButton) { console.error("FEHLER: Abmelden-Button fehlt"); bad++; }
     if (logo.status !== 200) { console.error("FEHLER: Logo liefert kein 200 ohne Auth"); bad++; }
     if (admin.status !== 200) { console.error("FEHLER: Admin-Basic-Auth defekt"); bad++; }

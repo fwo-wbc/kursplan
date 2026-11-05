@@ -1,7 +1,9 @@
 'use client';
 
+import Link from 'next/link';
+
 // =============================================================================
-// /portal/login – Login-Maske des Trainer-Portals
+// /portal/login – Login-Maske des Trainerportals
 // Zentrierter Dialog auf dezentem Hintergrund (bg-slate-50), Logo im
 // Bereich der dunkelblauen Brand-Box (#193C6F). Bei Erfolg Weiterleitung
 // nach /portal/verfuegbarkeit.
@@ -80,7 +82,7 @@ export default function PortalLoginPage() {
           className="mt-6 rounded-xl border border-slate-200 bg-white p-8 shadow-sm"
         >
           <h1 className="text-xl font-semibold text-slate-800">
-            Trainer-Portal
+            Trainerportal
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             Bitte mit Ihrer Portal-E-Mail und Ihrem Kennwort anmelden.
@@ -115,6 +117,15 @@ export default function PortalLoginPage() {
             className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-[#193C6F] focus:outline-none focus:ring-1 focus:ring-[#193C6F]"
             placeholder="••••••••"
           />
+
+          <div className="mt-2 text-right">
+            <Link
+              href="/portal/passwort-vergessen"
+              className="text-sm text-[#285DAA] hover:underline"
+            >
+              Passwort vergessen?
+            </Link>
+          </div>
 
           {error && (
             <p

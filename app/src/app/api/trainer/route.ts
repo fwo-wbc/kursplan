@@ -38,7 +38,7 @@ interface TrainerSaetzeBody {
   stundensatz?: unknown;
   reduzierter_satz?: unknown;
   honorar_90min?: unknown;
-  /** Portal-E-Mail fürs Trainer-Portal (leer = löschen). */
+  /** Portal-E-Mail fürs Trainerportal (leer = löschen). */
   portal_email?: unknown;
   /** Portal-Zugang aktiv/deaktiviert. */
   portal_active?: unknown;

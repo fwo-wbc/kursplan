@@ -1,8 +1,8 @@
 -- =============================================================================
--- Migration: Trainer-Portal – Authentifizierungsfelder
+-- Migration: Trainerportal – Authentifizierungsfelder
 -- Stand: November 2026
 -- Auszuführen als: kursplan_user (PostgreSQL auf Host-Port 5433)
--- Zweck: Schritt 1 Trainer-Portal – Login-Mechanik für das Trainer-Portal.
+-- Zweck: Schritt 1 Trainerportal – Login-Mechanik für das Trainerportal.
 -- Idempotent: Kann mehrfach ausgeführt werden.
 -- =============================================================================
 

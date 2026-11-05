@@ -574,7 +574,7 @@ export default function ReservierungenPage() {
               : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            <List className="w-4 h-4" />
+            <List className={`w-4 h-4 ${ansicht === 'liste' ? 'text-white' : ''}`} />
             Listenansicht
           </button>
           <button
@@ -586,7 +586,7 @@ export default function ReservierungenPage() {
               : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            <LayoutGrid className="w-4 h-4" />
+            <LayoutGrid className={`w-4 h-4 ${ansicht === 'monat' ? 'text-white' : ''}`} />
             Monatsübersicht
           </button>
         </div>
@@ -655,7 +655,7 @@ export default function ReservierungenPage() {
 
           {/* Leiste der aktiven Filter inkl. „Filter zurücksetzen“ */}
           {aktiveFilter.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-200 bg-blue-50/50">
+            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-200 bg-[#285DAA]/10">
               <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600">
                 <Filter className="w-3.5 h-3.5 text-cd-blue" />
                 Aktive Filter:
@@ -791,7 +791,7 @@ export default function ReservierungenPage() {
                                 ? `Reservierung ${code} bearbeiten`
                                 : 'Nicht bearbeitbar'
                             }
-                            className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-400 cursor-pointer hover:text-cd-blue hover:bg-blue-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-400 cursor-pointer hover:text-cd-blue hover:bg-[#285DAA]/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             <Pencil className="w-4 h-4" />
                           </button>
@@ -821,7 +821,7 @@ export default function ReservierungenPage() {
               <ChevronLeft className="w-4 h-4" />
             </button>
 
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 font-semibold text-slate-800 whitespace-nowrap">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#285DAA]/10 border border-[#285DAA]/30 font-semibold text-slate-800 whitespace-nowrap">
               <CalendarDays className="w-4 h-4 text-cd-blue" />
               {monatsTitel}
             </span>
@@ -1036,8 +1036,8 @@ export default function ReservierungenPage() {
         }
 
         .monats-tag-heute {
-          background-color: #eff6ff; /* blue-50 */
-          box-shadow: inset 0 0 0 2px #3b82f6; /* blue-500 */
+          background-color: rgba(40, 93, 170, 0.08); /* CD-Blau (#285DAA) sehr hell */
+          box-shadow: inset 0 0 0 2px #285daa; /* CD-Blau #285DAA */
         }
 
         .monats-tag-nummer {
@@ -1065,8 +1065,8 @@ export default function ReservierungenPage() {
           gap: 0.25rem;
           padding: 0.125rem 0.25rem;
           border-radius: 0.25rem;
-          background-color: #dbeafe; /* blue-100 */
-          border: 1px solid #93c5fd; /* blue-300 */
+          background-color: rgba(40, 93, 170, 0.1); /* CD-Blau (#285DAA) hell */
+          border: 1px solid rgba(40, 93, 170, 0.35); /* CD-Blau (#285DAA) mittel */
           font-size: 0.6875rem;
           line-height: 1.1;
           overflow: hidden;

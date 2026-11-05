@@ -195,7 +195,7 @@ function cleanupStatusBadgeClass(status: string | null): string {
     case 'bestätigt':
       return 'bg-emerald-100 text-emerald-700 border-emerald-200';
     case 'ausgeschrieben':
-      return 'bg-blue-100 text-blue-700 border-blue-200';
+      return 'bg-[#285DAA]/10 text-[#285DAA] border-[#285DAA]/30';
     case 'unter Vorbehalt':
       return 'bg-amber-100 text-amber-700 border-amber-200';
     case 'abgesagt':
@@ -267,8 +267,8 @@ const ZUWEISUNG_STATUS_CONFIG: Record<
     dotClassName: 'bg-red-600',
   },
   ausgeschrieben: {
-    selectClassName: 'bg-blue-50 text-blue-800 border-blue-300 focus:ring-blue-500',
-    dotClassName: 'bg-blue-500',
+    selectClassName: 'bg-[#285DAA] text-white border-[#285DAA] focus:ring-[#285DAA]',
+    dotClassName: 'bg-[#285DAA]',
   },
   'unter Vorbehalt': {
     selectClassName: 'bg-amber-50 text-amber-800 border-amber-300 focus:ring-amber-500',
@@ -287,7 +287,7 @@ const ZUWEISUNG_STATUS_CONFIG: Record<
 const STATUS_CONFIG: Record<string, { label: string; badgeClasses: string }> = {
   'Veröffentlicht': {
     label: 'Veröffentlicht',
-    badgeClasses: 'bg-sky-50 text-sky-700 border-sky-200',
+    badgeClasses: 'bg-[#285DAA]/10 text-[#285DAA] border-[#285DAA]/30',
   },
   'Garantierte Durchführung': {
     label: 'Garantierte Durchführung',
@@ -754,7 +754,7 @@ function kursHinweise(kurs: Kurs): KursHinweis[] {
   if (optionen.einladungslink) {
     hinweise.push({
       text: 'Einladungslink',
-      className: 'bg-sky-50 text-sky-700 border-sky-200',
+      className: 'bg-[#285DAA]/10 text-[#285DAA] border-[#285DAA]/30',
     });
   }
 
@@ -1129,7 +1129,7 @@ function HonorarZelle({
                 if (e.key === 'Enter') commit();
                 if (e.key === 'Escape') setEditing(false);
               }}
-              className="w-24 text-right text-sm border border-blue-400 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-24 text-right text-sm border border-[#285DAA]/50 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
             />
           )}
         </div>
@@ -2565,7 +2565,7 @@ export default function Home() {
                   value={searchTerm}
                   onChange={(e) => handleSearchTermChange(e.target.value)}
                   placeholder="z. B. Excel Grundlagen"
-                  className="w-full pl-9 pr-8 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-9 pr-8 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                 />
                 {searchTerm !== '' && (
                   <FilterClearButton
@@ -2589,7 +2589,7 @@ export default function Home() {
                   value={searchKursnr}
                   onChange={(e) => handleSearchKursnrChange(e.target.value)}
                   placeholder="z. B. xls-gl-m1…"
-                  className="w-full pl-9 pr-8 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-9 pr-8 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                 />
                 {searchKursnr !== '' && (
                   <FilterClearButton
@@ -2609,7 +2609,7 @@ export default function Home() {
                 id="trainer-filter"
                 value={selectedTrainerFilter}
                 onChange={(e) => handleTrainerFilterChange(e.target.value)}
-                className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
               >
                 <option value="ALL">Alle Trainer</option>
                 <option value="UNASSIGNED">Nur ohne Zuweisung</option>
@@ -2633,7 +2633,7 @@ export default function Home() {
                   id="tag-filter"
                   value={selectedTag}
                   onChange={(e) => handleTagFilterChange(e.target.value)}
-                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                 >
                   <option value="ALL">Alle Tags</option>
                   {tagOptionen.map((tag) => (
@@ -2663,7 +2663,7 @@ export default function Home() {
                   id="jahr-filter"
                   value={selectedJahr}
                   onChange={(e) => handleJahrFilterChange(e.target.value)}
-                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                 >
                   <option value="ALL">Alle</option>
                   {JAHR_OPTIONS.map((jahr) => (
@@ -2693,7 +2693,7 @@ export default function Home() {
                   id="monat-filter"
                   value={selectedMonat}
                   onChange={(e) => handleMonatFilterChange(e.target.value)}
-                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                 >
                   <option value="ALL">Alle</option>
                   {MONAT_OPTIONS.map((monat) => (
@@ -2723,7 +2723,7 @@ export default function Home() {
                   id="kw-filter"
                   value={selectedKw}
                   onChange={(e) => handleKwFilterChange(e.target.value)}
-                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full text-sm border border-slate-300 rounded-lg px-2 py-2 pr-14 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                 >
                   <option value="ALL">Alle</option>
                   {KW_OPTIONS.map((kw) => (
@@ -2823,7 +2823,7 @@ export default function Home() {
                       value={bulkTrainerKuerzel}
                       onChange={(e) => setBulkTrainerKuerzel(e.target.value)}
                       title="Trainer für alle ausgewählten Termine festlegen"
-                      className="text-xs border border-slate-300 rounded-md pl-2 pr-6 py-1.5 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="text-xs border border-slate-300 rounded-md pl-2 pr-6 py-1.5 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                     >
                       <option value="">– nicht ändern –</option>
                       <option value="n. v.">n. v.</option>
@@ -2845,7 +2845,7 @@ export default function Home() {
                       value={bulkStatus}
                       onChange={(e) => setBulkStatus(e.target.value)}
                       title="Zuweisungs-Status für alle ausgewählten Termine festlegen"
-                      className="text-xs border border-slate-300 rounded-md pl-2 pr-6 py-1.5 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="text-xs border border-slate-300 rounded-md pl-2 pr-6 py-1.5 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                     >
                       <option value="">– nicht ändern –</option>
                       <option value="bestätigt">Bestätigt</option>
@@ -2866,7 +2866,7 @@ export default function Home() {
                       ? 'Speichern läuft …'
                       : 'Änderungen für alle ausgewählten Termine speichern'
                   }
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-white text-xs font-semibold rounded-lg transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-white text-xs font-semibold rounded-lg transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#285DAA]/40 disabled:opacity-60 disabled:cursor-not-allowed"
                   style={{ backgroundColor: '#285DAA' }}
                 >
                   {isSubmitting ? 'Speichern …' : 'Für alle übernehmen'}
@@ -2897,7 +2897,7 @@ export default function Home() {
                         ? 'Alle sichtbaren Termine abwählen'
                         : 'Alle sichtbaren Termine auswählen'
                     }
-                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    className="w-4 h-4 rounded border-slate-300 text-[#285DAA] focus:ring-[#285DAA] cursor-pointer"
                   />
                 </th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-3 py-3 font-semibold whitespace-nowrap text-center w-14">KW</th>
@@ -3051,7 +3051,7 @@ export default function Home() {
                         onChange={() => toggleTermin(termin.date_id)}
                         aria-label={`Termin ${termin.date_id} auswählen`}
                         title={istSelektiert ? 'Auswahl aufheben' : 'Termin auswählen'}
-                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        className="w-4 h-4 rounded border-slate-300 text-[#285DAA] focus:ring-[#285DAA] cursor-pointer"
                       />
                     </td>
 
@@ -3074,7 +3074,7 @@ export default function Home() {
                       )}
                       {eintrag.terminAnzahl > 1 && (
                         <div className="mt-0.5">
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200 whitespace-nowrap">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#285DAA]/10 text-[#285DAA] border border-[#285DAA]/30 whitespace-nowrap">
                             Tag {eintrag.terminIndex + 1} von {eintrag.terminAnzahl}
                           </span>
                         </div>
@@ -3283,7 +3283,7 @@ export default function Home() {
                             }
                             title="Trainer zuweisen – edoobox & Kurstitel werden angepasst"
                             aria-label={`Trainer für Kurs ${kurs.offer_name ?? ''}`}
-                            className={`text-xs border rounded-md px-2 py-1 pr-6 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                            className={`text-xs border rounded-md px-2 py-1 pr-6 bg-white focus:outline-none focus:ring-2 focus:ring-[#285DAA] ${
                               istTrainerSaving
                                 ? 'opacity-60 cursor-wait'
                                 : 'border-slate-300 cursor-pointer'
@@ -3413,7 +3413,7 @@ export default function Home() {
                             }
                             title={def.title}
                             aria-label={def.label}
-                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                            className="w-4 h-4 rounded border-slate-300 text-[#285DAA] focus:ring-[#285DAA] cursor-pointer"
                           />
                         </div>
                       </td>
@@ -3486,7 +3486,7 @@ export default function Home() {
                       type="button"
                       onClick={() => void cleanupAusfuehren()}
                       disabled={cleanupLaeuft}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-semibold rounded-lg transition"
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-[#285DAA] hover:bg-[#1E4A87] disabled:bg-[#285DAA]/40 text-white text-sm font-semibold rounded-lg transition"
                     >
                       {cleanupLaeuft ? (
                         <Loader2 className="w-4 h-4 animate-spin" />

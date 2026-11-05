@@ -68,7 +68,7 @@ export default function PortalHeader() {
           />
           <div className="h-6 w-px bg-white/20 mx-3 hidden sm:block" aria-hidden="true" />
           <span className="text-lg font-medium text-white tracking-wide shrink-0">
-            Trainer-Portal
+            Trainerportal
           </span>
         </div>
 
@@ -90,7 +90,7 @@ export default function PortalHeader() {
             disabled={loggingOut}
             className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-white text-sm px-3 py-1.5 rounded border border-white/20 transition-colors disabled:opacity-60"
           >
-            <LogOut className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <LogOut className="w-4 h-4 text-white shrink-0 mr-1.5" aria-hidden="true" />
             {loggingOut ? 'Abmelden …' : 'Abmelden'}
           </button>
         </div>

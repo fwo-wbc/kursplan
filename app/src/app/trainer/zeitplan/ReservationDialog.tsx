@@ -715,7 +715,7 @@ export default function ReservationDialog({
                   type="button"
                   onClick={addTermin}
                   disabled={saving}
-                  className="inline-flex items-center gap-1 rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 transition disabled:opacity-60"
+                  className="inline-flex items-center gap-1 rounded-md border border-[#285DAA]/40 bg-[#285DAA]/10 px-2 py-1 text-xs font-medium text-[#285DAA] hover:bg-[#285DAA]/20 transition disabled:opacity-60"
                 >
                   <Plus className="w-3 h-3" />
                   Weiteren Termin hinzufügen
@@ -742,7 +742,7 @@ export default function ReservationDialog({
                       return (
                         <tr
                           key={key}
-                          className={neu ? 'bg-blue-50/60 align-middle' : 'bg-white align-middle'}
+                          className={neu ? 'bg-[#285DAA]/10 align-middle' : 'bg-white align-middle'}
                         >
                           <td className="px-3 py-1.5">
                             {editierbar ? (
@@ -750,7 +750,7 @@ export default function ReservationDialog({
                                 type="date"
                                 value={editDatum}
                                 onChange={(e) => setEditDatum(e.target.value)}
-                                className="w-full text-sm border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full text-sm border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                               />
                             ) : neu ? (
                               <input
@@ -759,7 +759,7 @@ export default function ReservationDialog({
                                 onChange={(e) =>
                                   updateNeuZeile(key, { datum: e.target.value })
                                 }
-                                className="w-full text-sm border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full text-sm border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                               />
                             ) : (
                               <span className="font-medium text-slate-700">
@@ -773,7 +773,7 @@ export default function ReservationDialog({
                               <select
                                 value={editSlot}
                                 onChange={(e) => setEditSlot(e.target.value)}
-                                className="w-full text-sm border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full text-sm border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                               >
                                 {SLOT_OPTIONEN.map((o) => (
                                   <option key={o.value} value={o.value}>
@@ -787,7 +787,7 @@ export default function ReservationDialog({
                                 onChange={(e) =>
                                   updateNeuZeile(key, { slot_code: e.target.value })
                                 }
-                                className="w-full text-sm border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full text-sm border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                               >
                                 {SLOT_OPTIONEN.map((o) => (
                                   <option key={o.value} value={o.value}>
@@ -811,7 +811,7 @@ export default function ReservationDialog({
                               <select
                                 value={editStatus}
                                 onChange={(e) => setEditStatus(e.target.value)}
-                                className="w-full text-sm border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full text-sm border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[#285DAA]"
                               >
                                 {STATUS_OPTIONEN.map((o) => (
                                   <option key={o.value} value={o.value}>
@@ -839,7 +839,7 @@ export default function ReservationDialog({
                                   <button
                                     type="button"
                                     onClick={() => confirmEdit(key)}
-                                    className="rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 transition"
+                                    className="rounded-md bg-[#285DAA] px-2 py-1 text-xs font-medium text-white hover:bg-[#1E4A87] transition"
                                   >
                                     OK
                                   </button>
@@ -918,7 +918,7 @@ export default function ReservationDialog({
                   value={kdNr}
                   onChange={(e) => setKdNr(e.target.value)}
                   placeholder="KD-10482"
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-[#285DAA] bg-white"
                 />
               </div>
               <div>
@@ -929,7 +929,7 @@ export default function ReservationDialog({
                   value={thema}
                   onChange={(e) => setThema(e.target.value)}
                   placeholder="Excel Grundlagen"
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-[#285DAA] bg-white"
                 />
               </div>
               <div>
@@ -940,7 +940,7 @@ export default function ReservationDialog({
                   type="date"
                   value={fristEnde}
                   onChange={(e) => setFristEnde(e.target.value)}
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-[#285DAA] bg-white"
                 />
               </div>
               <div className="sm:col-span-2">
@@ -951,7 +951,7 @@ export default function ReservationDialog({
                   value={notiz}
                   onChange={(e) => setNotiz(e.target.value)}
                   placeholder="optional"
-                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  className="w-full text-sm border border-slate-300 rounded px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-[#285DAA] bg-white"
                 />
               </div>
             </div>
@@ -999,7 +999,7 @@ export default function ReservationDialog({
                                   : l.action === 'CREATED'
                                     ? 'bg-emerald-100 text-emerald-700'
                                     : l.action === 'APPOINTMENT_ADDED'
-                                      ? 'bg-blue-100 text-blue-700'
+                                      ? 'bg-[#285DAA]/15 text-[#285DAA]'
                                       : 'bg-slate-200 text-slate-600'
                               }`}
                             >
