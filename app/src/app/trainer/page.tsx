@@ -12,6 +12,13 @@ import {
   Pencil,
   Check,
   X,
+  KeyRound,
+  Mail,
+  ShieldCheck,
+  ShieldAlert,
+  Eye,
+  EyeOff,
+  Shuffle,
 } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 
@@ -30,6 +37,10 @@ interface Trainer {
   stundensatz: number;
   reduzierter_satz: number;
   honorar_90min: number;
+  /** Portal-E-Mail für das Trainer-Portal (Login /portal/login). */
+  portal_email: string | null;
+  /** Portal-Zugang aktiv/deaktiviert (unabhängig von is_active). */
+  portal_active: boolean;
 }
 
 /** Antwort des POST-Sync-Endpunkts. */
@@ -91,6 +102,16 @@ export default function TrainerPage() {
     honorar_90min: string;
   } | null>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
+
+  // Zugangsverwaltung Trainer-Portal (Modal-Dialog).
+  const [zugangId, setZugangId] = useState<number | null>(null);
+  const [zugangDraft, setZugangDraft] = useState<{
+    portal_email: string;
+    portal_active: boolean;
+    neuesKennwort: string;
+    kennwortSichtbar: boolean;
+  } | null>(null);
+  const [speichereZugangId, setSpeichereZugangId] = useState<number | null>(null);
 
   // Dezentrale Meldung anzeigen und nach 4 s automatisch ausblenden.
   const showFeedback = useCallback((type: Feedback['type'], text: string) => {
@@ -219,6 +240,102 @@ export default function TrainerPage() {
     },
     [editDraft, showFeedback]
   );
+
+  // -------------------------------------------------------------------------
+  // Zugangsverwaltung Trainer-Portal
+  // -------------------------------------------------------------------------
+
+  /**
+   * Erzeugt ein kryptographisch sicheres Zufallskennwort für die einmalige
+   * Weitergabe an den Trainer (Zeichen ohne Verwechslungsgefahr wie O/0, I/l).
+   */
+  const generiereZufallsKennwort = useCallback((laenge = 16): string => {
+    const zeichen = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*';
+    const bytes = new Uint32Array(laenge);
+    crypto.getRandomValues(bytes);
+    let pw = '';
+    for (let i = 0; i < laenge; i++) {
+      pw += zeichen[bytes[i] % zeichen.length];
+    }
+    return pw;
+  }, []);
+
+  /** Öffnet den Zugangs-Dialog für einen Trainer. */
+  const handleOpenZugang = useCallback((t: Trainer) => {
+    setZugangId(t.id);
+    setZugangDraft({
+      portal_email: t.portal_email ?? '',
+      portal_active: t.portal_active,
+      neuesKennwort: '',
+      kennwortSichtbar: false,
+    });
+  }, []);
+
+  /** Schließt den Zugangs-Dialog ohne zu speichern. */
+  const handleCloseZugang = useCallback(() => {
+    setZugangId(null);
+    setZugangDraft(null);
+    setSpeichereZugangId(null);
+  }, []);
+
+  /** Übernimmt ein frisch generiertes Zufallskennwort ins Kennwort-Feld. */
+  const handleZufallskennwort = useCallback(() => {
+    setZugangDraft((prev) =>
+      prev ? { ...prev, neuesKennwort: generiereZufallsKennwort(16) } : prev
+    );
+  }, [generiereZufallsKennwort]);
+
+  /** Speichert Portal-E-Mail, Aktiv-Status und optional das neue Kennwort. */
+  const handleSaveZugang = useCallback(async () => {
+    if (!zugangId || !zugangDraft) return;
+
+    const portal_email = zugangDraft.portal_email.trim();
+    if (!portal_email) {
+      showFeedback('error', 'Bitte eine Portal-E-Mail angeben.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(portal_email)) {
+      showFeedback('error', 'Bitte eine gültige E-Mail-Adresse angeben.');
+      return;
+    }
+    if (zugangDraft.neuesKennwort.trim() !== '' && zugangDraft.neuesKennwort.length < 8) {
+      showFeedback('error', 'Das Kennwort muss mindestens 8 Zeichen lang sein.');
+      return;
+    }
+
+    setSpeichereZugangId(zugangId);
+    try {
+      const res = await fetch('/api/trainer', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: zugangId,
+          portal_email,
+          portal_active: zugangDraft.portal_active,
+          ...(zugangDraft.neuesKennwort.trim() !== ''
+            ? { password: zugangDraft.neuesKennwort }
+            : {}),
+        }),
+      });
+
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(errBody?.error ?? 'Speichern fehlgeschlagen.');
+      }
+
+      const updated = (await res.json()) as Trainer;
+      setTrainer((prev) => prev.map((t) => (t.id === zugangId ? updated : t)));
+      handleCloseZugang();
+      showFeedback('success', 'Portal-Zugang gespeichert.');
+    } catch (err: unknown) {
+      console.error('Fehler beim Speichern des Portal-Zugangs:', err);
+      showFeedback('error', err instanceof Error ? err.message : 'Speichern fehlgeschlagen.');
+    } finally {
+      setSpeichereZugangId(null);
+    }
+  }, [zugangId, zugangDraft, showFeedback, handleCloseZugang]);
 
   // Gefilterte Liste basierend auf Suche (Kürzel / Admin-ID).
   const gefilterteTrainer = useMemo(() => {
@@ -381,6 +498,15 @@ export default function TrainerPage() {
                     <Info className="w-3.5 h-3.5 text-slate-400" />
                   </span>
                 </th>
+                <th className="px-3 py-3 font-semibold">
+                  <span
+                    className="inline-flex items-center gap-1"
+                    title="Portal-Zugang für externe Trainer (Login /portal/login)"
+                  >
+                    Portal-Zugang
+                    <Info className="w-3.5 h-3.5 text-slate-400" />
+                  </span>
+                </th>
                 <th className="px-3 py-3 font-semibold text-right">Aktionen</th>
               </tr>
             </thead>
@@ -524,6 +650,29 @@ export default function TrainerPage() {
                       )}
                     </td>
 
+                    {/* Portal-Zugang – Badge + E-Mail */}
+                    <td className="px-3 py-3 whitespace-nowrap align-middle">
+                      {t.portal_active && t.portal_email ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          Portal aktiv
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border bg-slate-100 text-slate-600 border-slate-200">
+                          <ShieldAlert className="w-3.5 h-3.5" />
+                          Kein Zugang
+                        </span>
+                      )}
+                      {t.portal_email && (
+                        <span
+                          className="block mt-1 text-xs text-slate-500 max-w-[180px] truncate"
+                          title={t.portal_email}
+                        >
+                          {t.portal_email}
+                        </span>
+                      )}
+                    </td>
+
                     {/* Aktionen */}
                     <td className="px-3 py-3 whitespace-nowrap text-right">
                       {isEditing ? (
@@ -553,15 +702,26 @@ export default function TrainerPage() {
                           </button>
                         </div>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleStartEdit(t)}
-                          title="Vergütungssätze bearbeiten"
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-slate-600 hover:text-blue-700 hover:bg-blue-50 text-xs font-semibold rounded-lg transition"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                          Bearbeiten
-                        </button>
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleStartEdit(t)}
+                            title="Vergütungssätze bearbeiten"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-slate-600 hover:text-blue-700 hover:bg-blue-50 text-xs font-semibold rounded-lg transition"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            Bearbeiten
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenZugang(t)}
+                            title="Portal-Zugang verwalten"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 text-xs font-semibold rounded-lg transition"
+                          >
+                            <KeyRound className="w-3.5 h-3.5" />
+                            Zugang
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -572,6 +732,175 @@ export default function TrainerPage() {
         </div>
       )}
 
+      {/* Zugangsverwaltung Trainer-Portal (Modal) */}
+      {zugangId !== null && zugangDraft && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Portal-Zugang verwalten"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+        >
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-slate-200">
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-200">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-blue-600" />
+                <h2 className="text-base font-semibold text-slate-800">
+                  Portal-Zugang verwalten
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseZugang}
+                disabled={speichereZugangId !== null}
+                title="Schließen"
+                className="inline-flex items-center justify-center p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              {(() => {
+                const current = trainer.find((t) => t.id === zugangId);
+                return current ? (
+                  <p className="text-xs text-slate-500">
+                    Trainer:{' '}
+                    <span className="font-mono font-semibold text-slate-700">
+                      {current.kuerzel ?? '–'}
+                    </span>
+                    {current.edoobox_admin_id
+                      ? ` · Edoobox-ID ${current.edoobox_admin_id}`
+                      : ''}
+                  </p>
+                ) : null;
+              })()}
+
+              <div>
+                <label htmlFor="portal-email" className="block text-xs font-semibold text-slate-500 mb-1">
+                  Portal-E-Mail
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    id="portal-email"
+                    type="email"
+                    autoComplete="off"
+                    value={zugangDraft.portal_email}
+                    onChange={(e) =>
+                      setZugangDraft((prev) =>
+                        prev ? { ...prev, portal_email: e.target.value } : prev
+                      )
+                    }
+                    placeholder="trainer@beispiel.de"
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <p className="mt-1 text-xs text-slate-400">
+                  Zugangsadresse für das Trainer-Portal (Login via /portal/login).
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="portal-active" className="block text-xs font-semibold text-slate-500 mb-1">
+                  Portal-Zugang
+                </label>
+                <select
+                  id="portal-active"
+                  value={zugangDraft.portal_active ? 'aktiv' : 'inaktiv'}
+                  onChange={(e) =>
+                    setZugangDraft((prev) =>
+                      prev
+                        ? { ...prev, portal_active: e.target.value === 'aktiv' }
+                        : prev
+                    )
+                  }
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="aktiv">Aktiv (Login erlaubt)</option>
+                  <option value="inaktiv">Deaktiviert (kein Login)</option>
+                </select>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1 gap-2">
+                  <label htmlFor="neues-kennwort" className="block text-xs font-semibold text-slate-500">
+                    Neues Kennwort
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleZufallskennwort}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"
+                  >
+                    <Shuffle className="w-3.5 h-3.5" />
+                    Zufallskennwort generieren
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    id="neues-kennwort"
+                    type={zugangDraft.kennwortSichtbar ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    value={zugangDraft.neuesKennwort}
+                    onChange={(e) =>
+                      setZugangDraft((prev) =>
+                        prev ? { ...prev, neuesKennwort: e.target.value } : prev
+                      )
+                    }
+                    placeholder="mind. 8 Zeichen – leer lassen = unverändert"
+                    className="w-full pl-3 pr-10 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setZugangDraft((prev) =>
+                        prev
+                          ? { ...prev, kennwortSichtbar: !prev.kennwortSichtbar }
+                          : prev
+                      )
+                    }
+                    title={zugangDraft.kennwortSichtbar ? 'Kennwort verbergen' : 'Kennwort anzeigen'}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center p-1.5 text-slate-400 hover:text-slate-600 rounded-lg transition"
+                  >
+                    {zugangDraft.kennwortSichtbar ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">
+                  Wird serverseitig mit bcrypt gehasht und niemals im Klartext
+                  gespeichert. Bitte einmalig sicher übermitteln.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={handleCloseZugang}
+                disabled={speichereZugangId !== null}
+                className="px-3 py-2 text-sm font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition disabled:opacity-50"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveZugang}
+                disabled={speichereZugangId !== null}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-sm font-semibold rounded-lg transition"
+              >
+                {speichereZugangId !== null ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Check className="w-4 h-4" />
+                )}
+                Speichern
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

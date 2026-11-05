@@ -72,7 +72,7 @@ flowchart LR
 
 | Tabelle | Inhalt |
 | --- | --- |
-| `trainer` | Stammdaten (`id` SERIAL PK, `vorname`, `nachname`, `kuerzel` UNIQUE, `edoobox_admin_id` UNIQUE, `farbe`, `is_active`) |
+| `trainer` | Stammdaten (`id` SERIAL PK, `vorname`, `nachname`, `kuerzel` UNIQUE, `edoobox_admin_id` UNIQUE, `farbe`, `is_active`) — seit November 2026 zusätzlich **Portal-Zugangsfelder**: `portal_email` UNIQUE, `password_hash` (bcrypt, nie in API-Responses), `portal_active`, `last_login` |
 | `trainer_verfuegbarkeit` | Kalender-/Slot-Verfügbarkeiten (FK → `trainer(id)` ON DELETE CASCADE) |
 | `trainer_zuweisung` | Zuweisung Trainer ↔ Termin (`date_id` text, `status`, `notiz`; `UNIQUE (date_id, trainer_id)`) |
 | `termin_optionen`, `termin_reservierung` | Optionen und Reservierungen |
@@ -147,10 +147,12 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | `/kalender` | Kalender-Monatsübersicht: Kursliste je Tag, gesetzliche Feiertage, Faschings-/Zeitumstellungshinweise, Überhang-Tage mit Monatskürzel (z. B. „31. Okt“), Wochenenden- & Abgesagt-Filter |
 | `/reservierungen` | Reservierungen: Listenansicht (Datum, Thema, Trainer, Status) plus eigene Monatsübersicht mit Überhang-Tages-Kürzeln |
 | `/kursplan` | Kursplanung: Planungsansicht je Bereich mit Terminanlage/-bearbeitung, 3-Fach-Belegung und Batch-Transfer an B01 |
-| `/trainer` | Trainerübersicht |
+| `/trainer` | Trainerübersicht: Vergütungssätze + **Portal-Zugangsverwaltung** (Status-Badge, E-Mail, Aktiv-Schalter, Kennwortvergabe; seit 04.11.2026) |
 | `/trainer/verfuegbarkeit` | Verfügbarkeitsverwaltung (klassische VM/NM-Sicht) |
 | `/trainer/availabilities` | Verfügbarkeitsmanager mit Zeitfenster-Slots (`start_time`/`end_time`/`is_booked`) |
 | `/trainer/zeitplan` | Zeitplan |
+| `/portal/login` | **Trainer-Portal (Neu, Schritt 1–3):** Login für externe Trainer (`portal_email` + Kennwort), prüft `portal_active`/`is_active` |
+| `/portal/verfuegbarkeit` | **Trainer-Portal:** Verfügbarkeitspflege der externen Trainer nach Login |
 | `/kursthemen` | Kursthemen-Verwaltung (Prioritäten, Aktiv-Status) |
 | `/system-logs` | System-Log-Ansicht (`public.system_logs`) |
 
@@ -171,7 +173,7 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | `/api/sync/cleanup-deleted-courses` | Bereinigung soft-gelöschter Kurse |
 | `/api/sync/p90` | P90-Sync-Anbindung |
 | `/api/termine` (+ `/optionen`) | Terminliste/-Gruppierung und Terminoptionen |
-| `/api/trainer` | Trainer-Stammdaten |
+| `/api/trainer` | Trainer-Stammdaten inkl. Portal-Zugang (PUT/PATCH: `portal_email`, `portal_active`, `password` → bcrypt-Hash; `password_hash` wird nie in der Response geliefert) |
 | `/api/trainer/reservierung` | Trainer-Reservierungen (Status) |
 | `/api/trainer/verfuegbarkeit` (+ `/batch`) | Trainer-Verfügbarkeiten (einzeln & Batch) |
 | `/api/trainer/zeitplan` (+ `/status`) | Zeitplan und Status |
@@ -183,6 +185,8 @@ Die Planungsanwendung liest ausschließlich über Sichten (Schema `kursplan`, z.
 | `/api/reservations` (+ `/[id]`, `/by-code/[code]`, `/by-code/[code]/item`) | Reservierungs-API mit Buchungscode-Lookup |
 | `/api/course-topics` · `/api/kursthemen` · `/api/trainer-topics` | Kurs-Themen, -Verwaltung und Trainer-Themen-Zuordnung |
 | `/api/sync/p90` | Manueller P90-Sync-Auslöser; gehärtet: echter Fehler (HTTP 500) bei fehlender `N8N_P90_WEBHOOK_URL` in Produktion, 60-s-Timeout (seit 03.11.2026, vorher 15 s – ausreichend für den synchronen Durchlauf der drei n8n-Untersyncs edo_offers/edo_dates/edo_bookings), `revalidatePath('/')` nach Erfolg |
+
+| `/portal/api/auth/login` · `/portal/api/auth/logout` · `/portal/api/auth/me` · `/portal/api/verfuegbarkeit` | **Neu:** Trainer-Portal — Session-Login/-Logout (HttpOnly-Cookie `trainer_session`, HMAC-SHA256, Path `/portal`, 30 Tage), Stammdaten-Abgleich (`/me`), Verfügbarkeiten |
 
 ### 5.3 Bibliotheken (`app/src/lib/`)
 
@@ -201,6 +205,15 @@ Drei Layout-Schwachstellen für HD-Auflösungen behoben:
 - **ReservierungsGruppeDialog** ([`app/src/components/ReservierungsGruppeDialog.tsx`](app/src/components/ReservierungsGruppeDialog.tsx:653)): äußerer Dialog-Container mit `max-h-[90vh] flex flex-col` – Header und Buttons bleiben bei niedrigen Viewports (z. B. 768px / 650px Nutzfläche) sichtbar.
 
 Deployment: `npm run build` (lokal und im Docker-Build) erfolgreich; Container `kursplan-app` auf dem Hetzner-Server neu gebaut und gestartet (`docker compose up -d --build --force-recreate kursplan-app`).
+
+### 5.6 Trainer-Portal — Zugang für externe Trainer (Neu, Live deployed)
+
+**Status: ✅ Live deployed** (04.11.2026). Externe Trainer melden sich über das eigenständige, geschützte Portal (`/portal/login`, Login-Schritt 1) an und pflegen anschließend ihre Verfügbarkeiten (`/portal/verfuegbarkeit`, Schritt 2). Seit Schritt 3 verwaltet die Admin-Ansicht die Zugänge vollständig.
+
+- **Berechtigungsmodell:** Login nur bei gesetzter `portal_email`, gesetztem bcrypt-`password_hash`, `portal_active = true` **und** `is_active = true`; eine Deaktivierung im Admin-Dialog wirkt sofort (Login-Sperre).
+- **Session-Konzept:** stateless, signiertes **HttpOnly-Cookie `trainer_session`** — Token `base64url({tid, exp}).<HMAC-SHA256>` über `SESSION_SECRET`, `Path=/portal` (Cookie nur an Portal-Routen/-Seiten), `SameSite=Lax`, Laufzeit **30 Tage**, `Secure` nur bei `COOKIE_SECURE=true` (HTTPS); Verifikation per `timingSafeEqual` — Details in [`app/src/lib/portal-session.ts`](app/src/lib/portal-session.ts) und [`AENDERUNGEN.md`](AENDERUNGEN.md) § 10.
+- **Admin-Ansicht:** Die Trainerübersicht [`/trainer`](app/src/app/trainer/page.tsx) zeigt je Trainer einen Portal-Status-Badge („Portal aktiv“ / „Kein Zugang“) samt E-Mail; der Dialog „Zugang“ pflegt `portal_email` (validiert/normalisiert), `portal_active` und das Kennwort („Zufallskennwort generieren“ via `crypto.getRandomValues`; Hashing serverseitig in [`/api/trainer`](app/src/app/api/trainer/route.ts) mit bcrypt, 12 Rounds).
+- **Sicherheit:** `password_hash` erscheint in keiner API-Response — sowohl das GET-`SELECT` als auch das PUT-`RETURNING` der Trainer-Route verzichten bewusst auf die Spalte; UNIQUE-Verstöße auf `portal_email` melden HTTP 409.
 
 ---
 

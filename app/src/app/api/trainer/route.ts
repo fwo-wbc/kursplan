@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import bcrypt from 'bcryptjs';
 import { query } from '@/lib/db';
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,9 @@ interface Trainer {
   stundensatz: number;
   reduzierter_satz: number;
   honorar_90min: number;
+  /** Portal-E-Mail (Login /portal/login); niemals password_hash! */
+  portal_email: string | null;
+  portal_active: boolean;
 }
 
 /** Erwarteter Request-Body für POST-Sync. */
@@ -34,6 +38,12 @@ interface TrainerSaetzeBody {
   stundensatz?: unknown;
   reduzierter_satz?: unknown;
   honorar_90min?: unknown;
+  /** Portal-E-Mail fürs Trainer-Portal (leer = löschen). */
+  portal_email?: unknown;
+  /** Portal-Zugang aktiv/deaktiviert. */
+  portal_active?: unknown;
+  /** Neues Klartext-Kennwort – wird serverseitig mit bcrypt gehasht. */
+  password?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -71,6 +81,11 @@ function mapTrainer(row: Record<string, unknown>): Trainer {
     stundensatz: Number(row.stundensatz ?? 0),
     reduzierter_satz: Number(row.reduzierter_satz ?? 0),
     honorar_90min: Number(row.honorar_90min ?? 0),
+    portal_email:
+      row.portal_email === null || row.portal_email === undefined
+        ? null
+        : String(row.portal_email),
+    portal_active: Boolean(row.portal_active),
   };
 }
 
@@ -105,8 +120,10 @@ function parseBetrag(value: unknown): number {
 
 export async function GET() {
   try {
+    // WICHTIG: password_hash wird bewusst NICHT selektiert – es darf niemals
+    // in einer API-Response an den Client auftauchen.
     const result = await query(
-      `SELECT id, vorname, nachname, kuerzel, is_active, edoobox_admin_id, tagessatz, halbtagessatz, stundensatz, reduzierter_satz, honorar_90min
+      `SELECT id, vorname, nachname, kuerzel, is_active, edoobox_admin_id, tagessatz, halbtagessatz, stundensatz, reduzierter_satz, honorar_90min, portal_email, portal_active
        FROM public.trainer
        WHERE is_active = true
        ORDER BY kuerzel ASC`
@@ -125,7 +142,8 @@ export async function GET() {
 }
 
 // ---------------------------------------------------------------------------
-// PUT / PATCH: Tages-/Stundensaetze eines Trainers gezielt aktualisieren
+// PUT / PATCH: Trainer-Stammdaten aktualisieren
+// (Sätze und/oder Portal-Zugang: portal_email, portal_active, password)
 // ---------------------------------------------------------------------------
 
 export async function PUT(request: Request) {
@@ -162,17 +180,23 @@ async function updateSaetze(request: Request) {
   const hasStundensatz = body.stundensatz !== undefined;
   const hasReduzierterSatz = body.reduzierter_satz !== undefined;
   const hasHonorar90min = body.honorar_90min !== undefined;
+  const hasPortalEmail = body.portal_email !== undefined;
+  const hasPortalActive = body.portal_active !== undefined;
+  const hasPassword = body.password !== undefined;
   if (
     !hasTagessatz &&
     !hasHalbtagessatz &&
     !hasStundensatz &&
     !hasReduzierterSatz &&
-    !hasHonorar90min
+    !hasHonorar90min &&
+    !hasPortalEmail &&
+    !hasPortalActive &&
+    !hasPassword
   ) {
     return NextResponse.json(
       {
         error:
-          'Mindestens ein Satz (tagessatz, halbtagessatz, stundensatz, reduzierter_satz oder honorar_90min) muss übergeben werden.',
+          'Mindestens ein Feld (tagessatz, halbtagessatz, stundensatz, reduzierter_satz, honorar_90min, portal_email, portal_active oder password) muss übergeben werden.',
       },
       { status: 400 }
     );
@@ -183,12 +207,48 @@ async function updateSaetze(request: Request) {
   let stundensatz: number | undefined;
   let reduzierterSatz: number | undefined;
   let honorar90min: number | undefined;
+  let portalEmail: string | null | undefined;
+  let portalActive: boolean | undefined;
+  let passwordHash: string | undefined;
   try {
     if (hasTagessatz) tagessatz = parseBetrag(body.tagessatz);
     if (hasHalbtagessatz) halbtagessatz = parseBetrag(body.halbtagessatz);
     if (hasStundensatz) stundensatz = parseBetrag(body.stundensatz);
     if (hasReduzierterSatz) reduzierterSatz = parseBetrag(body.reduzierter_satz);
     if (hasHonorar90min) honorar90min = parseBetrag(body.honorar_90min);
+
+    // Portal-Zugangsdaten: E-Mail validieren & normalisieren.
+    if (hasPortalEmail) {
+      const roh = typeof body.portal_email === 'string' ? body.portal_email.trim() : '';
+      if (roh === '') {
+        portalEmail = null;
+      } else {
+        const normalisiert = roh.toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalisiert)) {
+          throw new Error('Portal-E-Mail ist keine gültige E-Mail-Adresse.');
+        }
+        portalEmail = normalisiert;
+      }
+    }
+
+    if (hasPortalActive) {
+      if (typeof body.portal_active !== 'boolean') {
+        throw new Error('portal_active muss ein boolescher Wert sein.');
+      }
+      portalActive = body.portal_active;
+    }
+
+    // Kennwort ausschließlich gehasht übernehmen – kein Klartext in der DB.
+    if (hasPassword) {
+      if (
+        typeof body.password !== 'string' ||
+        body.password.length < 8 ||
+        body.password.length > 128
+      ) {
+        throw new Error('Kennwort muss zwischen 8 und 128 Zeichen lang sein.');
+      }
+      passwordHash = await bcrypt.hash(body.password, 12);
+    }
   } catch (err: unknown) {
     return NextResponse.json(
       { error: toErrorMessage(err) },
@@ -219,15 +279,29 @@ async function updateSaetze(request: Request) {
     setParts.push(`honorar_90min = $${params.length + 1}`);
     params.push(honorar90min);
   }
+  if (portalEmail !== undefined) {
+    setParts.push(`portal_email = $${params.length + 1}`);
+    params.push(portalEmail);
+  }
+  if (portalActive !== undefined) {
+    setParts.push(`portal_active = $${params.length + 1}`);
+    params.push(portalActive);
+  }
+  if (passwordHash !== undefined) {
+    setParts.push(`password_hash = $${params.length + 1}`);
+    params.push(passwordHash);
+  }
   setParts.push('updated_at = NOW()');
   params.push(idNumber);
 
   try {
+    // password_hash wird nicht RETURNING zurückgegeben und damit niemals
+    // an den Client gesendet.
     const result = await query(
       `UPDATE public.trainer
        SET ${setParts.join(', ')}
        WHERE id = $${params.length}
-       RETURNING id, vorname, nachname, kuerzel, is_active, edoobox_admin_id, tagessatz, halbtagessatz, stundensatz, reduzierter_satz, honorar_90min`,
+       RETURNING id, vorname, nachname, kuerzel, is_active, edoobox_admin_id, tagessatz, halbtagessatz, stundensatz, reduzierter_satz, honorar_90min, portal_email, portal_active`,
       params
     );
 
@@ -240,9 +314,20 @@ async function updateSaetze(request: Request) {
 
     return NextResponse.json(mapTrainer(result.rows[0]), { status: 200 });
   } catch (err: unknown) {
-    console.error('Fehler beim Speichern der Trainer-Sätze:', err);
+    console.error('Fehler beim Speichern der Trainer-Daten:', err);
+    // UNIQUE-Verletzung auf portal_email sauber abfangen (PostgreSQL 23505).
+    if (
+      typeof err === 'object' &&
+      err !== null &&
+      (err as { code?: string }).code === '23505'
+    ) {
+      return NextResponse.json(
+        { error: 'Die Portal-E-Mail wird bereits von einem anderen Trainer verwendet.' },
+        { status: 409 }
+      );
+    }
     return NextResponse.json(
-      { error: 'Datenbankfehler beim Speichern der Trainer-Sätze.' },
+      { error: 'Datenbankfehler beim Speichern der Trainer-Daten.' },
       { status: 500 }
     );
   }
