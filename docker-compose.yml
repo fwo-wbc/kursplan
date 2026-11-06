@@ -6,7 +6,7 @@ services:
     container_name: kursplan-app
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
     env_file:
       - .env.production
     environment:
@@ -14,7 +14,10 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
     networks:
       - kursplan_net
+      - postgres_custom_bridge
 
 networks:
   kursplan_net:
+    external: true
+  postgres_custom_bridge:
     external: true
