@@ -393,12 +393,12 @@ function trainerKuerzel(kurs: Kurs): string {
  *  - bestätigt / Freigegeben            → grün
  *  - unter Vorbehalt                    → orange
  *  - Reservierung / Reserviert          → grau
- *  - ausgeschrieben / keine Zuordnung   → blau (Standard)
+ *  - reserviert / keine Zuordnung       → blau (Standard)
  */
 function statusKlasse(kurs: Kurs): string {
   // ABSOLUTE PRIORITÄT: Edoobox-Kursstatus. Abgesagt (Status '5') bzw.
   // Geschlossen (Status '3') müssen zuverlässig rot erscheinen, auch wenn
-  // zuweisung_status fehlt (kein Trainer, 'n. v.') oder 'ausgeschrieben'
+  // zuweisung_status fehlt (kein Trainer, 'n. v.') oder 'reserviert'
   // lautet – sonst würde der Kurs fälschlich blau dargestellt.
   const dateStatus = (kurs.date_status ?? '').toLowerCase();
   if (dateStatus === 'abgesagt' || dateStatus === 'geschlossen') {
@@ -418,9 +418,9 @@ function statusKlasse(kurs: Kurs): string {
 
 /**
  * true, wenn die Teilnehmeranzahl an den Kurstitel angehängt werden soll.
- * Nur Kurse, deren Zuweisungsstatus NICHT „ausgeschrieben“ (bzw. der
+ * Nur Kurse, deren Zuweisungsstatus NICHT „reserviert“ (bzw. der
  * Standardwert für nicht zugewiesene/offene Kurse) ist, tragen das Anhängsel.
- * Abgedeckt werden dabei alle offenen Varianten (ausgeschrieben, offen,
+ * Abgedeckt werden dabei alle offenen Varianten (reserviert, offen,
  * angefragt) sowie ein fehlender Status. Zusätzlich muss mindestens ein
  * Teilnehmer gebucht sein (0 TN bzw. null bleibt unsichtbar).
  */
@@ -428,7 +428,7 @@ function zeigeTeilnehmer(kurs: Kurs): boolean {
   const status = (kurs.zuweisung_status ?? kurs.date_status ?? '').toLowerCase();
   const offen =
     status === '' ||
-    status === 'ausgeschrieben' ||
+    status === 'reserviert' ||
     status === 'offen' ||
     status === 'angefragt';
   const tn = kurs.teilnehmer;
@@ -464,7 +464,7 @@ function trainerBadgeKlasse(
  * true, wenn der Kurs für die Konfliktprüfung relevant ist.
  * Nur Kurse mit dem Zuweisungsstatus „bestätigt“/„freigegeben“ oder
  * „unter vorbehalt“ können einen Konflikt auslösen. Abgesagte oder
- * ausgeschriebene Kurse (keine Zuordnung) bilden bewusst keinen Konflikt.
+ * reservierte Kurse (keine Zuordnung) bilden bewusst keinen Konflikt.
  */
 function istKonfliktrelevant(kurs: Kurs): boolean {
   const status = (kurs.zuweisung_status ?? kurs.date_status ?? '').toLowerCase();
@@ -493,7 +493,7 @@ function ueberschneidet(a: TagKurs, b: TagKurs): boolean {
  * Trainerkürzel (ausgenommen 'n. v.') und zeitlicher Überschneidung erhalten
  * das Flag hasConflict = true – jedoch nur, wenn BEIDE betroffene Kurse einen
  * konfliktrelevanten Zuweisungsstatus besitzen („bestätigt“/„freigegeben“
- * oder „unter vorbehalt“). Abgesagte oder ausgeschriebene Kurse lösen
+ * oder „unter vorbehalt“). Abgesagte oder reservierte Kurse lösen
  * keinen Konflikt aus.
  */
 function markiereKonflikte(tagKurse: TagKurs[]): void {

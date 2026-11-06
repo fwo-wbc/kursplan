@@ -88,7 +88,7 @@ page = patch(
 );
 
 // 1c) handleTrainerChange: optimistisches Update setzt Zuweisungs-Status
-//     lokal ('n. v.' -> null, Trainer -> 'ausgeschrieben' falls leer/null).
+//     lokal ('n. v.' -> null, Trainer -> 'reserviert' falls leer/null).
 page = patch(
   'Optimistisches Status-/Kürzel-Update',
   page,
@@ -120,11 +120,11 @@ page = patch(
     '            }),',
     '            // Sofortige lokale Aktualisierung des Zuweisungs-Status:',
     "            // 'n. v.' hebt die Zuweisung auf (Status null), jede Trainer-",
-    "            // Zuweisung setzt 'ausgeschrieben', sofern kein Status stand.",
+    "            // Zuweisung setzt 'reserviert', sofern kein Status stand.",
     '            status:',
     '              neuesKuerzel === \'n. v.\'',
     '                ? null',
-    "                : (bisherige?.status ?? 'ausgeschrieben'),",
+    "                : (bisherige?.status ?? 'reserviert'),",
     '            trainer: {',
     '              kuerzel: neuesKuerzel,',
     '            },',

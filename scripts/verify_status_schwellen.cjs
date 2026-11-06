@@ -10,7 +10,7 @@
 // Regeln (Soll-Verhalten):
 //   1) teilnehmer >= 1 && teilnehmer <= minTeilnehmer  → 'unter Vorbehalt'
 //   2) teilnehmer >= minTeilnehmer + 1                 → 'bestätigt'
-//   3) teilnehmer === 0                                 → bleibt 'ausgeschrieben'
+//   3) teilnehmer === 0                                 → bleibt 'reserviert'
 //   minTeilnehmer = max(user_minimal ?? 1, 1)         (Fallback 1)
 // ---------------------------------------------------------------------------
 
@@ -34,13 +34,13 @@ function kursStatus({ offerStatus = null, zuweisungStatus = null, teilnehmer, us
   }
   const minTeilnehmer = minTeilnehmerFuer(userMinimal);
   const automatischBerechtigt =
-    zuweisungStatus === null || zuweisungStatus === 'ausgeschrieben';
+    zuweisungStatus === null || zuweisungStatus === 'reserviert';
   if (!automatischBerechtigt) {
     return zuweisungStatus;
   }
   if (teilnehmer >= minTeilnehmer + 1) return 'bestätigt';
   if (teilnehmer >= 1) return 'unter Vorbehalt';
-  return 'ausgeschrieben';
+  return 'reserviert';
 }
 
 // effektiverZuweisungsstatus aus termine/route.ts (relevanter Automatik-Teil).
@@ -56,13 +56,13 @@ function effektiverZuweisungsstatus({ offerStatus = null, teilnehmer, einnahmen,
   const automatischBerechtigt =
     bisherigerStatus === null ||
     bisherigerStatus === 'keine Zuordnung' ||
-    bisherigerStatus === 'ausgeschrieben';
+    bisherigerStatus === 'reserviert';
   if (!automatischBerechtigt) {
-    return bisherigerStatus ?? 'ausgeschrieben';
+    return bisherigerStatus ?? 'reserviert';
   }
   if (teilnehmer >= minTeilnehmer + 1) return 'bestätigt';
   if (teilnehmer >= 1) return 'unter Vorbehalt';
-  return 'ausgeschrieben';
+  return 'reserviert';
 }
 
 let fehler = 0;
@@ -75,12 +75,12 @@ function pruefe(name, ist, soll) {
 }
 
 console.log('=== kursStatus: minTeilnehmer = 1 (user_minimal = 1) ===');
-pruefe('0 TN → ausgeschrieben', kursStatus({ teilnehmer: 0, userMinimal: 1 }), 'ausgeschrieben');
+pruefe('0 TN → reserviert', kursStatus({ teilnehmer: 0, userMinimal: 1 }), 'reserviert');
 pruefe('1 TN → unter Vorbehalt', kursStatus({ teilnehmer: 1, userMinimal: 1 }), 'unter Vorbehalt');
 pruefe('2 TN → bestätigt', kursStatus({ teilnehmer: 2, userMinimal: 1 }), 'bestätigt');
 
 console.log('=== kursStatus: minTeilnehmer = 6 (user_minimal = 6) ===');
-pruefe('0 TN → ausgeschrieben', kursStatus({ teilnehmer: 0, userMinimal: 6 }), 'ausgeschrieben');
+pruefe('0 TN → reserviert', kursStatus({ teilnehmer: 0, userMinimal: 6 }), 'reserviert');
 pruefe('1 TN → unter Vorbehalt', kursStatus({ teilnehmer: 1, userMinimal: 6 }), 'unter Vorbehalt');
 pruefe('5 TN → unter Vorbehalt', kursStatus({ teilnehmer: 5, userMinimal: 6 }), 'unter Vorbehalt');
 pruefe('6 TN (= min) → unter Vorbehalt', kursStatus({ teilnehmer: 6, userMinimal: 6 }), 'unter Vorbehalt');
@@ -119,7 +119,7 @@ pruefe(
 );
 
 console.log('=== effektiverZuweisungsstatus: minTeilnehmer = 3 ===');
-pruefe('0 TN → ausgeschrieben', effektiverZuweisungsstatus({ teilnehmer: 0, userMinimal: 3, einnahmen: 0 }), 'ausgeschrieben');
+pruefe('0 TN → reserviert', effektiverZuweisungsstatus({ teilnehmer: 0, userMinimal: 3, einnahmen: 0 }), 'reserviert');
 pruefe('1 TN → unter Vorbehalt', effektiverZuweisungsstatus({ teilnehmer: 1, userMinimal: 3, einnahmen: 0 }), 'unter Vorbehalt');
 pruefe('3 TN (= min) → unter Vorbehalt', effektiverZuweisungsstatus({ teilnehmer: 3, userMinimal: 3, einnahmen: 0 }), 'unter Vorbehalt');
 pruefe('4 TN (min+1) → bestätigt', effektiverZuweisungsstatus({ teilnehmer: 4, userMinimal: 3, einnahmen: 0 }), 'bestätigt');
@@ -129,7 +129,7 @@ pruefe(
   'abgesagt'
 );
 pruefe(
-  'manuell gesetzt bleibt (ausgeschrieben-Ende)',
+  'manuell gesetzt bleibt (reserviert-Ende)',
   effektiverZuweisungsstatus({ teilnehmer: 9, userMinimal: 3, einnahmen: 0, bisherigerStatus: 'abgesagt' }),
   'abgesagt'
 );

@@ -27,7 +27,7 @@ import { berechneHonorar } from '@/lib/honorar';
 /** Zulässige Statuswerte einer Trainer-Zuweisung (einheitliches Statusmodell). */
 type ZuweisungStatus =
   | 'keine Zuordnung'
-  | 'ausgeschrieben'
+  | 'reserviert'
   | 'unter Vorbehalt'
   | 'bestätigt'
   | 'abgesagt';
@@ -194,7 +194,7 @@ function cleanupStatusBadgeClass(status: string | null): string {
   switch (status) {
     case 'bestätigt':
       return 'bg-emerald-100 text-emerald-700 border-emerald-200';
-    case 'ausgeschrieben':
+    case 'reserviert':
       return 'bg-[#285DAA]/10 text-[#285DAA] border-[#285DAA]/30';
     case 'unter Vorbehalt':
       return 'bg-amber-100 text-amber-700 border-amber-200';
@@ -226,7 +226,7 @@ interface KursKonflikt {
 
 const STATUS_OPTIONS: { value: ZuweisungStatus; label: string }[] = [
   { value: 'keine Zuordnung', label: 'Keine Zuordnung' },
-  { value: 'ausgeschrieben', label: 'Ausgeschrieben' },
+  { value: 'reserviert', label: 'Reserviert' },
   { value: 'unter Vorbehalt', label: 'Unter Vorbehalt' },
   { value: 'bestätigt', label: 'Bestätigt' },
   { value: 'abgesagt', label: 'Abgesagt' },
@@ -266,7 +266,7 @@ const ZUWEISUNG_STATUS_CONFIG: Record<
     selectClassName: 'bg-red-600 text-yellow-300 border-red-700 focus:ring-red-500',
     dotClassName: 'bg-red-600',
   },
-  ausgeschrieben: {
+  reserviert: {
     selectClassName: 'bg-[#285DAA] text-white border-[#285DAA] focus:ring-[#285DAA]',
     dotClassName: 'bg-[#285DAA]',
   },
@@ -406,7 +406,7 @@ const DATUM_FALLBACK = 'Datum unbekannt';
 function isZuweisungStatus(value: unknown): value is ZuweisungStatus {
   return (
     value === 'keine Zuordnung' ||
-    value === 'ausgeschrieben' ||
+    value === 'reserviert' ||
     value === 'unter Vorbehalt' ||
     value === 'bestätigt' ||
     value === 'abgesagt'
@@ -1732,7 +1732,7 @@ export default function Home() {
           // Effektiven Zuweisungsstatus bestimmen – konsistent zur Bulk-Route:
           // ein explizit gewählter Status gewinnt, sonst setzt die Aufhebung
           // 'keine Zuordnung'; ein Trainerwechsel ohne Status erzeugt eine
-          // neue Zuweisungs-Zeile mit 'ausgeschrieben' (bzw. behält den
+          // neue Zuweisungs-Zeile mit 'reserviert' (bzw. behält den
           // Status, wenn derselbe Trainer erneut bestätigt wird).
           let neuerStatus: ZuweisungStatus | null = bisherige?.status ?? null;
           if (bulkStatus !== '') {
@@ -1742,8 +1742,8 @@ export default function Home() {
           } else if (gewaehlterTrainer) {
             neuerStatus =
               bisherige?.trainer_id === gewaehlterTrainer.id
-                ? (bisherige?.status ?? 'ausgeschrieben')
-                : 'ausgeschrieben';
+                ? (bisherige?.status ?? 'reserviert')
+                : 'reserviert';
           }
 
           // Echte Aufhebung: Der Kurs gilt als bewusst ohne Trainer geführt
@@ -2107,7 +2107,7 @@ export default function Home() {
       const key = kursKey(kurs);
       const optimistic: Zuweisung = {
         ...prevZuweisung,
-        status: prevZuweisung.status ?? 'ausgeschrieben',
+        status: prevZuweisung.status ?? 'reserviert',
         honorar_manuell: honorarManuell,
         quelle: 'lokal',
       };
@@ -2120,7 +2120,7 @@ export default function Home() {
           body: JSON.stringify({
             date_ids: dateIds,
             trainer_id: prevZuweisung.trainer_id,
-            status: prevZuweisung.status ?? 'ausgeschrieben',
+            status: prevZuweisung.status ?? 'reserviert',
             notiz: prevZuweisung.notiz,
             honorar_manuell: honorarManuell,
           }),
@@ -2292,13 +2292,13 @@ export default function Home() {
       // Status, der persistent geschrieben wird: Bei 'n. v.' lautet er
       // 'keine Zuordnung'; bei einem Trainerwechsel wird ein bestehender
       // Status übernommen (eine evtl. noch vorhandene 'keine Zuordnung'-
-      // Sperr-Zeile darf dabei nicht weitergereicht werden -> 'ausgeschrieben').
+      // Sperr-Zeile darf dabei nicht weitergereicht werden -> 'reserviert').
       const neuerZuweisungStatus = istAufhebung
         ? 'keine Zuordnung'
         : aktuelleZuweisung?.status &&
             aktuelleZuweisung.status !== 'keine Zuordnung'
           ? aktuelleZuweisung.status
-          : 'ausgeschrieben';
+          : 'reserviert';
 
       // Lokale Persistenz-Hilfe: Upsert über die eindeutigen date_ids
       // (nie über die offer_id). Bei 'n. v.' wird die trainer_id des
@@ -2390,11 +2390,11 @@ export default function Home() {
             }),
             // Sofortige lokale Aktualisierung des Zuweisungs-Status:
             // 'n. v.' hebt die Zuweisung auf (Status null), jede Trainer-
-            // Zuweisung setzt 'ausgeschrieben', sofern kein Status stand.
+            // Zuweisung setzt 'reserviert', sofern kein Status stand.
             status:
               istAufhebung
                 ? null
-                : (bisherige?.status ?? 'ausgeschrieben'),
+                : (bisherige?.status ?? 'reserviert'),
             trainer: {
               kuerzel: neuesKuerzel,
             },

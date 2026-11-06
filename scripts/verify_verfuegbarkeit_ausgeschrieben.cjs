@@ -9,7 +9,7 @@
 //      edoobox_raw.date_leader dem Trainer zugeordnet ist, aber keine
 //      trainer_zuweisung-Zeile für diesen Trainer besitzt.
 //   3. Die NEUE Abfrage (aus /api/verfuegbarkeit) ausführen und prüfen,
-//      ob der Kurs mit zuweisung_status='ausgeschrieben' erscheint.
+//      ob der Kurs mit zuweisung_status='reserviert' erscheint.
 //   4. Die ALTE Abfrage (INNER JOIN auf trainer_zuweisung) ausführen und
 //      zeigen, dass der Kurs dort NICHT enthalten war.
 // ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ async function main() {
        to_char((od.date_start AT TIME ZONE 'Europe/Berlin')::date, 'YYYY-MM-DD') AS datum,
        od.date_id,
        o.name AS kursname,
-       COALESCE(tz.status, 'ausgeschrieben') AS zuweisung_status,
+       COALESCE(tz.status, 'reserviert') AS zuweisung_status,
        to_char(od.date_start AT TIME ZONE 'Europe/Berlin', 'HH24:MI') AS start_time,
        to_char(od.date_end AT TIME ZONE 'Europe/Berlin', 'HH24:MI') AS end_time
      FROM edoobox_raw.offer_date od

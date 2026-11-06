@@ -14,7 +14,7 @@ import {
 /** Einheitliches Statusmodell der Trainer-Zuweisung. */
 type ZuweisungStatus =
   | 'keine Zuordnung'
-  | 'ausgeschrieben'
+  | 'reserviert'
   | 'unter Vorbehalt'
   | 'bestätigt'
   | 'abgesagt';
@@ -39,7 +39,7 @@ interface BulkZuweisungBody {
 
 const ERLAUBTE_STATUS: readonly ZuweisungStatus[] = [
   'keine Zuordnung',
-  'ausgeschrieben',
+  'reserviert',
   'unter Vorbehalt',
   'bestätigt',
   'abgesagt',
@@ -286,7 +286,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json(
         {
           error:
-            "status muss 'keine Zuordnung', 'ausgeschrieben', 'unter Vorbehalt', 'bestätigt' oder 'abgesagt' sein.",
+            "status muss 'keine Zuordnung', 'reserviert', 'unter Vorbehalt', 'bestätigt' oder 'abgesagt' sein.",
         },
         { status: 400 }
       );
@@ -376,10 +376,10 @@ export async function PATCH(request: Request) {
 
       // Trainer für alle date_ids einfügen bzw. aktualisieren. Nur wenn status
       // im Payload stand, wird der Status überschrieben; sonst bleibt der
-      // bestehende Wert erhalten (bzw. gilt für neue Zeilen 'ausgeschrieben').
+      // bestehende Wert erhalten (bzw. gilt für neue Zeilen 'reserviert').
       result = await query(
         `INSERT INTO public.trainer_zuweisung (date_id, trainer_id, status)
-         SELECT d.date_id, $2::int, COALESCE($3::text, 'ausgeschrieben')
+         SELECT d.date_id, $2::int, COALESCE($3::text, 'reserviert')
          FROM unnest($1::text[]) AS d(date_id)
          ON CONFLICT (date_id, trainer_id)
          DO UPDATE SET

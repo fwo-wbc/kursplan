@@ -34,7 +34,7 @@ interface Trainer {
 type SlotCode = 'KT1' | 'KT2' | 'KT3';
 
 /** Einheitlicher Zuweisungsstatus eines belegten Kurses. */
-type KursStatus = 'ausgeschrieben' | 'unter Vorbehalt' | 'bestätigt' | 'abgesagt';
+type KursStatus = 'reserviert' | 'unter Vorbehalt' | 'bestätigt' | 'abgesagt';
 
 /** Belegter edoobox-Kurs eines Tages innerhalb eines Slots. */
 interface KursEintrag {
@@ -156,14 +156,14 @@ const SLOT_CONFIG: { code: SlotCode; sub: string }[] = [
 
 /** CSS-Klassen je Kurs-Status (Farbkodierung). */
 const AMPEL_KLASSEN: Record<KursStatus, string> = {
-  ausgeschrieben: 'bg-[#285DAA]/10 border-[#285DAA]/40 text-[#285DAA]',
+  reserviert: 'bg-[#285DAA]/10 border-[#285DAA]/40 text-[#285DAA]',
   'unter Vorbehalt': 'bg-amber-100 border-amber-300 text-amber-900',
   bestätigt: 'bg-emerald-100 border-emerald-300 text-emerald-900',
   abgesagt: 'bg-red-100 border-red-300 text-red-900 line-through',
 };
 
 const AMPEL_DOT: Record<KursStatus, string> = {
-  ausgeschrieben: 'bg-[#285DAA]',
+  reserviert: 'bg-[#285DAA]',
   'unter Vorbehalt': 'bg-amber-400',
   bestätigt: 'bg-emerald-500',
   abgesagt: 'bg-red-500',
@@ -171,7 +171,7 @@ const AMPEL_DOT: Record<KursStatus, string> = {
 
 /** Statusoptionen für das Aktionsmenü am Kursblock. */
 const STATUS_MENU_OPTIONEN: { value: KursStatus; label: string }[] = [
-  { value: 'ausgeschrieben', label: 'Ausgeschrieben' },
+  { value: 'reserviert', label: 'Reserviert' },
   { value: 'unter Vorbehalt', label: 'Unter Vorbehalt' },
   { value: 'bestätigt', label: 'Bestätigt' },
   { value: 'abgesagt', label: 'Abgesagt' },
@@ -762,7 +762,7 @@ export default function ZeitplanPage() {
     if (kurse.some((k) => k.status === 'abgesagt')) return 'abgesagt';
     if (kurse.some((k) => k.status === 'bestätigt')) return 'bestätigt';
     if (kurse.some((k) => k.status === 'unter Vorbehalt')) return 'unter Vorbehalt';
-    return 'ausgeschrieben';
+    return 'reserviert';
   }
 
   function trainerLabel(t: Trainer): string {

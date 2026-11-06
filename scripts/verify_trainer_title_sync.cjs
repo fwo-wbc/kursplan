@@ -171,7 +171,7 @@ function titelErsetzen(titel, altesKuerzel, neuesKuerzel) {
         req.end();
       });
 
-    await patch({ date_ids: testDateIds, trainer_id: bestehend.trainer_id, status: 'ausgeschrieben' });
+    await patch({ date_ids: testDateIds, trainer_id: bestehend.trainer_id, status: 'reserviert' });
     const r2 = await patch({ date_ids: testDateIds, trainer_id: ziel.id, status: 'bestätigt' });
     assert.strictEqual(r2.status, 200, 'PATCH bulk -> 200');
     assert.strictEqual(r2.data.zuweisungen.length, 2);

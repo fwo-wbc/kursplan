@@ -10,7 +10,7 @@ import { feiertageFuerZeitraum, feiertagLabel } from '@/lib/feiertage';
 type SlotCode = 'KT1' | 'KT2' | 'KT3';
 
 /** Einheitlicher Zuweisungsstatus eines belegten Kurses. */
-type KursStatus = 'ausgeschrieben' | 'unter Vorbehalt' | 'bestätigt' | 'abgesagt';
+type KursStatus = 'reserviert' | 'unter Vorbehalt' | 'bestätigt' | 'abgesagt';
 
 /** Belegter edoobox-Kurs eines Tages innerhalb eines Slots. */
 interface KursEintrag {
@@ -137,7 +137,7 @@ function slotFuerStart(startUhr: number | null): SlotCode {
  * hinterlegten Mindestteilnehmerzahl (edoobox_raw.offer.user_minimal):
  *
  * 1. Schutz-Bedingung (Exklusivität): Die Automatik darf den Zuweisungsstatus
- *    NUR dann ändern, wenn der aktuelle Status exakt 'ausgeschrieben' ist
+ *    NUR dann ändern, wenn der aktuelle Status exakt 'reserviert' ist
  *    (bzw. null / leer). Liegt bereits ein anderer Status vor (manuell gesetzt,
  *    'bestätigt', 'unter Vorbehalt' …), wird der Status unangetastet gelassen.
  * 2. Stufe 1: 1 bis Mindestteilnehmerzahl Anmeldungen → 'unter Vorbehalt'
@@ -163,11 +163,11 @@ function kursStatus(
   }
 
   // Schutz-Bedingung (Exklusivität): Die Automatik darf den Zuweisungsstatus
-  // NUR dann ändern, wenn er exakt 'ausgeschrieben' ist (bzw. leer/null).
+  // NUR dann ändern, wenn er exakt 'reserviert' ist (bzw. leer/null).
   // Jeder bereits vergebene Status ('keine Zuordnung', 'bestätigt',
   // 'unter Vorbehalt', 'abgesagt' …) bleibt unangetastet.
   const automatischBerechtigt =
-    zuweisungStatus === null || zuweisungStatus === 'ausgeschrieben';
+    zuweisungStatus === null || zuweisungStatus === 'reserviert';
 
   if (!automatischBerechtigt) {
     // Bereits gesetzter Status bleibt unangetastet (manuell/gesetzt).
@@ -185,8 +185,8 @@ function kursStatus(
     return 'unter Vorbehalt';
   }
 
-  // Keine Anmeldungen → 'ausgeschrieben' (bleibt im Ausgangszustand).
-  return 'ausgeschrieben';
+  // Keine Anmeldungen → 'reserviert' (bleibt im Ausgangszustand).
+  return 'reserviert';
 }
 
 /** Erzeugt alle ISO-Datumsangaben zwischen von und bis (jeweils inklusive). */

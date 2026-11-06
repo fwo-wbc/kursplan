@@ -161,7 +161,7 @@ async function main() {
              WHEN o.status = '5'
                OR (o.status = '3' AND COALESCE(tn.teilnehmer, 0) = 0)
              THEN 'abgesagt'
-             ELSE COALESCE(tz.status, 'ausgeschrieben')
+             ELSE COALESCE(tz.status, 'reserviert')
            END AS zuweisung_status,
            COALESCE(tn.teilnehmer, 0) AS teilnehmer
          FROM edoobox_raw.offer_date od

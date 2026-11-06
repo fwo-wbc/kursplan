@@ -13,14 +13,14 @@ import {
 /** Einheitlicher Zuweisungsstatus eines Kurses. */
 type KursStatus =
   | 'keine Zuordnung'
-  | 'ausgeschrieben'
+  | 'reserviert'
   | 'unter Vorbehalt'
   | 'bestätigt'
   | 'abgesagt';
 
 const ERLAUBTE_STATUS: KursStatus[] = [
   'keine Zuordnung',
-  'ausgeschrieben',
+  'reserviert',
   'unter Vorbehalt',
   'bestätigt',
   'abgesagt',
@@ -28,7 +28,7 @@ const ERLAUBTE_STATUS: KursStatus[] = [
 
 // ---------------------------------------------------------------------------
 // PATCH: Zuweisungsstatus eines Termins manuell setzen
-//        (Disposition: 'bestätigt' / 'abgesagt' / 'ausgeschrieben')
+//        (Disposition: 'bestätigt' / 'abgesagt' / 'reserviert')
 // ---------------------------------------------------------------------------
 
 export async function PATCH(request: Request) {
@@ -57,7 +57,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json(
       {
         error:
-          "status muss 'keine Zuordnung', 'ausgeschrieben', 'unter Vorbehalt', 'bestätigt' oder 'abgesagt' sein.",
+          "status muss 'keine Zuordnung', 'reserviert', 'unter Vorbehalt', 'bestätigt' oder 'abgesagt' sein.",
       },
       { status: 400 }
     );
@@ -93,7 +93,7 @@ export async function PATCH(request: Request) {
     }
 
     // Event-Notification an n8n (non-blocking): Terminstatus wurde manuell
-    // geändert ('bestätigt' / 'abgesagt' / 'ausgeschrieben' / …).
+    // geändert ('bestätigt' / 'abgesagt' / 'reserviert' / …).
     const terminKontext = await ladeTerminKontext([dateId]);
     const kontext = terminKontext.get(dateId);
     const terminId = kontext?.termin_id ?? parsiereTerminId(dateId);

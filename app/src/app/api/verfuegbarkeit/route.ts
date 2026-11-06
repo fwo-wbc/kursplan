@@ -111,7 +111,7 @@ export async function GET(request: Request) {
     //    davon ab, ob bereits eine Zeile in public.trainer_zuweisung existiert:
     //    Ein frisch synchronisierter Kurs (ohne manuelles Anklicken im
     //    Dropdown) erscheint über den edoobox-Leiter (date_leader →
-    //    trainer.edoobox_admin_id) mit dem Standardstatus 'ausgeschrieben'.
+    //    trainer.edoobox_admin_id) mit dem Standardstatus 'reserviert'.
     //    Das Datum wird explizit in die Zeitzone Europe/Berlin projiziert,
     //    weil date_start als timestamptz gespeichert ist.
     const kursResult = await query(
@@ -128,7 +128,7 @@ export async function GET(request: Request) {
          --    z. B. Anmeldeschluss) bleibt unangetastet und wird manuell
          --    gesteuert.
          -- 2) Schutz-Bedingung (Exklusivität): Die Automatik ändert den Status
-         --    NUR, wenn er exakt 'ausgeschrieben' ist (bzw. null/leer). Ist bereits
+         --    NUR, wenn er exakt 'reserviert' ist (bzw. null/leer). Ist bereits
          --    ein anderer Status vergeben (manuell gesetzt, 'bestätigt',
          --    'unter Vorbehalt', 'keine Zuordnung' …), bleibt er unangetastet.
          -- 3) Stufe 1: 1 bis Mindestteilnehmerzahl Anmeldungen → 'unter Vorbehalt'
@@ -143,14 +143,14 @@ export async function GET(request: Request) {
                  AND COALESCE(tn.einnahmen, 0) = 0)
            THEN 'abgesagt'
            WHEN tz.status IS NOT NULL
-             AND tz.status <> 'ausgeschrieben'
+             AND tz.status <> 'reserviert'
            THEN tz.status
            WHEN COALESCE(tn.teilnehmer, 0) >=
                 GREATEST(COALESCE(o.user_minimal, 1), 1) + 1
            THEN 'bestätigt'
            WHEN COALESCE(tn.teilnehmer, 0) >= 1
            THEN 'unter Vorbehalt'
-           ELSE COALESCE(tz.status, 'ausgeschrieben')
+           ELSE COALESCE(tz.status, 'reserviert')
          END AS zuweisung_status,
          COALESCE(tn.teilnehmer, 0) AS teilnehmer,
          COALESCE(tn.einnahmen, 0) AS einnahmen,

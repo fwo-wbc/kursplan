@@ -72,7 +72,7 @@ async function apiTest() {
     .map((t) => t.date_id)
     .filter((id) => id && id.trim() !== '');
   const trainerId = ziel.z.trainer_id;
-  const altStatus = ziel.z.status || 'ausgeschrieben';
+  const altStatus = ziel.z.status || 'reserviert';
   console.log(
     'API-Test: Kurs =',
     ziel.kurs.offer_name,

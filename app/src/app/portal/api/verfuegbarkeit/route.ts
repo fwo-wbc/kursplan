@@ -134,7 +134,7 @@ export async function GET(request: Request) {
          -- Mindestteilnehmerzahl aus edoobox (o.user_minimal; Fallback 1):
          --   1 bis Mindestanzahl Anmeldungen    → 'unter Vorbehalt'
          --   Mindestanzahl + 1 oder mehr        → 'bestätigt'
-         --   0 Anmeldungen                      → bleibt 'ausgeschrieben'
+         --   0 Anmeldungen                      → bleibt 'reserviert'
          CASE
            WHEN o.status = '5'
              OR o.status = '0'
@@ -143,14 +143,14 @@ export async function GET(request: Request) {
                  AND COALESCE(tn.einnahmen, 0) = 0)
            THEN 'abgesagt'
            WHEN tz.status IS NOT NULL
-             AND tz.status <> 'ausgeschrieben'
+             AND tz.status <> 'reserviert'
            THEN tz.status
            WHEN COALESCE(tn.teilnehmer, 0) >=
                 GREATEST(COALESCE(o.user_minimal, 1), 1) + 1
            THEN 'bestätigt'
            WHEN COALESCE(tn.teilnehmer, 0) >= 1
            THEN 'unter Vorbehalt'
-           ELSE COALESCE(tz.status, 'ausgeschrieben')
+           ELSE COALESCE(tz.status, 'reserviert')
          END AS zuweisung_status,
          to_char(od.date_start AT TIME ZONE 'Europe/Berlin', 'HH24:MI') AS start_time,
          to_char(od.date_end AT TIME ZONE 'Europe/Berlin', 'HH24:MI') AS end_time

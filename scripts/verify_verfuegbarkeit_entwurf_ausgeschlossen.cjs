@@ -104,7 +104,7 @@ async function main() {
          od.date_id,
          o.name AS kursname,
          o.status,
-         COALESCE(tz.status, 'ausgeschrieben') AS zuweisung_status
+         COALESCE(tz.status, 'reserviert') AS zuweisung_status
        FROM edoobox_raw.offer_date od
        LEFT JOIN edoobox_raw.offer o ON o.offer_id = od.offer_id
        LEFT JOIN public.trainer_zuweisung tz

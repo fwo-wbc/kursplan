@@ -13,7 +13,7 @@ import {
 /** Status eines Zuweisungs-Datensatzes (einheitliches Statusmodell). */
 type ZuweisungStatus =
   | 'keine Zuordnung'
-  | 'ausgeschrieben'
+  | 'reserviert'
   | 'unter Vorbehalt'
   | 'bestätigt'
   | 'abgesagt';
@@ -99,7 +99,7 @@ function parseTrainerId(value: unknown): number | null {
 function isValidStatus(value: unknown): value is ZuweisungStatus {
   return (
     value === 'keine Zuordnung' ||
-    value === 'ausgeschrieben' ||
+    value === 'reserviert' ||
     value === 'unter Vorbehalt' ||
     value === 'bestätigt' ||
     value === 'abgesagt'
@@ -327,7 +327,7 @@ export async function POST(request: Request) {
   }
 
   // Status validieren: exakt einer der erlaubten Werte (nach trim).
-  let statusValue: ZuweisungStatus = 'ausgeschrieben';
+  let statusValue: ZuweisungStatus = 'reserviert';
   if (status !== undefined && status !== null) {
     const normalizedStatus = normalizeString(status);
     if (normalizedStatus !== null && isValidStatus(normalizedStatus)) {
@@ -336,7 +336,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "status muss 'keine Zuordnung', 'ausgeschrieben', 'unter Vorbehalt', 'bestätigt' oder 'abgesagt' sein.",
+            "status muss 'keine Zuordnung', 'reserviert', 'unter Vorbehalt', 'bestätigt' oder 'abgesagt' sein.",
         },
         { status: 400 }
       );

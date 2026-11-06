@@ -82,7 +82,7 @@ INSERT INTO public.trainer_zuweisung (trainer_id, date_id, status, notiz, honora
 SELECT 
   neu.trainer_id, 
   '{{ $("P98 Lektionstitel anpassen").first().json.date_id }}', 
-  COALESCE(alt.status, 'ausgeschrieben'),
+  COALESCE(alt.status, 'reserviert'),
   alt.notiz,
   alt.honorar_manuell,
   NOW()

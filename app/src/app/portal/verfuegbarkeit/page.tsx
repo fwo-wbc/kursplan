@@ -220,8 +220,8 @@ function kalenderwoche(d: Date): number {
 function statusLabel(status: string | null): string {
   if (!status) return '';
   switch (status.toLowerCase()) {
-    case 'ausgeschrieben':
-      return 'ausgeschrieben';
+    case 'reserviert':
+      return 'reserviert';
     case 'unter vorbehalt':
       return 'unter Vorbehalt';
     case 'bestaetigt':
@@ -230,9 +230,9 @@ function statusLabel(status: string | null): string {
     case 'abgesagt':
       return 'abgesagt';
     case 'offen':
-      return 'ausgeschrieben';
+      return 'reserviert';
     case 'angefragt':
-      return 'ausgeschrieben';
+      return 'reserviert';
     default:
       return status;
   }
@@ -241,7 +241,7 @@ function statusLabel(status: string | null): string {
 /** true, wenn der Zuweisungsstatus einen aktiven (nicht abgesagten) Kurs bedeutet. */
 function istAktiverStatus(status: string | null): boolean {
   const s = statusLabel(status).toLowerCase();
-  return s === 'ausgeschrieben' || s === 'unter vorbehalt' || s === 'bestätigt';
+  return s === 'reserviert' || s === 'unter vorbehalt' || s === 'bestätigt';
 }
 
 /** true, wenn der Zuweisungsstatus „abgesagt“ bedeutet – Grundlage für den
@@ -258,7 +258,7 @@ function istBestaetigt(status: string | null): boolean {
 /** Status-Farbklassen für Kurs-Slot-Buttons in der Wochenansicht. */
 function statusSlotClasses(status: string | null): string {
   switch (statusLabel(status).toLowerCase()) {
-    case 'ausgeschrieben':
+    case 'reserviert':
       return 'bg-[#285DAA]/10 text-[#285DAA] border border-[#285DAA]/40 hover:bg-[#285DAA]/20';
     case 'unter vorbehalt':
       return 'bg-amber-500 text-white font-medium border border-amber-600 hover:bg-amber-600';
@@ -287,7 +287,7 @@ function kuerzeAngebotstitel(titel: string | null): string {
 }
 
 /** true, wenn die Teilnehmerzahl an den Kurstitel angehängt werden soll:
- *  nur bei Kursen, deren Zuweisungsstatus NICHT „ausgeschrieben“ (bzw. der
+ *  nur bei Kursen, deren Zuweisungsstatus NICHT „reserviert“ (bzw. der
  *  Standardwert für nicht zugewiesene/offene Kurse) ist, und wenn mindestens
  *  ein Teilnehmer gebucht ist (0 bzw. undefined bleibt unsichtbar). */
 function zeigeTeilnehmerAnzahl(
@@ -296,18 +296,18 @@ function zeigeTeilnehmerAnzahl(
 ): boolean {
   const s = (status ?? '').toLowerCase();
   const offen =
-    s === '' || s === 'ausgeschrieben' || s === 'offen' || s === 'angefragt';
+    s === '' || s === 'reserviert' || s === 'offen' || s === 'angefragt';
   return !offen && typeof teilnehmer === 'number' && teilnehmer > 0;
 }
 
-/** Rangfolge für den primären Kurs: bestätigt > unter Vorbehalt > ausgeschrieben > abgesagt. */
+/** Rangfolge für den primären Kurs: bestätigt > unter Vorbehalt > reserviert > abgesagt. */
 function statusRang(status: string | null): number {
   switch (statusLabel(status).toLowerCase()) {
     case 'bestätigt':
       return 0;
     case 'unter vorbehalt':
       return 1;
-    case 'ausgeschrieben':
+    case 'reserviert':
       return 2;
     case 'abgesagt':
       return 3;
@@ -319,7 +319,7 @@ function statusRang(status: string | null): number {
 /**
  * Sortiert Kurs-Zuweisungen strikt nach Status für die vertikale Stapelung in
  * der Tageskachel: Grün (bestätigt) → Orange (unter Vorbehalt) → Blau
- * (ausgeschrieben) → Rot (abgesagt). Bei gleichem Status folgt die Uhrzeit
+ * (reserviert) → Rot (abgesagt). Bei gleichem Status folgt die Uhrzeit
  * (Startzeit), bei gleicher Uhrzeit der Kurstitel.
  */
 function sortiereKurseNachStatus(kurse: KursRow[]): KursRow[] {
@@ -354,7 +354,7 @@ function begrenzeAufDrei(kurse: KursRow[]): {
 /** Kompakte Status-Badge-Farbklassen für das Parallele-Termine-Popover. */
 function statusBadgeClasses(status: string | null): string {
   switch (statusLabel(status).toLowerCase()) {
-    case 'ausgeschrieben':
+    case 'reserviert':
       return 'bg-[#285DAA]/10 text-[#285DAA] border-[#285DAA]/30';
     case 'unter vorbehalt':
       return 'bg-amber-500 text-white font-medium border-amber-600';
@@ -2938,7 +2938,7 @@ function VerfuegbarkeitContent() {
               {/* Gruppe 2: Kurs-/Termin-Status */}
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block w-3.5 h-3.5 rounded bg-[#285DAA]/10 border border-[#285DAA]/40" />
-                Kurs ausgeschrieben
+                Kurs reserviert
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block w-3.5 h-3.5 rounded bg-amber-500 border border-amber-600" />

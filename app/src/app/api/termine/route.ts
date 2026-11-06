@@ -541,7 +541,7 @@ async function aktualisiereAbgesagteZuweisungen(): Promise<void> {
              AND COALESCE(tn.einnahmen, 0) = 0
              AND COALESCE(tn.teilnehmer, 0) = 0)
        )
-       AND z.status IN ('ausgeschrieben', 'unter Vorbehalt')`
+       AND z.status IN ('reserviert', 'unter Vorbehalt')`
   );
 }
 
@@ -557,7 +557,7 @@ async function aktualisiereAbgesagteZuweisungen(): Promise<void> {
  * (edoobox_raw.offer.user_minimal) ab:
  *   - 1 bis minTeilnehmer Anmeldungen  → 'unter Vorbehalt'
  *   - minTeilnehmer + 1 oder mehr       → 'bestätigt'
- *   - 0 Anmeldungen                      → 'ausgeschrieben' (Ausgangszustand)
+ *   - 0 Anmeldungen                      → 'reserviert' (Ausgangszustand)
  */
 function effektiverZuweisungsstatus(
   offerStatus: string | null,
@@ -575,16 +575,16 @@ function effektiverZuweisungsstatus(
   }
 
   // Schutz-Bedingung (Exklusivität): Die Automatik darf den Zuweisungsstatus
-  // NUR dann ändern, wenn er exakt 'ausgeschrieben' ist (bzw. leer / keine
+  // NUR dann ändern, wenn er exakt 'reserviert' ist (bzw. leer / keine
   // Zuordnung). Liegt bereits ein anderer Status vor (manuell gesetzt,
   // 'bestätigt', 'unter Vorbehalt' …), bleibt er unangetastet.
   const automatischBerechtigt =
     bisherigerStatus === null ||
     bisherigerStatus === 'keine Zuordnung' ||
-    bisherigerStatus === 'ausgeschrieben';
+    bisherigerStatus === 'reserviert';
 
   if (!automatischBerechtigt) {
-    return bisherigerStatus ?? 'ausgeschrieben';
+    return bisherigerStatus ?? 'reserviert';
   }
 
   // Stufe 2: Mindestteilnehmerzahl um mindestens 1 überschritten → 'bestätigt'.
@@ -598,8 +598,8 @@ function effektiverZuweisungsstatus(
     return 'unter Vorbehalt';
   }
 
-  // Keine Anmeldungen → 'ausgeschrieben' (verbleibt im Ausgangszustand).
-  return 'ausgeschrieben';
+  // Keine Anmeldungen → 'reserviert' (verbleibt im Ausgangszustand).
+  return 'reserviert';
 }
 
 // ---------------------------------------------------------------------------
@@ -974,7 +974,7 @@ export async function GET(request: Request) {
             row.offer_status,
             row.teilnehmer ?? 0,
             row.einnahmen !== null ? Number(row.einnahmen) : 0,
-            'ausgeschrieben',
+            'reserviert',
             // Mindestteilnehmerzahl aus edoobox (user_minimal); Fallback 1,
             // falls kein Wert hinterlegt ist (ab 2 Anmeldungen bestätigt).
             Math.max(Number(row.min_teilnehmer ?? 1), 1)
@@ -1052,7 +1052,7 @@ export async function GET(request: Request) {
     // (Status '3' ohne Teilnehmer) Kurs muss seinen 'Abgesagt'-Status an das
     // Frontend ausliefern, auch wenn das Array `zuweisungen` leer ist (kein
     // Trainer, 'n. v.'). Andernfalls würde zuweisungen[0]?.status den
-    // übergeordneten Status mit null bzw. 'ausgeschrieben' überschreiben und
+    // übergeordneten Status mit null bzw. 'reserviert' überschreiben und
     // der Kurs erschiene im Kalender fälschlich blau statt rot.
     for (const kurs of kurse) {
       if (kurs.date_status === 'Reservierung') continue;

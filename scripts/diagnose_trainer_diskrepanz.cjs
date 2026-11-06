@@ -344,7 +344,7 @@ async function main() {
           id: null,
           trainer_id: row.edoo_trainer_id,
           status:
-            row.date_status === 'Garantierte Durchführung' ? 'bestätigt' : 'ausgeschrieben',
+            row.date_status === 'Garantierte Durchführung' ? 'bestätigt' : 'reserviert',
           kuerzel: row.edoo_trainer_kuerzel,
         });
       }
