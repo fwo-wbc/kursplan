@@ -157,7 +157,7 @@ export async function ladeTerminKontext(
   const result = await query(
     `SELECT
        od.date_id::text  AS date_id,
-       (od.date_id)::int AS termin_id,
+       NULL::int AS termin_id,
        o.name            AS kurs_titel
      FROM edoobox_raw.offer_date od
      LEFT JOIN edoobox_raw.offer o
