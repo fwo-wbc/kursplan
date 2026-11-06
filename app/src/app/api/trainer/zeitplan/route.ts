@@ -132,15 +132,18 @@ function slotFuerStart(startUhr: number | null): SlotCode {
 }
 
 /**
- * Leitet den einheitlichen Kursstatus ab – drei Stufen vorrangig anhand der
- * eingehenden Anmeldungen (Buchungs-/Teilnehmerzahl je Kurs):
+ * Leitet den einheitlichen Kursstatus ab – abhängig von der eingehenden
+ * Anmeldungen (Buchungs-/Teilnehmerzahl je Kurs) und der in edoobox
+ * hinterlegten Mindestteilnehmerzahl (edoobox_raw.offer.user_minimal):
  *
  * 1. Schutz-Bedingung (Exklusivität): Die Automatik darf den Zuweisungsstatus
  *    NUR dann ändern, wenn der aktuelle Status exakt 'ausgeschrieben' ist
  *    (bzw. null / leer). Liegt bereits ein anderer Status vor (manuell gesetzt,
  *    'bestätigt', 'unter Vorbehalt' …), wird der Status unangetastet gelassen.
- * 2. Stufe 1: Genau 1 Anmeldung  → 'unter Vorbehalt'
- * 3. Stufe 2: 2 oder mehr Anmeldungen → 'bestätigt'
+ * 2. Stufe 1: 1 bis Mindestteilnehmerzahl Anmeldungen → 'unter Vorbehalt'
+ *    (Bedingung: teilnehmer >= 1 && teilnehmer <= minTeilnehmer).
+ * 3. Stufe 2: Mindestteilnehmerzahl um 1 überschritten → 'bestätigt'
+ *    (Bedingung: teilnehmer >= minTeilnehmer + 1).
  *
  * Übergeordnet bleibt 'abgesagt' bei edoobox-Status '0'/'5' bzw. manuell
  * abgesagter Zuweisung wirksam.
@@ -148,7 +151,8 @@ function slotFuerStart(startUhr: number | null): SlotCode {
 function kursStatus(
   offerStatus: string | null,
   zuweisungStatus: string | null,
-  teilnehmer: number
+  teilnehmer: number,
+  minTeilnehmer: number
 ): KursStatus {
   if (
     offerStatus === '0' ||
@@ -156,12 +160,6 @@ function kursStatus(
     zuweisungStatus === 'abgesagt'
   ) {
     return 'abgesagt';
-  }
-
-  // Garantierte Durchführung (edoobox-Status '2') ist offer-seitig bestätigt –
-  // unabhängig von der Anmelde-Automatik.
-  if (offerStatus === '2') {
-    return 'bestätigt';
   }
 
   // Schutz-Bedingung (Exklusivität): Die Automatik darf den Zuweisungsstatus
@@ -176,17 +174,18 @@ function kursStatus(
     return zuweisungStatus as KursStatus;
   }
 
-  // Stufe 2: 2 oder mehr Anmeldungen → 'bestätigt'.
-  if (teilnehmer >= 2) {
+  // Stufe 2: Mindestteilnehmerzahl um mindestens 1 überschritten → 'bestätigt'.
+  if (teilnehmer >= minTeilnehmer + 1) {
     return 'bestätigt';
   }
 
-  // Stufe 1: genau 1 Anmeldung → 'unter Vorbehalt'.
-  if (teilnehmer === 1) {
+  // Stufe 1: mindestens 1 Anmeldung bis einschließlich Mindestanzahl
+  // → 'unter Vorbehalt'.
+  if (teilnehmer >= 1) {
     return 'unter Vorbehalt';
   }
 
-  // Keine Anmeldungen → 'ausgeschrieben' (Standard).
+  // Keine Anmeldungen → 'ausgeschrieben' (bleibt im Ausgangszustand).
   return 'ausgeschrieben';
 }
 
@@ -298,6 +297,7 @@ export async function GET(request: Request) {
          tz.date_id AS date_id,
          o.name AS kursname,
          o.status AS offer_status,
+         o.user_minimal AS min_teilnehmer,
          tz.status AS zuweisung_status,
          (EXTRACT(HOUR FROM (od.date_start AT TIME ZONE 'Europe/Berlin'))
            + EXTRACT(MINUTE FROM (od.date_start AT TIME ZONE 'Europe/Berlin')) / 60.0)::double precision AS start_uhr,
@@ -341,6 +341,7 @@ export async function GET(request: Request) {
       date_id: string;
       kursname: string | null;
       offer_status: string | null;
+      min_teilnehmer: number | null;
       zuweisung_status: string | null;
       start_uhr: number | null;
       teilnehmer: number | null;
@@ -356,7 +357,11 @@ export async function GET(request: Request) {
         status: kursStatus(
           row.offer_status == null ? null : String(row.offer_status),
           row.zuweisung_status == null ? null : String(row.zuweisung_status),
-          teilnehmer
+          teilnehmer,
+          // Mindestteilnehmerzahl aus edoobox (user_minimal); Fallback 1,
+          // falls kein Wert hinterlegt ist (dann gilt das bisherige Verhalten:
+          // ab 2 Anmeldungen bestätigt).
+          Math.max(Number(row.min_teilnehmer ?? 1), 1)
         ),
         teilnehmer,
         zuweisung_status:

@@ -131,8 +131,10 @@ export async function GET(request: Request) {
          --    NUR, wenn er exakt 'ausgeschrieben' ist (bzw. null/leer). Ist bereits
          --    ein anderer Status vergeben (manuell gesetzt, 'bestätigt',
          --    'unter Vorbehalt', 'keine Zuordnung' …), bleibt er unangetastet.
-         -- 3) Stufe 1: genau 1 Anmeldung → 'unter Vorbehalt'.
-         -- 4) Stufe 2: 2 oder mehr Anmeldungen → 'bestätigt'.
+         -- 3) Stufe 1: 1 bis Mindestteilnehmerzahl Anmeldungen → 'unter Vorbehalt'
+         --    (Mindestanzahl aus edoobox: o.user_minimal; Fallback 1).
+         -- 4) Stufe 2: Mindestteilnehmerzahl um 1 überschritten → 'bestätigt'
+         --    (Bedingung: Teilnehmer >= user_minimal + 1).
          CASE
            WHEN o.status = '5'
              OR o.status = '0'
@@ -143,9 +145,10 @@ export async function GET(request: Request) {
            WHEN tz.status IS NOT NULL
              AND tz.status <> 'ausgeschrieben'
            THEN tz.status
-           WHEN COALESCE(tn.teilnehmer, 0) >= 2
+           WHEN COALESCE(tn.teilnehmer, 0) >=
+                GREATEST(COALESCE(o.user_minimal, 1), 1) + 1
            THEN 'bestätigt'
-           WHEN COALESCE(tn.teilnehmer, 0) = 1
+           WHEN COALESCE(tn.teilnehmer, 0) >= 1
            THEN 'unter Vorbehalt'
            ELSE COALESCE(tz.status, 'ausgeschrieben')
          END AS zuweisung_status,

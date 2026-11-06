@@ -20,6 +20,8 @@ interface TerminZuweisungRow {
   kursnr: string | null;
   teilnehmer: number | null;
   max_plaetze: number | null;
+  /** Mindestteilnehmerzahl aus edoobox (o.user_minimal) für die Status-Ableitung. */
+  min_teilnehmer: number | null;
   einnahmen: string | null;
   zuweisung_id: number | null;
   trainer_id: number | null;
@@ -550,12 +552,19 @@ async function aktualisiereAbgesagteZuweisungen(): Promise<void> {
  * Teilnehmer gelten als 'abgesagt'. Eine manuelle Zuweisung (tz.status) wird
  * dadurch überschrieben, damit abgesagte/geschlossene Angebote in der
  * Kursplanung zuverlässig als abgesagt erscheinen.
+ *
+ * Ab Stufe 1/2 hängt der Status von der Mindestteilnehmerzahl des Angebots
+ * (edoobox_raw.offer.user_minimal) ab:
+ *   - 1 bis minTeilnehmer Anmeldungen  → 'unter Vorbehalt'
+ *   - minTeilnehmer + 1 oder mehr       → 'bestätigt'
+ *   - 0 Anmeldungen                      → 'ausgeschrieben' (Ausgangszustand)
  */
 function effektiverZuweisungsstatus(
   offerStatus: string | null,
   teilnehmer: number,
   einnahmen: number,
-  bisherigerStatus: string | null
+  bisherigerStatus: string | null,
+  minTeilnehmer: number
 ): string {
   if (
     offerStatus === '5' ||
@@ -578,17 +587,18 @@ function effektiverZuweisungsstatus(
     return bisherigerStatus ?? 'ausgeschrieben';
   }
 
-  // Stufe 2: 2 oder mehr Anmeldungen → 'bestätigt'.
-  if (teilnehmer >= 2) {
+  // Stufe 2: Mindestteilnehmerzahl um mindestens 1 überschritten → 'bestätigt'.
+  if (teilnehmer >= minTeilnehmer + 1) {
     return 'bestätigt';
   }
 
-  // Stufe 1: genau 1 Anmeldung → 'unter Vorbehalt'.
-  if (teilnehmer === 1) {
+  // Stufe 1: mindestens 1 Anmeldung bis einschließlich Mindestanzahl
+  // → 'unter Vorbehalt'.
+  if (teilnehmer >= 1) {
     return 'unter Vorbehalt';
   }
 
-  // Keine Anmeldungen → 'ausgeschrieben' (Standard).
+  // Keine Anmeldungen → 'ausgeschrieben' (verbleibt im Ausgangszustand).
   return 'ausgeschrieben';
 }
 
@@ -643,6 +653,7 @@ export async function GET(request: Request) {
          COALESCE(e.teilnehmer, 0)                 AS teilnehmer,
          COALESCE(e.einnahmen, 0)::numeric         AS einnahmen,
          o.user_maximum            AS max_plaetze,
+         o.user_minimal            AS min_teilnehmer,
          tz.id               AS zuweisung_id,
          tz.trainer_id,
          tz.status           AS zuweisung_status,
@@ -922,7 +933,10 @@ export async function GET(request: Request) {
             row.offer_status,
             row.teilnehmer ?? 0,
             row.einnahmen !== null ? Number(row.einnahmen) : 0,
-            row.zuweisung_status
+            row.zuweisung_status,
+            // Mindestteilnehmerzahl aus edoobox (user_minimal); Fallback 1,
+            // falls kein Wert hinterlegt ist (ab 2 Anmeldungen bestätigt).
+            Math.max(Number(row.min_teilnehmer ?? 1), 1)
           ),
           notiz: row.zuweisung_notiz,
           honorar_manuell:
@@ -950,15 +964,20 @@ export async function GET(request: Request) {
           id: null,
           trainer_id: row.edoo_trainer_id,
           // Keine manuelle Neubearbeitung: Der Status einer rein aus edoobox
-          // gespiegelten Zuweisung haengt am Kursstatus. Nur "Garantierte
-          // Durchführung" (offer.status = '2') darf 'bestätigt' sein, sonst
-          // 'ausgeschrieben' (Standard). Abgesagte/geschlossene Kurse ohne
-          // Teilnehmer werden konsistent zur Trainerverfügbarkeit überschrieben.
+          // gespiegelten Zuweisung haengt ausschliesslich an den realen
+          // Buchungszahlen und der Mindestteilnehmerzahl (Schwellenwert-Logik
+          // in effektiverZuweisungsstatus). Der Kursstatus '2' (Garantierte
+          // Durchführung) setzt den Zuweisungsstatus NICHT mehr automatisch
+          // auf 'bestätigt'. Abgesagte/geschlossene Kurse ohne Teilnehmer
+          // werden konsistent zur Trainerverfügbarkeit überschrieben.
           status: effektiverZuweisungsstatus(
             row.offer_status,
             row.teilnehmer ?? 0,
             row.einnahmen !== null ? Number(row.einnahmen) : 0,
-            row.date_status === 'Garantierte Durchführung' ? 'bestätigt' : 'ausgeschrieben'
+            'ausgeschrieben',
+            // Mindestteilnehmerzahl aus edoobox (user_minimal); Fallback 1,
+            // falls kein Wert hinterlegt ist (ab 2 Anmeldungen bestätigt).
+            Math.max(Number(row.min_teilnehmer ?? 1), 1)
           ),
           notiz: 'Aus edoobox gespiegelt',
           honorar_manuell: null,

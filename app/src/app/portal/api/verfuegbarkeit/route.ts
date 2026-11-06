@@ -131,6 +131,10 @@ export async function GET(request: Request) {
          o.name AS kursname,
          o.offer_number AS kursnr,
          -- Status-Ableitung (konsistent zur Kursabfrage /api/trainer/zeitplan).
+         -- Mindestteilnehmerzahl aus edoobox (o.user_minimal; Fallback 1):
+         --   1 bis Mindestanzahl Anmeldungen    → 'unter Vorbehalt'
+         --   Mindestanzahl + 1 oder mehr        → 'bestätigt'
+         --   0 Anmeldungen                      → bleibt 'ausgeschrieben'
          CASE
            WHEN o.status = '5'
              OR o.status = '0'
@@ -141,9 +145,10 @@ export async function GET(request: Request) {
            WHEN tz.status IS NOT NULL
              AND tz.status <> 'ausgeschrieben'
            THEN tz.status
-           WHEN COALESCE(tn.teilnehmer, 0) >= 2
+           WHEN COALESCE(tn.teilnehmer, 0) >=
+                GREATEST(COALESCE(o.user_minimal, 1), 1) + 1
            THEN 'bestätigt'
-           WHEN COALESCE(tn.teilnehmer, 0) = 1
+           WHEN COALESCE(tn.teilnehmer, 0) >= 1
            THEN 'unter Vorbehalt'
            ELSE COALESCE(tz.status, 'ausgeschrieben')
          END AS zuweisung_status,
