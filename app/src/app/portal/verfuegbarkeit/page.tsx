@@ -2938,7 +2938,7 @@ function VerfuegbarkeitContent() {
               {/* Gruppe 2: Kurs-/Termin-Status */}
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block w-3.5 h-3.5 rounded bg-[#285DAA]/10 border border-[#285DAA]/40" />
-                Kurs reserviert
+                Reserviert
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block w-3.5 h-3.5 rounded bg-amber-500 border border-amber-600" />
