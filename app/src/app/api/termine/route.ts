@@ -529,7 +529,12 @@ async function aktualisiereAbgesagteZuweisungen(): Promise<void> {
                   p.last_synced_at DESC NULLS LAST, p.quantity DESC
        ) dedup
      ) tn ON true
-     WHERE z.date_id = od.date_id
+     -- Zuweisungen ansprechen, die entweder exakt dem Termin (date_id)
+     -- oder – als Fallback – dem Kurs (offer_id) zugeordnet sind. Konsistent
+     -- zur Lateral-Join-Logik der Terminabfrage, damit auch Kurs-Zuweisungen
+     -- ohne (passende) date_id abgesagt werden.
+     WHERE (z.date_id = od.date_id
+            OR (z.offer_id = od.offer_id AND z.offer_id IS NOT NULL))
        AND (
          -- Regel 1: explizit abgesagt bzw. archiviert/gelöscht.
          o.status = '5'
@@ -762,8 +767,29 @@ export async function GET(request: Request) {
             ) e ON true
        LEFT JOIN public.termin_optionen opt
               ON od.date_id = opt.date_id
-       LEFT JOIN public.trainer_zuweisung tz
-              ON od.date_id = tz.date_id
+       -- Lokale Trainer-Zuweisung: Bevorzugt exakt ueber date_id (Termin),
+       -- sonst als Fallback ueber offer_id (Kurs). Der LATERAL-Join liefert
+       -- je Termin genau eine Zeile (date_id-Treffer stets vor offer_id-
+       -- Fallback, innerhalb der Gruppe die neueste updated_at). Dadurch sind
+       -- auch Termine abgedeckt, deren Kurs eine offer_id-Zuweisung besitzt.
+       LEFT JOIN LATERAL (
+              SELECT
+                  tz_sub.id,
+                  tz_sub.trainer_id,
+                  tz_sub.status,
+                  tz_sub.notiz,
+                  tz_sub.honorar_manuell,
+                  tz_sub.offer_id,
+                  tz_sub.offer_number
+              FROM public.trainer_zuweisung tz_sub
+              WHERE tz_sub.date_id = od.date_id
+                 OR (tz_sub.offer_id = od.offer_id
+                     AND tz_sub.offer_id IS NOT NULL)
+              ORDER BY
+                  CASE WHEN tz_sub.date_id = od.date_id THEN 0 ELSE 1 END,
+                  tz_sub.updated_at DESC
+              LIMIT 1
+          ) tz ON true
        LEFT JOIN public.trainer t
               ON tz.trainer_id = t.id
        -- Nur die LEITER des juengsten Spiegelungslaufs je Termin heranziehen.
@@ -798,12 +824,14 @@ export async function GET(request: Request) {
          -- wieder neu spiegeln (Edoobox ist Single Source of Truth), deshalb
          -- duerfen sie niemals in Kursplanung/Kalender auftauchen.
          AND o.name NOT ILIKE '%test%'
-       -- Deterministische Zuweisungs-Reihenfolge: Bei mehreren Zuweisungen
-       -- je Termin (z. B. Altbestaende nach Trainerwechsel) gewinnt stets der
-       -- juengste, gueltige Eintrag. Die JS-Deduplizierung (erste Zeile je
-       -- trainer_id) erhaelt dadurch garantiert die neueste Zuweisung.
-       ORDER BY od.date_start ASC, od.date_id ASC,
-                tz.created_at DESC NULLS LAST, tz.id DESC`,
+       -- Deterministische Zuweisungs-Reihenfolge: Der LATERAL-Join auf
+       -- trainer_zuweisung liefert je Termin bereits genau die neueste,
+       -- gueltige Zuweisung (date_id-Treffer bevorzugt, dann updated_at DESC).
+       -- Das aeussere ORDER BY nach Zuweisungsfeldern entfaellt damit; eine
+       -- zusaetzliche Sortierung nach tz.* waere nicht mehr moeglich, da der
+       -- Join auf eine Zeile limitiert ist. Die JS-Deduplizierung (erste Zeile
+       -- je trainer_id) erhaelt so garantiert die neueste Zuweisung.
+       ORDER BY od.date_start ASC, od.date_id ASC`,
       [fromDatum, STANDARD_RUECKBLICK_TAGE]
     );
 

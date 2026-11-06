@@ -43,6 +43,8 @@ interface ZuweisungBody {
   status?: unknown;
   notiz?: unknown;
   honorar_manuell?: unknown;
+  offer_id?: string;
+  offer_number?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +307,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const { date_id, date_ids, trainer_id, status, notiz, honorar_manuell } = body;
+  const { date_id, date_ids, trainer_id, status, notiz, honorar_manuell, offer_id, offer_number } =
+    body;
 
   // Eingaben normalisieren: Strings trimmen.
   const dateIds = normalizeDateIds(date_ids, date_id);
@@ -366,6 +369,52 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Offer-Kontext ermitteln: offer_id und offer_number werden pro date_id aus
+    // edoobox_raw.offer_date/edoobox_raw.offer übernommen, sofern nicht explizit
+    // im Body übergeben. Dieser Backfill stellt sicher, dass auch Altbestände
+    // ohne explizite Offer-Angabe mit den edoobox-Schlüsseln gespeichert werden.
+    const offerIdBody = normalizeString(offer_id);
+    const offerNumberBody = normalizeString(offer_number);
+
+    const offerKontextZuDateIds = new Map<
+      string,
+      { offer_id: string; offer_number: string | null }
+    >();
+
+    if (offerIdBody === null) {
+      const offerResult = await query(
+        `SELECT
+           d.date_id::text AS date_id,
+           o.offer_id::text AS offer_id,
+           o.offer_number::text AS offer_number
+         FROM edoobox_raw.offer_date d
+         INNER JOIN edoobox_raw.offer o ON o.offer_id = d.offer_id
+         WHERE d.date_id::text = ANY($1::text[])
+           AND d.is_deleted IS NOT TRUE
+           AND o.is_deleted IS NOT TRUE`,
+        [dateIds]
+      );
+      for (const row of offerResult.rows as Array<{
+        date_id: string;
+        offer_id: string;
+        offer_number: string | null;
+      }>) {
+        offerKontextZuDateIds.set(row.date_id, {
+          offer_id: row.offer_id,
+          offer_number: row.offer_number,
+        });
+      }
+    }
+
+    // Parallele Arrays in Reihenfolge der date_ids: Body-Werte gelten für alle
+    // Termine, andernfalls je date_id der ermittelte edoobox-Kontext.
+    const offerIds = dateIds.map(
+      (d) => offerIdBody ?? offerKontextZuDateIds.get(d)?.offer_id ?? null
+    );
+    const offerNumbers = dateIds.map(
+      (d) => offerNumberBody ?? offerKontextZuDateIds.get(d)?.offer_number ?? null
+    );
+
     // Vorher-Zustand ermitteln: bisheriges Trainerkürzel je date_id, BEVOR die
     // alte Zuweisung ersetzt bzw. entfernt wird. Nur Trainer, die sich vom
     // neuen unterscheiden (= echter Wechsel), sind relevant. Das alte Kürzel
@@ -434,27 +483,46 @@ export async function POST(request: Request) {
     const result =
       honorarManuell !== undefined
         ? await query(
-            `INSERT INTO public.trainer_zuweisung (date_id, trainer_id, status, notiz, honorar_manuell)
-             SELECT d.date_id, $2::int, $3::text, $4::text, $5::numeric
-             FROM unnest($1::text[]) AS d(date_id)
+            `INSERT INTO public.trainer_zuweisung (date_id, trainer_id, status, notiz, honorar_manuell, offer_id, offer_number)
+             SELECT d.date_id, $2::int, $3::text, $4::text, $5::numeric, d.offer_id, d.offer_number
+             FROM unnest($1::text[], $6::text[], $7::text[]) AS d(date_id, offer_id, offer_number)
              ON CONFLICT (date_id, trainer_id)
              DO UPDATE SET
                status = EXCLUDED.status,
                notiz = EXCLUDED.notiz,
-               honorar_manuell = EXCLUDED.honorar_manuell
+               honorar_manuell = EXCLUDED.honorar_manuell,
+               offer_id = COALESCE(EXCLUDED.offer_id, public.trainer_zuweisung.offer_id),
+               offer_number = COALESCE(EXCLUDED.offer_number, public.trainer_zuweisung.offer_number)
              RETURNING *`,
-            [dateIds, trainerIdValue as number, statusValue, notizValue, honorarManuell]
+            [
+              dateIds,
+              trainerIdValue as number,
+              statusValue,
+              notizValue,
+              honorarManuell,
+              offerIds,
+              offerNumbers,
+            ]
           )
         : await query(
-            `INSERT INTO public.trainer_zuweisung (date_id, trainer_id, status, notiz)
-             SELECT d.date_id, $2::int, $3::text, $4::text
-             FROM unnest($1::text[]) AS d(date_id)
+            `INSERT INTO public.trainer_zuweisung (date_id, trainer_id, status, notiz, offer_id, offer_number)
+             SELECT d.date_id, $2::int, $3::text, $4::text, d.offer_id, d.offer_number
+             FROM unnest($1::text[], $5::text[], $6::text[]) AS d(date_id, offer_id, offer_number)
              ON CONFLICT (date_id, trainer_id)
              DO UPDATE SET
                status = EXCLUDED.status,
-               notiz = EXCLUDED.notiz
+               notiz = EXCLUDED.notiz,
+               offer_id = COALESCE(EXCLUDED.offer_id, public.trainer_zuweisung.offer_id),
+               offer_number = COALESCE(EXCLUDED.offer_number, public.trainer_zuweisung.offer_number)
              RETURNING *`,
-            [dateIds, trainerIdValue as number, statusValue, notizValue]
+            [
+              dateIds,
+              trainerIdValue as number,
+              statusValue,
+              notizValue,
+              offerIds,
+              offerNumbers,
+            ]
           );
 
     // Asynchroner n8n-Rückkanal: Trainerzuweisung an edoobox melden.

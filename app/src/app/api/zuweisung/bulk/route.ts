@@ -35,6 +35,8 @@ interface BulkZuweisungBody {
   status?: unknown;
   trainer_id?: unknown;
   trainer_kuerzel?: unknown;
+  offer_id?: string;
+  offer_number?: string;
 }
 
 const ERLAUBTE_STATUS: readonly ZuweisungStatus[] = [
@@ -230,7 +232,7 @@ export async function PATCH(request: Request) {
     );
   }
 
-  const { date_ids, status, trainer_id, trainer_kuerzel } = body;
+  const { date_ids, status, trainer_id, trainer_kuerzel, offer_id, offer_number } = body;
 
   // date_ids zwingend erforderlich und nicht leer.
   const dateIds = normalizeDateIds(date_ids);
@@ -364,6 +366,51 @@ export async function PATCH(request: Request) {
       });
     }
 
+    // Offer-Kontext je date_id aus edoobox_raw ermitteln, sofern offer_id
+    // nicht explizit im Body übergeben wurde. Damit werden auch Altbestände
+    // bei Batch-Zuweisungen mit den zugehörigen edoobox-Schlüsseln versorgt.
+    const offerIdBody = normalizeString(offer_id);
+    const offerNumberBody = normalizeString(offer_number);
+
+    const offerKontextZuDateIds = new Map<
+      string,
+      { offer_id: string; offer_number: string | null }
+    >();
+
+    if (offerIdBody === null) {
+      const offerResult = await query(
+        `SELECT
+           d.date_id::text AS date_id,
+           o.offer_id::text AS offer_id,
+           o.offer_number::text AS offer_number
+         FROM edoobox_raw.offer_date d
+         INNER JOIN edoobox_raw.offer o ON o.offer_id = d.offer_id
+         WHERE d.date_id::text = ANY($1::text[])
+           AND d.is_deleted IS NOT TRUE
+           AND o.is_deleted IS NOT TRUE`,
+        [dateIds]
+      );
+      for (const row of offerResult.rows as Array<{
+        date_id: string;
+        offer_id: string;
+        offer_number: string | null;
+      }>) {
+        offerKontextZuDateIds.set(row.date_id, {
+          offer_id: row.offer_id,
+          offer_number: row.offer_number,
+        });
+      }
+    }
+
+    // Parallele Arrays in Reihenfolge der date_ids: Body-Werte gelten für alle
+    // Termine, andernfalls je date_id der ermittelte edoobox-Kontext.
+    const offerIds = dateIds.map(
+      (d) => offerIdBody ?? offerKontextZuDateIds.get(d)?.offer_id ?? null
+    );
+    const offerNumbers = dateIds.map(
+      (d) => offerNumberBody ?? offerKontextZuDateIds.get(d)?.offer_number ?? null
+    );
+
     if (trainerIdValue !== null) {
       // Trainerwechsel: vorhandene ANDERE Trainer-Zuweisungen derselben
       // date_ids entfernen, damit pro Termin nur eine aktive zuweisung steht.
@@ -377,30 +424,38 @@ export async function PATCH(request: Request) {
       // Trainer für alle date_ids einfügen bzw. aktualisieren. Nur wenn status
       // im Payload stand, wird der Status überschrieben; sonst bleibt der
       // bestehende Wert erhalten (bzw. gilt für neue Zeilen 'reserviert').
+      // offer_id/offer_number werden je date_id mitgeführt und bei Konflikten
+      // aktualisiert (bestehende Werte bleiben bei NULL erhalten).
       result = await query(
-        `INSERT INTO public.trainer_zuweisung (date_id, trainer_id, status)
-         SELECT d.date_id, $2::int, COALESCE($3::text, 'reserviert')
-         FROM unnest($1::text[]) AS d(date_id)
+        `INSERT INTO public.trainer_zuweisung (date_id, trainer_id, status, offer_id, offer_number)
+         SELECT d.date_id, $2::int, COALESCE($3::text, 'reserviert'), d.offer_id, d.offer_number
+         FROM unnest($1::text[], $4::text[], $5::text[]) AS d(date_id, offer_id, offer_number)
          ON CONFLICT (date_id, trainer_id)
          DO UPDATE SET
            status = CASE
              WHEN $3::text IS NOT NULL THEN EXCLUDED.status
              ELSE public.trainer_zuweisung.status
-           END
+           END,
+           offer_id = COALESCE(EXCLUDED.offer_id, public.trainer_zuweisung.offer_id),
+           offer_number = COALESCE(EXCLUDED.offer_number, public.trainer_zuweisung.offer_number)
          RETURNING *`,
-        [dateIds, trainerIdValue, statusValue]
+        [dateIds, trainerIdValue, statusValue, offerIds, offerNumbers]
       );
     } else {
       // Nur Status-Aenderung (inkl. Aufhebung 'keine Zuordnung'): alle
       // vorhandenen Zuweisungs-Zeilen der date_ids aktualisieren,
       // Trainer bleibt unangetastet. statusValue ist hier zwingend gesetzt
-      // (siehe Validierung oben).
+      // (siehe Validierung oben). offer_id/offer_number werden dabei ebenso
+      // aktualisiert, damit Altbestände ohne Offer-Kontext nachgezogen werden.
       result = await query(
-        `UPDATE public.trainer_zuweisung
-         SET status = $2::text
-         WHERE date_id = ANY($1::text[])
+        `UPDATE public.trainer_zuweisung AS tz
+         SET status = $2::text,
+             offer_id = COALESCE(od.offer_id, tz.offer_id),
+             offer_number = COALESCE(od.offer_number, tz.offer_number)
+         FROM unnest($1::text[], $3::text[], $4::text[]) AS od(date_id, offer_id, offer_number)
+         WHERE tz.date_id = od.date_id
          RETURNING *`,
-        [dateIds, statusValue as ZuweisungStatus]
+        [dateIds, statusValue as ZuweisungStatus, offerIds, offerNumbers]
       );
     }
 
