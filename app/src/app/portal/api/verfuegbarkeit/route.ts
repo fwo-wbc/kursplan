@@ -41,8 +41,23 @@ interface KursRow {
   kursname: string | null;
   kursnr: string | null;
   zuweisung_status: string | null;
+  /** Gebuchte Teilnehmer (Ist-Anzahl) – für die (X TN)-Anzeige im Trainerportal. */
+  teilnehmer: number;
   start_time: string | null;
   end_time: string | null;
+}
+
+/** Unverbindliche Trainer-Reservierung (Firmenanfrage) im Zeitraum. */
+interface ReservierungRow {
+  id: number;
+  trainer_id: number;
+  datum: string;
+  start_time: string;
+  end_time: string;
+  kunde: string;
+  bemerkung: string | null;
+  frist_ende: string | null;
+  gruppe_code: string | null;
 }
 
 /** Liest die trainer_id aus dem signed 'trainer_session'-Cookie. */
@@ -153,7 +168,8 @@ export async function GET(request: Request) {
            ELSE COALESCE(tz.status, 'reserviert')
          END AS zuweisung_status,
          to_char(od.date_start AT TIME ZONE 'Europe/Berlin', 'HH24:MI') AS start_time,
-         to_char(od.date_end AT TIME ZONE 'Europe/Berlin', 'HH24:MI') AS end_time
+         to_char(od.date_end AT TIME ZONE 'Europe/Berlin', 'HH24:MI') AS end_time,
+         COALESCE(tn.teilnehmer, 0) AS teilnehmer
        FROM edoobox_raw.offer_date od
        LEFT JOIN edoobox_raw.offer o ON o.offer_id = od.offer_id
        LEFT JOIN LATERAL (
@@ -212,11 +228,50 @@ export async function GET(request: Request) {
       kursnr: row.kursnr == null ? null : String(row.kursnr),
       zuweisung_status:
         row.zuweisung_status == null ? null : String(row.zuweisung_status),
+      teilnehmer: Number(row.teilnehmer ?? 0),
       start_time: row.start_time == null ? null : String(row.start_time),
       end_time: row.end_time == null ? null : String(row.end_time),
     }));
 
-    return NextResponse.json({ verfuegbarkeiten, kurse }, { status: 200 });
+    // 3) Unverbindliche Trainer-Reservierungen (Firmenanfragen) im Zeitraum –
+    //    rein informativ für den Trainer (ohne Detail-/Kundendaten-Zugriff).
+    const reservResult = await query(
+      `SELECT
+         id,
+         trainer_id,
+         to_char(datum, 'YYYY-MM-DD') AS datum,
+         to_char(start_time, 'HH24:MI') AS start_time,
+         to_char(end_time, 'HH24:MI') AS end_time,
+         kunde,
+         bemerkung,
+         to_char(frist_ende, 'YYYY-MM-DD') AS frist_ende,
+         gruppe_code
+       FROM public.trainer_reservierung
+       WHERE trainer_id = $1
+         AND datum >= $2::date
+         AND datum <= $3::date
+       ORDER BY datum, start_time`,
+      [sessionTrainerId, von, bis]
+    );
+
+    const reservierungen: ReservierungRow[] = reservResult.rows.map(
+      (row: Record<string, unknown>) => ({
+        id: Number(row.id),
+        trainer_id: Number(row.trainer_id),
+        datum: String(row.datum),
+        start_time: String(row.start_time),
+        end_time: String(row.end_time),
+        kunde: String(row.kunde),
+        bemerkung: row.bemerkung == null ? null : String(row.bemerkung),
+        frist_ende: row.frist_ende == null ? null : String(row.frist_ende),
+        gruppe_code: row.gruppe_code == null ? null : String(row.gruppe_code),
+      })
+    );
+
+    return NextResponse.json(
+      { verfuegbarkeiten, kurse, reservierungen },
+      { status: 200 }
+    );
   } catch (err: unknown) {
     console.error('Fehler beim Laden der Portal-Verfügbarkeiten:', err);
     return NextResponse.json(

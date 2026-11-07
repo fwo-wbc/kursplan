@@ -1,7 +1,7 @@
 # Projektstand — Kursplan-App
 
 **Dokumenttyp:** Projektstand-Dokumentation (laufend gepflegt)
-**Stand:** 04. November 2026
+**Stand:** 07. November 2026
 **Basis:** [`Statusbericht Datenbank und Trainer-Zuweisung.md`](Statusbericht Datenbank und Trainer-Zuweisung.md), [`Spezifikation produktive n8n-Workflows P90-P05.md`](Spezifikation produktive n8n-Workflows P90-P05.md), [`Abgleichbericht P01-P05.md`](Abgleichbericht P01-P05.md), [`End-to-End-Abgleichbericht.md`](End-to-End-Abgleichbericht.md), [`Lastenheft Kursplan v1.6.md`](Lastenheft Kursplan v1.6.md), [`AENDERUNGEN.md`](AENDERUNGEN.md) (laufende Änderungsdokumentation)
 
 ---
@@ -74,7 +74,7 @@ flowchart LR
 | --- | --- |
 | `trainer` | Stammdaten (`id` SERIAL PK, `vorname`, `nachname`, `kuerzel` UNIQUE, `edoobox_admin_id` UNIQUE, `farbe`, `is_active`) — seit November 2026 zusätzlich **Portal-Zugangsfelder**: `portal_email` UNIQUE, `password_hash` (bcrypt, nie in API-Responses), `portal_active`, `last_login` |
 | `trainer_verfuegbarkeit` | Kalender-/Slot-Verfügbarkeiten (FK → `trainer(id)` ON DELETE CASCADE) |
-| `trainer_zuweisung` | Zuweisung Trainer ↔ Termin (`date_id` text, `status`, `notiz`; `UNIQUE (date_id, trainer_id)`) |
+| `trainer_zuweisung` | Zuweisung Trainer ↔ Termin (`date_id` text, `status`, `notiz`, `offer_id`-Fallback; `UNIQUE (date_id, trainer_id)`). Check-Constraint `trainer_zuweisung_status_chk` erzwingt seit November 2026 genau einen der fünf Statuswerte: `'keine Zuordnung'`, `'reserviert'`, `'unter Vorbehalt'`, `'bestätigt'`, `'abgesagt'` (früherer Wert `'ausgeschrieben'` durch `'reserviert'` ersetzt, s. [`AENDERUNGEN.md`](AENDERUNGEN.md) §1.1) |
 | `termin_optionen`, `termin_reservierung` | Optionen und Reservierungen |
 | `course_topics` | Kursthemen-Stamm: deduplizierte Themen aus `edoobox_raw.offer` (automatisch) plus manuelle Planungsfelder `kurs_code`, `kategorie_id`, `kategorie_name`, `vorlage_offer_id`, `prioritaet`, `rhythmus_wochen`, `planungsbereich` |
 | `kursplan_termin` | Gemeinsame Planungstabelle (Ablösung der Excel-Planungstabellen): eine Zeile je Kurstermin, `planungsbereich`-Attribut, max. 3-Fach-Belegung pro Tag (`UNIQUE (planungsbereich, datum, prio)`), `freigabe`, `sync_status`, `edoobox_offer_id`, `kurs_key` |

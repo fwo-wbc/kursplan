@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Schema-Erweiterung: Trainer-Stammdaten & Zuweisung
--- Stand: September 2026
+-- Stand: November 2026 (aktualisiert mit Check-Constraint-Stand)
 -- Auszuführen als: kursplan_user
 -- =============================================================================
 
@@ -42,7 +42,31 @@ ALTER TABLE public.trainer_zuweisung
 -- 4. Initialer Stammdatensatz
 INSERT INTO public.trainer (vorname, nachname, kuerzel, edoobox_admin_id, is_active)
 VALUES ('Frank', 'Woltmann', 'FW', 'admin_4c155f660347_225880320', true)
-ON CONFLICT (kuerzel) DO UPDATE 
-SET vorname = EXCLUDED.vorname, 
-    nachname = EXCLUDED.nachname, 
+ON CONFLICT (kuerzel) DO UPDATE
+SET vorname = EXCLUDED.vorname,
+    nachname = EXCLUDED.nachname,
     edoobox_admin_id = EXCLUDED.edoobox_admin_id;
+
+-- ---------------------------------------------------------------------------
+-- 5. Statusmodell & Check-Constraint trainer_zuweisung_status_chk (Stand: Nov. 2026)
+--
+-- Gültige Statuswerte (verbindlich für App, API und UI):
+--   'keine Zuordnung'  – Termin bewusst ohne Trainer führen (Aufhebung, Rot)
+--   'reserviert'       – Initialzustand, Termin für den Trainer reserviert
+--                        (früherer Wert 'ausgeschrieben', umbenannt per
+--                        trainer_zuweisung_status_reserviert_migration.sql)
+--   'unter Vorbehalt'  – ab 1 Buchung bis minTeilnehmer (gelb)
+--   'bestätigt'        – ab minTeilnehmer + 1 (grün)
+--   'abgesagt'         – edoobox-Status 0/5 bzw. Absage
+--
+-- Idempotent: Constraint wird erneuert, falls er bereits mit älterer
+-- Werte-Liste existiert. Die historische Umbenennung der Bestandsdaten
+-- (UPDATE status = 'reserviert' WHERE status = 'ausgeschrieben') erfolgt
+-- ausschließlich in der bezeichneten Migration und ist hier NICHT enthalten.
+-- ---------------------------------------------------------------------------
+ALTER TABLE public.trainer_zuweisung
+    DROP CONSTRAINT IF EXISTS trainer_zuweisung_status_chk;
+
+ALTER TABLE public.trainer_zuweisung
+    ADD CONSTRAINT trainer_zuweisung_status_chk
+    CHECK (status IN ('keine Zuordnung', 'reserviert', 'unter Vorbehalt', 'bestätigt', 'abgesagt'));

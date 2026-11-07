@@ -7,7 +7,6 @@ import {
   CalendarDays,
   CheckCircle2,
   AlertCircle,
-  BookMarked,
   Lock,
   RefreshCw,
 } from 'lucide-react';
@@ -286,18 +285,12 @@ function kuerzeAngebotstitel(titel: string | null): string {
   return titel ? titel.split(':')[0].trim() : '';
 }
 
-/** true, wenn die Teilnehmerzahl an den Kurstitel angehängt werden soll:
- *  nur bei Kursen, deren Zuweisungsstatus NICHT „reserviert“ (bzw. der
- *  Standardwert für nicht zugewiesene/offene Kurse) ist, und wenn mindestens
- *  ein Teilnehmer gebucht ist (0 bzw. undefined bleibt unsichtbar). */
-function zeigeTeilnehmerAnzahl(
-  teilnehmer: number | undefined,
-  status: string | null
-): boolean {
-  const s = (status ?? '').toLowerCase();
-  const offen =
-    s === '' || s === 'reserviert' || s === 'offen' || s === 'angefragt';
-  return !offen && typeof teilnehmer === 'number' && teilnehmer > 0;
+/** Teilnehmeranzahl immer als "(X TN)" darstellen – auch bei 0 bzw. ohne
+ *  gebuchte Teilnehmer. Das Badge wird rechtsbündig im Titelfeld ausgerichtet
+ *  (Flexbox: Titel links, TN-Badge rechts – analog zur Trainerverfügbarkeit). */
+function tnBadge(teilnehmer: number | undefined): string {
+  const anzahl = typeof teilnehmer === 'number' ? teilnehmer : 0;
+  return `(${anzahl} TN)`;
 }
 
 /** Rangfolge für den primären Kurs: bestätigt > unter Vorbehalt > reserviert > abgesagt. */
@@ -662,6 +655,25 @@ function VerfuegbarkeitContent() {
     setIsMounted(true);
   }, []);
   const istAdmin = isMounted && istAdminUmgebung();
+
+  // -------------------------------------------------------------------------
+  // Kopier-Toast (P-XX): Beim Klicken eines Kurstitels wird der VOLLSTÄNDIGE
+  // Kurstitel in die Zwischenablage kopiert und kurz ein Bestätigungs-Toast
+  // eingeblendet. (Nur Trainerportal – die Trainerverfügbarkeit bleibt unberührt.)
+  // -------------------------------------------------------------------------
+  const [kopierToast, setKopierToast] = useState<string | null>(null);
+  const kopierToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const kopiereKurstitel = useCallback((kursname: string | null) => {
+    const titel = (kursname ?? '').trim();
+    void kopiereInZwischenablage(titel);
+    setKopierToast(titel || 'Kurs');
+    if (kopierToastTimerRef.current) clearTimeout(kopierToastTimerRef.current);
+    kopierToastTimerRef.current = setTimeout(() => {
+      setKopierToast(null);
+      kopierToastTimerRef.current = null;
+    }, 1600);
+  }, []);
 
   // -------------------------------------------------------------------------
   // Session-Trainer laden (GET /portal/api/auth/me) – die Trainer-ID wird fest
@@ -1058,6 +1070,13 @@ function VerfuegbarkeitContent() {
     ) {
       return;
     }
+    // Sicherheitsabfrage beim Löschen eines freien Vormittags.
+    if (aktuell.vm) {
+      const bestaetigt = window.confirm(
+        'Möchtest du den freien Vormittag dieses Tages wirklich löschen?'
+      );
+      if (!bestaetigt) return;
+    }
     applyDay(datum, { vm: !aktuell.vm });
   };
 
@@ -1071,6 +1090,13 @@ function VerfuegbarkeitContent() {
         slotBelegt(reservierungen[datum] ?? [], '13:00', '17:00'))
     ) {
       return;
+    }
+    // Sicherheitsabfrage beim Löschen eines freien Nachmittags.
+    if (aktuell.nm) {
+      const bestaetigt = window.confirm(
+        'Möchtest du den freien Nachmittag dieses Tages wirklich löschen?'
+      );
+      if (!bestaetigt) return;
     }
     applyDay(datum, { nm: !aktuell.nm });
   };
@@ -1091,6 +1117,14 @@ function VerfuegbarkeitContent() {
         slotBelegt(tagesReservierungen, '13:00', '17:00');
       if (vmGesperrt || nmGesperrt) return;
     }
+    // Sicherheitsabfrage beim Löschen eines freien Tages: Erst nach Bestätigung
+    // wird der Lösch-Request ausgeführt; bei Abbruch bleibt der Tag unverändert.
+    if (istGanztags) {
+      const bestaetigt = window.confirm(
+        'Möchtest du diesen freien Tag wirklich löschen?'
+      );
+      if (!bestaetigt) return;
+    }
     applyDay(datum, { vm: !istGanztags, nm: !istGanztags });
   };
 
@@ -1100,30 +1134,6 @@ function VerfuegbarkeitContent() {
   // Die gesamte Dialoglogik (Neuanlage, Gruppen-Bearbeitung, Speichern,
   // Gruppe löschen) liegt in der gemeinsamen Komponente ReservierungsGruppeDialog.
   // Diese Seite steuert den Dialog nur noch über den resDialog-State.
-
-  /** Öffnet das Reservierungs-Modal (Neuanlage) für einen konkreten Tag mit
-   *  intelligenter Slot-Vorauswahl: Slot 1 (09:00–13:00) bevorzugt, sonst
-   *  Slot 2 (13:00–17:00). */
-  const oeffneReservierungsModal = (datum: string) => {
-    const tagesRes = reservierungen[datum] ?? [];
-    const slot1Belegt = slotBelegt(tagesRes, '09:00', '13:00');
-    const slot2Belegt = slotBelegt(tagesRes, '13:00', '17:00');
-    let start = '09:00';
-    let ende = '13:00';
-    if (slot1Belegt && !slot2Belegt) {
-      start = '13:00';
-      ende = '17:00';
-    }
-    setResDialog({
-      offen: true,
-      gruppeCode: null,
-      editRes: null,
-      initialTrainerId: selectedTrainerId,
-      initialDatum: datum,
-      initialStart: start,
-      initialEnde: ende,
-    });
-  };
 
   /** Öffnet das Reservierungs-Modal im Bearbeitungsmodus: Existiert ein
    *  Gruppencode, lädt die Komponente ALLE Termine dieser Gruppe über die
@@ -1731,6 +1741,11 @@ function VerfuegbarkeitContent() {
         );
         return;
       }
+      // Sicherheitsabfrage beim Löschen freier Werktage der Woche.
+      const bestaetigt = window.confirm(
+        'Möchtest du die freien Tage dieser Woche wirklich löschen?'
+      );
+      if (!bestaetigt) return;
     }
     const vorher: Record<string, DayState> = {};
     const entries: BatchEintrag[] = werktage.map((d) => {
@@ -1774,7 +1789,6 @@ function VerfuegbarkeitContent() {
     // Standard-Slots für Reservierungen: Slot 1 = 09:00–13:00, Slot 2 = 13:00–17:00.
     const slot1Belegt = slotBelegt(tagesReservierungen, '09:00', '13:00');
     const slot2Belegt = slotBelegt(tagesReservierungen, '13:00', '17:00');
-    const beideSlotsBelegt = slot1Belegt && slot2Belegt;
     const istHeute = datumStr === heuteStr;
     const wochenende = datum.getDay() === 0 || datum.getDay() === 6;
     const feiertag = feiertageImZeitraum.get(datumStr) ?? null;
@@ -1987,22 +2001,17 @@ function VerfuegbarkeitContent() {
                       className="truncate flex-1 min-w-0"
                       onClick={(e) => {
                         e.stopPropagation();
-                        void kopiereInZwischenablage(kurs.kursnr ?? '');
+                        kopiereKurstitel(kurs.kursname);
                       }}
                     >
                       {titel}
                     </span>
-                    {zeigeTeilnehmerAnzahl(
-                      kurs.teilnehmer,
-                      kurs.zuweisung_status
-                    ) && (
-                      <span
-                        className="shrink-0 font-semibold opacity-75"
-                        title={`${kurs.teilnehmer} Teilnehmer`}
-                      >
-                        ({kurs.teilnehmer} TN)
-                      </span>
-                    )}
+                    <span
+                      className="shrink-0 font-semibold opacity-75"
+                      title={`${typeof kurs.teilnehmer === 'number' ? kurs.teilnehmer : 0} Teilnehmer`}
+                    >
+                      {tnBadge(kurs.teilnehmer)}
+                    </span>
                   </span>
                 </button>
               </div>
@@ -2040,12 +2049,23 @@ function VerfuegbarkeitContent() {
                 <div key={res.id} className="group flex items-center justify-between gap-0.5">
                   <button
                     type="button"
-                    title={`${vollerText} (Klicken: bearbeiten)`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      oeffneReservierungBearbeiten(res);
-                    }}
-                    className="flex-1 min-w-0 rounded border px-1 py-1 text-left text-[8px] sm:text-[10px] leading-tight font-medium transition flex items-center bg-orange-50 text-orange-800 border-orange-300 hover:bg-orange-100"
+                    title={
+                      istAdmin
+                        ? `${vollerText} (Klicken: bearbeiten)`
+                        : vollerText
+                    }
+                    onClick={
+                      istAdmin
+                        ? (e) => {
+                            e.stopPropagation();
+                            oeffneReservierungBearbeiten(res);
+                          }
+                        : undefined
+                    }
+                    aria-disabled={!istAdmin}
+                    className={`flex-1 min-w-0 rounded border px-1 py-1 text-left text-[8px] sm:text-[10px] leading-tight font-medium transition flex items-center bg-orange-50 text-orange-800 border-orange-300 ${
+                      istAdmin ? 'hover:bg-orange-100' : 'cursor-default'
+                    }`}
                   >
                     <span className="flex items-center gap-1 min-w-0 w-full leading-none">
                       <span className="font-semibold shrink-0">{uhrzeit}</span>
@@ -2110,32 +2130,9 @@ function VerfuegbarkeitContent() {
           </div>
         )}
 
-        {/* Dezent: Reservierung für diesen Tag anlegen – exklusiv für Admins
-            (webinarcenter.de) und nur bei Hover der Tageskachel sichtbar.
-            Deaktiviert, wenn beide Standard-Slots 09:00–13:00 und 13:00–17:00
-            belegt sind. */}
-        {istAdmin && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              oeffneReservierungsModal(datumStr);
-            }}
-            disabled={beideSlotsBelegt}
-            title={
-              beideSlotsBelegt
-                ? 'Kein freier Slot mehr verfügbar (Vormittag und Nachmittag reserviert)'
-                : 'Reservierung anlegen (Firmenanfrage)'
-            }
-            className={`mt-0.5 w-full rounded border border-dashed border-orange-300 text-orange-600 hover:bg-orange-50 text-[8px] sm:text-[9px] py-0.5 font-medium transition opacity-0 group-hover:opacity-100 focus:opacity-100 ${
-              beideSlotsBelegt
-                ? 'group-hover:opacity-40 cursor-not-allowed'
-                : ''
-            }`}
-          >
-            + Res.
-          </button>
-        )}
+        {/* Reservierungen für Trainerportal: Neuanlage ist bewusst NICHT möglich
+            (Trainer haben rein lesenden Zugriff – neue Reservierungen initiiert
+            ausschließlich die Admin-Verwaltung). */}
       </div>
     );
   };
@@ -2406,22 +2403,17 @@ function VerfuegbarkeitContent() {
                       className="truncate min-w-0"
                       onClick={(e) => {
                         e.stopPropagation();
-                        void kopiereInZwischenablage(kurs.kursnr ?? '');
+                        kopiereKurstitel(kurs.kursname);
                       }}
                     >
                       {kuerzeAngebotstitel(kurs.kursname) || 'Kurs'}
                     </span>
-                    {zeigeTeilnehmerAnzahl(
-                      kurs.teilnehmer,
-                      kurs.zuweisung_status
-                    ) && (
-                      <span
-                        className="shrink-0 opacity-75 whitespace-nowrap"
-                        title={`${kurs.teilnehmer} Teilnehmer`}
-                      >
-                        ({kurs.teilnehmer} TN)
-                      </span>
-                    )}
+                    <span
+                      className="shrink-0 opacity-75 whitespace-nowrap"
+                      title={`${typeof kurs.teilnehmer === 'number' ? kurs.teilnehmer : 0} Teilnehmer`}
+                    >
+                      {tnBadge(kurs.teilnehmer)}
+                    </span>
                   </span>
                 </div>
               ))}
@@ -2438,9 +2430,20 @@ function VerfuegbarkeitContent() {
               tagesReservierungen.map((res) => (
                 <div
                   key={res.id}
-                  onClick={() => oeffneReservierungBearbeiten(res)}
-                  title="Klicken: Reservierung bearbeiten"
-                  className="flex items-center gap-1 rounded-md border border-orange-300 bg-orange-50 px-1.5 py-0.5 cursor-pointer hover:bg-orange-100"
+                  onClick={
+                    istAdmin
+                      ? () => oeffneReservierungBearbeiten(res)
+                      : undefined
+                  }
+                  title={
+                    istAdmin
+                      ? 'Klicken: Reservierung bearbeiten'
+                      : 'Reservierung (nur lesend – keine Detailansicht)'
+                  }
+                  aria-disabled={!istAdmin}
+                  className={`flex items-center gap-1 rounded-md border border-orange-300 bg-orange-50 px-1.5 py-0.5 ${
+                    istAdmin ? 'cursor-pointer hover:bg-orange-100' : 'cursor-default'
+                  }`}
                 >
                   <span className="font-semibold shrink-0 text-orange-800 whitespace-nowrap">
                     {formatUhrzeit(res.start_time)}-{formatUhrzeit(res.end_time)}
@@ -2499,16 +2502,6 @@ function VerfuegbarkeitContent() {
                   )}
                 </div>
               ))
-            )}
-            {istAdmin && (
-              <button
-                type="button"
-                onClick={() => oeffneReservierungsModal(datumStr)}
-                title="Reservierung anlegen (Firmenanfrage)"
-                className="inline-flex items-center gap-1 rounded-md border border-dashed border-orange-300 px-1.5 py-0.5 text-[10px] text-orange-600 hover:bg-orange-50 transition"
-              >
-                + Reservierung
-              </button>
             )}
           </div>
         </td>
@@ -3064,6 +3057,21 @@ function VerfuegbarkeitContent() {
         onClose={schliesseResDialog}
         onSuccess={nachResDialogErfolg}
       />
+
+      {/* Kopier-Toast: erscheint nach dem Klick auf einen Kurstitel und
+          bestätigt, dass der vollständige Kurstitel kopiert wurde. */}
+      {kopierToast && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] max-w-[90vw] rounded-lg bg-slate-900/95 px-4 py-2.5 text-sm text-white shadow-lg flex items-center gap-2"
+          role="status"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="truncate">
+            <span className="font-semibold">Kurstitel kopiert:</span>{' '}
+            <span className="font-medium">{kopierToast}</span>
+          </span>
+        </div>
+      )}
     </main>
   );
 }

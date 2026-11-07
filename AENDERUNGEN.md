@@ -1,7 +1,7 @@
 # Änderungsdokumentation — Kursplan-App
 
 **Dokumenttyp:** Laufende Änderungsdokumentation (Change-Log)
-**Stand:** 04. November 2026
+**Stand:** 07. November 2026
 **Bezug:** [`PROJEKTSTAND.md`](PROJEKTSTAND.md) (Gesamtüberblick, Stand 28.10.2026)
 
 Dieses Dokument erfasst **alle in der Kursplan-App umgesetzten Änderungen** — Datenbank-Migrationen, API-Routen, Seiten/Komponenten, Bibliotheken, Skripte und n8n-Workflows. Ältere, bereits im [`PROJEKTSTAND.md`](PROJEKTSTAND.md) dokumentierte Bestände werden hier nur überblicksartig referenziert; der Fokus liegt auf dem Delta seit dem letzten dokumentierten Stand (25.10.2026).
@@ -45,6 +45,20 @@ Dieses Dokument erfasst **alle in der Kursplan-App umgesetzten Änderungen** —
 
 ---
 
+### 1.1 Bugfixes & Architektur-Anpassungen (November 2026)
+
+Die folgenden Korrekturen betreffen die Zuweisungs-Datenlogik und die Termin-Benachrichtigung:
+
+| Bereich | Änderung | Status |
+| --- | --- | --- |
+| **Bibliothek** | **`::int`-Cast auf `date_id` entfernt:** [`app/src/lib/notifications.ts`](app/src/lib/notifications.ts:160) — Edoobox-Date-IDs sind konsistent **alphanumerische Strings** (`edoobox_raw.offer_date.date_id` ist `TEXT`). Der Cast `(od.date_id)::int AS termin_id` schlug bei nicht-numerischen IDs fehl; stattdessen liefert nun die Hilfsfunktion [`parsiereTerminId()`](app/src/lib/notifications.ts:136) eine numerische `termin_id` für das Event-Payload | ✅ umgesetzt |
+| **API** | **Trainer-Zuweisung auf `LEFT JOIN LATERAL` umgestellt:** [`app/src/app/api/termine/route.ts`](app/src/app/api/termine/route.ts:775) — je Termin wird exakt eine Zuweisungszeile geliefert, priorisiert nach `date_id`-Treffer (Termin) vor `offer_id`-Fallback (Kurs), innerhalb der Gruppe nach `updated_at DESC` | ✅ umgesetzt |
+| **API** | **`passtZuLeiter`-Bedingung entfernt:** Lokale Zuweisungen aus [`public.trainer_zuweisung`](trainer_zuweisung_schema.sql) übersteuern gespiegelte Edoobox-Leiter (`dl.admin_id`) mit `quelle: 'lokal'` uneingeschränkt — die bisherige Prüfung auf Übereinstimmung von `lokale_edoobox_admin_id === edoo_admin_id` entfällt | ✅ umgesetzt |
+| **API** | **Deduplizierungslogik bei Mehrtermin-Kursen:** Bei mehreren Zuweisungszeilen je Trainer (z. B. Termin- und Kurs-Zuweisung) gewinnt deterministisch die neueste `zuweisung_id` (`row.zuweisung_id > bestehend.id`) | ✅ umgesetzt |
+| **Datenbank** | **Check-Constraint `trainer_zuweisung_status_chk`:** Status `ausgeschrieben` durch `reserviert` ersetzt; zulässig sind ausschließlich `'keine Zuordnung'`, `'reserviert'`, `'unter Vorbehalt'`, `'bestätigt'`, `'abgesagt'` (Migration [`trainer_zuweisung_status_reserviert_migration.sql`](trainer_zuweisung_status_reserviert_migration.sql)) | ✅ umgesetzt |
+
+---
+
 ## 2. Datenbank-Migrationen
 
 Alle Migrationen liegen als SQL-Dateien im Projektstamm, teils mit zugehörigem CJS-Anwender/Verifizierer unter [`scripts/`](scripts/).
@@ -77,8 +91,17 @@ Alle Migrationen liegen als SQL-Dateien im Projektstamm, teils mit zugehörigem 
 | `trainer_zuweisung_status_migration.sql` | Einführung/Erweiterung der Statuswerte |
 | `trainer_zuweisung_honorar_manuell_migration.sql` | Manuelles Honorar je Zuweisung (`honorar_manuell`) |
 | `trainer_zuweisung_bereinigung_edoobox_leiter.sql` | Bereinigung historischer edoobox-Leiter-Zuordnungen |
+| `trainer_zuweisung_status_reserviert_migration.sql` | Umbenennung `ausgeschrieben` → `reserviert`; neuer Check-Constraint `trainer_zuweisung_status_chk` mit den fünf gültigen Statuswerten (November 2026) |
 
-Das App-Statusmodell umfasst aktuell: `keine Zuordnung` · `ausgeschrieben` · `unter Vorbehalt` · `bestätigt` · `abgesagt` (vgl. [`app/src/app/api/zuweisung/bulk/route.ts`](app/src/app/api/zuweisung/bulk/route.ts:10)).
+Das App-Statusmodell umfasst aktuell: `keine Zuordnung` · `reserviert` · `unter Vorbehalt` · `bestätigt` · `abgesagt` (vgl. [`app/src/app/api/zuweisung/bulk/route.ts`](app/src/app/api/zuweisung/bulk/route.ts:10)).
+
+> **Hinweis (November 2026):** Der frühere Status `ausgeschrieben` wurde per Migration
+> [`trainer_zuweisung_status_reserviert_migration.sql`](trainer_zuweisung_status_reserviert_migration.sql)
+> durch `reserviert` ersetzt. Der Check-Constraint `trainer_zuweisung_status_chk` erzwingt seitdem zwingend einen
+> der fünf gültigen Statuswerte `'keine Zuordnung'`, `'reserviert'`, `'unter Vorbehalt'`, `'bestätigt'`,
+> `'abgesagt'`. Die älteren Migrationsdateien `trainer_zuweisung_status_migration.sql`,
+> `trainer_zuweisung_status_neu_migration.sql` und `trainer_zuweisung_status_keine_zuordnung_migration.sql`
+> sind als historischer Verlauf zu verstehen; sie wurden nicht rückwirkend verändert.
 
 ### 2.4 Reservierungen & Terminoptionen
 
