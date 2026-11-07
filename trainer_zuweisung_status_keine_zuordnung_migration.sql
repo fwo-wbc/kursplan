@@ -1,6 +1,11 @@
 -- ============================================================================
 --  Migration: Neuer Zuweisungsstatus 'keine Zuordnung'
 --  Stand: Oktober 2026
+--  HINWEIS (November 2026): Historische Migration. Der Status 'ausgeschrieben'
+--  wurde per trainer_zuweisung_status_reserviert_migration.sql zu 'reserviert'
+--  umbenannt; der heute gültige Constraint-Stand umfasst ('keine Zuordnung',
+--  'reserviert', 'unter Vorbehalt', 'bestätigt', 'abgesagt'). Diese Datei
+--  wurde nicht rückwirkend verändert.
 --
 --  Ergänzt den Status 'keine Zuordnung' im einheitlichen Statusmodell:
 --    'keine Zuordnung' – bewusst ohne Trainerzuordnung (Signal: Rot/Gelb)

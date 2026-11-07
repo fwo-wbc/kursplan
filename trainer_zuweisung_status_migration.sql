@@ -1,6 +1,10 @@
 -- ============================================================================
 --  Einmalige Migration: Zuweisungsstatus von public.trainer_zuweisung
 --  Stand: September 2026
+--  HINWEIS (November 2026): Historische Migration. Der heute gültige
+--  Constraint-Stand (Status 'reserviert' statt 'ausgeschrieben') wird durch
+--  trainer_zuweisung_status_reserviert_migration.sql hergestellt; diese Datei
+--  wurde nicht rückwirkend verändert.
 --
 --  Bestandteil 1a + Regelbetrieb 1b:
 --    1. Künftige Neuanlagen werden IMMER mit status = 'offen' initialisiert

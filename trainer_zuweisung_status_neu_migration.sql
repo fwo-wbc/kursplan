@@ -1,6 +1,11 @@
 -- ============================================================================
 --  Migration: Einheitliches Statusmodell für Trainer-Zuweisungen
 --  Stand: Oktober 2026
+--  HINWEIS (November 2026): Historische Migration. Der hier eingeführte Status
+--  'ausgeschrieben' wurde per trainer_zuweisung_status_reserviert_migration.sql
+--  zu 'reserviert' umbenannt; der heutige Constraint-Stand ist
+--  CHECK (status IN ('keine Zuordnung', 'reserviert', 'unter Vorbehalt',
+--  'bestätigt', 'abgesagt')). Diese Datei wurde nicht rückwirkend verändert.
 --
 --  Neue Statuswerte (einheitlich in DB, API und UI):
 --    'ausgeschrieben'   – Standard, sobald Kursangebot in edoobox existiert
