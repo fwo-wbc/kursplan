@@ -1,0 +1,23 @@
+services:
+  kursplan-app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: kursplan-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.production
+    environment:
+      - ADMIN_USER=${ADMIN_USER}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+    networks:
+      - kursplan_net
+      - postgres_custom_bridge
+
+networks:
+  kursplan_net:
+    external: true
+  postgres_custom_bridge:
+    external: true
