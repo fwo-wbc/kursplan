@@ -2045,55 +2045,62 @@ function VerfuegbarkeitContent() {
               const vollerText = `${uhrzeit} Reserviert: ${res.kunde}${
                 res.bemerkung ? ` – ${res.bemerkung}` : ''
               }`;
+              // Gemeinsamer Zeileninhalt der Reservierungs-Info (Zeit, Kunde,
+              // Frist-Badge, Gruppencode) – identisch für Admins und Trainer.
+              const zeilenInhalt = (
+                <span className="flex items-center gap-1 min-w-0 w-full leading-none">
+                  <span className="font-semibold shrink-0">{uhrzeit}</span>
+                  <span className="truncate flex-1 min-w-0">
+                    Reserviert: {res.kunde}
+                  </span>
+                  {/* Reservierungsfrist (1.) und Gruppencode (2.) – einheitlich
+                      wie in der Tagesliste. */}
+                  {res.frist_ende && (
+                    <span
+                      className={`shrink-0 rounded border px-1 text-[8px] sm:text-[9px] whitespace-nowrap ${fristBadgeClasses(
+                        res.frist_ende
+                      )}`}
+                      title={`Reservierungsfrist: ${res.frist_ende}`}
+                    >
+                      Frist {res.frist_ende}
+                    </span>
+                  )}
+                  {res.gruppe_code && (
+                    <span
+                      className="shrink-0 rounded bg-slate-100 px-1 text-[8px] sm:text-[9px] font-mono text-slate-500"
+                      title="Reservierungsgruppe (identisch bei Duplikaten)"
+                    >
+                      {res.gruppe_code}
+                    </span>
+                  )}
+                </span>
+              );
               return (
                 <div key={res.id} className="group flex items-center justify-between gap-0.5">
-                  <button
-                    type="button"
-                    title={
-                      istAdmin
-                        ? `${vollerText} (Klicken: bearbeiten)`
-                        : vollerText
-                    }
-                    onClick={
-                      istAdmin
-                        ? (e) => {
-                            e.stopPropagation();
-                            oeffneReservierungBearbeiten(res);
-                          }
-                        : undefined
-                    }
-                    aria-disabled={!istAdmin}
-                    className={`flex-1 min-w-0 rounded border px-1 py-1 text-left text-[8px] sm:text-[10px] leading-tight font-medium transition flex items-center bg-orange-50 text-orange-800 border-orange-300 ${
-                      istAdmin ? 'hover:bg-orange-100' : 'cursor-default'
-                    }`}
-                  >
-                    <span className="flex items-center gap-1 min-w-0 w-full leading-none">
-                      <span className="font-semibold shrink-0">{uhrzeit}</span>
-                      <span className="truncate flex-1 min-w-0">
-                        Reserviert: {res.kunde}
-                      </span>
-                      {/* Reservierungsfrist (1.) und Gruppencode (2.) – einheitlich
-                          wie in der Tagesliste. */}
-                      {res.frist_ende && (
-                        <span
-                          className={`shrink-0 rounded border px-1 text-[8px] sm:text-[9px] whitespace-nowrap ${fristBadgeClasses(
-                            res.frist_ende
-                          )}`}
-                          title={`Reservierungsfrist: ${res.frist_ende}`}
-                        >
-                          Frist {res.frist_ende}
-                        </span>
-                      )}
-                      {res.gruppe_code && (
-                        <span
-                          className="shrink-0 rounded bg-slate-100 px-1 text-[8px] sm:text-[9px] font-mono text-slate-500"
-                          title="Reservierungsgruppe (identisch bei Duplikaten)"
-                        >
-                          {res.gruppe_code}
-                        </span>
-                      )}
-                    </span>
-                  </button>
+                  {/* Reservierungszeile – strikt schreibgeschützt für Trainer
+                      (Nicht-Admins): Für Admins renderiert als klickbarer Button
+                      (öffnet das Bearbeiten-Modal); für Trainer als reine Info-
+                      Zeile OHNE Button/onClick und OHNE Zeiger-Cursor. */}
+                  {istAdmin ? (
+                    <button
+                      type="button"
+                      title={`${vollerText} (Klicken: bearbeiten)`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        oeffneReservierungBearbeiten(res);
+                      }}
+                      className="flex-1 min-w-0 rounded border px-1 py-1 text-left text-[8px] sm:text-[10px] leading-tight font-medium transition flex items-center bg-orange-50 text-orange-800 border-orange-300 hover:bg-orange-100"
+                    >
+                      {zeilenInhalt}
+                    </button>
+                  ) : (
+                    <div
+                      className="flex-1 min-w-0 rounded border px-1 py-1 text-left text-[8px] sm:text-[10px] leading-tight font-medium flex items-center bg-orange-50 text-orange-800 border-orange-300 cursor-default select-none"
+                      title={vollerText}
+                    >
+                      {zeilenInhalt}
+                    </div>
+                  )}
                   {/* Bearbeiten-/Lösch-Icons: nur für Admins, dezent (nur bei
                       Hover der Zeile sichtbar) und mit großzügigem Klickbereich. */}
                   {istAdmin && (

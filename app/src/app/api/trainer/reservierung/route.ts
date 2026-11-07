@@ -889,3 +889,23 @@ export async function DELETE(request: Request) {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// PATCH: Reservierung ändern – strikt schreibgeschützt für Trainer
+// ---------------------------------------------------------------------------
+// Reservierungen sind für Trainer (Nicht-Admins) ausschließlich lesend sichtbar.
+// Aus diesem Grund wird PATCH – identisch zu PUT und DELETE – serverseitig auf
+// die Admin-Domäne beschränkt: Anfragen von Nicht-Admins werden mit HTTP 403
+// abgewiesen, noch bevor irgendeine Schreiboperation ausgeführt wird. Für
+// Admins ist PATCH ein Alias der PUT-Logik (Bearbeiten per id bzw.
+// Gruppencode), damit Clients beide Schreibverben verwenden können.
+export async function PATCH(request: Request) {
+  // Rollentrennung: Reservierungen nur für Admins (webinarcenter.de).
+  if (!istAdminRequest(request)) {
+    return NextResponse.json(
+      { error: 'Nur für Administratoren (webinarcenter.de) freigegeben.' },
+      { status: 403 }
+    );
+  }
+  return PUT(request);
+}
